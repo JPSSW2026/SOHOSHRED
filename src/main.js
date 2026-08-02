@@ -168,6 +168,9 @@ async function boot() {
       const preset = getShot(name);
       if (!preset) throw new Error(`unknown shot preset: ${name}`);
       engine.manualTime = true;
+      // `prepare` chooses the rider's start state; it has to run before the
+      // settle, because the settle is what turns that state into a run.
+      preset.prepare?.(ctx);
       this.settle(preset.settle ?? 0);
       preset.apply(ctx);
       // Render one more frame so the new camera pose is what gets captured.

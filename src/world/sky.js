@@ -2008,9 +2008,21 @@ export class Sky {
     // 5.4x the offset.  So the depth term carries the slope and the normal
     // offset stays at a couple of texels.  Net displacement works out at ~0.4 m
     // on a 9.6 m rider shadow: 4%, invisible, and no acne.
+    //
+    // INTEGRATION NOTE: on the real basin geometry the derived values above
+    // still acne, because snowMaterial's *wrapped* diffuse lifts surfaces with
+    // N·L ≤ 0 to a third of full brightness instead of leaving them black. The
+    // usual place acne hides — the already-dark backside of a slope — is
+    // therefore lit, and every grazing face stipples. Both terms are now
+    // scaled by tunables so the look can be dialled without touching the
+    // derivation; the defaults are the values that measured clean on the shipped
+    // terrain at a 10.5° sun.
     const sinAlt = Math.max(0.12, Math.abs(L.y));
-    light.shadow.normalBias = clamp(texel * 1.5, 0.02, 0.20);
-    light.shadow.bias = -clamp(texel * 1.1 / sinAlt, 0.05, 1.2) / (cam.far - cam.near);
+    const nbScale = cfg.shadowNormalBiasScale ?? 3.6;
+    const nbMax = cfg.shadowNormalBiasMax ?? 0.30;
+    const dbScale = cfg.shadowDepthBiasScale ?? 1.1;
+    light.shadow.normalBias = clamp(texel * nbScale, 0.02, nbMax);
+    light.shadow.bias = -clamp(texel * dbScale / sinAlt, 0.05, 1.2) / (cam.far - cam.near);
   }
 
   /* -------------------------------------------------------------- *

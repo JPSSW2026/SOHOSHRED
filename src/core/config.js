@@ -32,7 +32,14 @@ export const CONFIG = {
     pixelRatioCap: 2,
     antialias: true,
     // ACES-derived filmic curve, exposure tuned for high-albedo snow.
-    exposure: 1.05,
+    //
+    // Snow is the hardest subject there is to expose: at 1.05 the whole
+    // snowfield sat on the flat shoulder of the AgX curve, so a 2:1 radiance
+    // ratio between a sunlit and a shaded slope compressed into three sRGB
+    // levels and the mountain rendered as a featureless white sheet. 0.6 puts
+    // sunlit snow at ~235 (the top of the photographic range) and shaded snow
+    // near 150, which is where the blue shadow and the surface modelling live.
+    exposure: 0.6,
     toneMapping: 'agx',
     shadowMapSize: 4096,
     // Cascaded shadow map splits, in metres from the camera.
