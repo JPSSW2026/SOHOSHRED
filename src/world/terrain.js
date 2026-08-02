@@ -97,16 +97,18 @@ const WIND_FROM = WIND_TOWARD.clone().negate();
  * LOD clipmap levels. `n` = quads per side, `s` = post spacing (m).
  * Extent (n*s) must double every level so a level's hole is exactly the
  * footprint of the level inside it.
- *   L0  0.5 m  ±24 m      L5  24 m  ±768 m
- *   L1  1.0 m  ±48 m      L6  48 m  ±1536 m
- *   L2  2.0 m  ±96 m      L7  96 m  ±3072 m
- *   L3  6.0 m  ±192 m     L8 192 m  ±6144 m
- *   L4 12.0 m  ±384 m
+ *   L0  0.5 m  ±16 m     L5   16 m  ±512 m
+ *   L1  1.0 m  ±32 m     L6   32 m  ±1024 m
+ *   L2  2.0 m  ±64 m     L7   64 m  ±2048 m
+ *   L3  4.0 m  ±128 m    L8  128 m  ±4096 m
+ *   L4  8.0 m  ±256 m
+ * Below 2 m the heightfield itself is the limit, so the inner rings buy only
+ * the capped sub-post detail (MICRO_CAP) — which is why they stop at 0.5 m.
  */
 const LOD_LEVELS = [
-  { n: 96, s: 0.5 }, { n: 96, s: 1 }, { n: 96, s: 2 },
-  { n: 64, s: 6 }, { n: 64, s: 12 }, { n: 64, s: 24 },
-  { n: 64, s: 48 }, { n: 64, s: 96 }, { n: 64, s: 192 },
+  { n: 64, s: 0.5 }, { n: 64, s: 1 }, { n: 64, s: 2 }, { n: 64, s: 4 },
+  { n: 64, s: 8 }, { n: 64, s: 16 }, { n: 64, s: 32 }, { n: 64, s: 64 },
+  { n: 64, s: 128 },
 ];
 /** Levels that write into the shadow map. Far rings would blow the budget. */
 const SHADOW_LEVELS = 5;
@@ -120,7 +122,7 @@ const MICRO_LEVELS = 3;
 const MICRO_CAP = 0.045;
 
 /** Where the backdrop shell begins, and how far the box-edge blend runs. */
-const BACKDROP_INNER = 2600;
+const BACKDROP_INNER = 2400;
 const FAR_BLEND = 280;
 /** Sink the backdrop slightly so the clipmap always wins in the overlap band. */
 const BACKDROP_SINK = 6;
@@ -310,7 +312,7 @@ export class Terrain {
       // (rib heads are scoured), which is the natural walk-in. Cornice
       // segments sit 30 m either side, in profile, for the hero frame. The
       // fall line from here is clean to the run-out at ≤48°.
-      'broadway-gate': { x: 145, z: 926, heading: Math.PI },
+      'broadway-gate': { x: 140, z: 960, heading: Math.PI },
       'bowl-entry': { x: -180, z: 560, heading: Math.PI },
       'mid-traverse': { x: 430, z: 120, heading: Math.PI - 0.35 },
       'runout': { x: -60, z: -700, heading: Math.PI },
@@ -506,7 +508,41 @@ export class Terrain {
    * NE, and raises the §1.6 skyline. Flat-topped Otago block-range profile
    * (exponent 2.4, not 2) — these are warped peneplain remnants, not arêtes.
    */
+  /**
+   * Far-field height, cached. The analytic form costs ~15 noise evaluations
+   * plus an 11-entry skyline loop; the outer clipmap rings need ~30k of them
+   * whenever they re-snap, which is a 200 ms hitch. The field's finest
+   * feature is ~375 m across, so a 40 m table with bilinear taps is
+   * indistinguishable and ~20× cheaper.
+   */
+  _buildFarLUT() {
+    const step = 40, R = 7040;
+    const m = (R * 2) / step + 1;
+    const lut = new Float32Array(m * m);
+    for (let j = 0; j < m; j++) {
+      const z = -R + j * step;
+      for (let i = 0; i < m; i++) lut[j * m + i] = this._farHeightRaw(-R + i * step, z);
+    }
+    this._farLUT = lut; this._farLUTm = m; this._farLUTstep = step; this._farLUTR = R;
+  }
+
   _farHeight(x, z) {
+    const lut = this._farLUT;
+    if (lut) {
+      const R = this._farLUTR, m = this._farLUTm, st = this._farLUTstep;
+      if (x > -R && x < R - st && z > -R && z < R - st) {
+        const fx = (x + R) / st, fz = (z + R) / st;
+        const i = fx | 0, j = fz | 0, tx = fx - i, tz = fz - j;
+        const k = j * m + i;
+        const a = lut[k] + (lut[k + 1] - lut[k]) * tx;
+        const b = lut[k + m] + (lut[k + m + 1] - lut[k + m]) * tx;
+        return a + (b - a) * tz;
+      }
+    }
+    return this._farHeightRaw(x, z);
+  }
+
+  _farHeightRaw(x, z) {
     if (!this._sky) this._sky = this._skyline();
     const r = Math.hypot(x, z);
 
@@ -742,9 +778,13 @@ export class Terrain {
     this._phaseDrift(H);                      mark('drift');
     this._phaseClassify(H);                   mark('classify');
     this._placeTors();                        mark('tors');
+    this._buildFarLUT();                      mark('far-lut');
     await yieldToHost();
 
     this._buildMeshes();                      mark('meshes');
+
+    // Release build-only scratch (a few MB of Float32 we never read again).
+    this._blurTmp = null;
 
     this.built = true;
     this._stats = this._acceptance();
@@ -1324,7 +1364,8 @@ export class Terrain {
         if (downhill > 0) {
           H[k] += 0.8 * Math.exp(-Math.pow((P.d - hw - 2.5) / 3.0, 2));
         }
-        if (P.d < hw + 1) groom[k] = 255;
+        const gw = (1 - smoothstep(hw - 1, hw + 6, P.d)) * 255;
+        if (gw > groom[k]) groom[k] = gw | 0;
       });
     }
 
@@ -1338,7 +1379,8 @@ export class Terrain {
         // Grooming removes everything below ~8 m wavelength and flattens the
         // cross-slope camber; corduroy itself is snowMaterial.js's job.
         H[k] = lerp(H[k], hSmooth[k], 0.72 * w);
-        if (w > 0.5) groom[k] = 255;
+        const gw = w * 255;
+        if (gw > groom[k]) groom[k] = gw | 0;
       });
     }
 
@@ -1358,7 +1400,11 @@ export class Terrain {
         this._forBox(term.x - px, term.x + px, term.z - pz, term.z + pz, 26, (k, x, z) => {
           const w = (1 - smoothstep(px, px + 22, Math.abs(x - term.x)))
             * (1 - smoothstep(pz, pz + 22, Math.abs(z - term.z)));
-          if (w > 0) { H[k] = lerp(H[k], padH, w * 0.95); if (w > 0.6) groom[k] = 255; }
+          if (w > 0) {
+            H[k] = lerp(H[k], padH, w * 0.95);
+            const gw = w * 255;
+            if (gw > groom[k]) groom[k] = gw | 0;
+          }
         });
       }
     }
@@ -1370,16 +1416,22 @@ export class Terrain {
     for (let j = 0; j < n; j++) {
       const z = this.minZ + j * cell, row = j * n;
       const rampZ = smoothstep(-894, -1024, z);
+      const zoneZ = smoothstep(-380, -470, z);
       for (let i = 0; i < n; i++) {
-        const x = this.minX + i * cell;
-        const rampX = smoothstep(894, 1024, Math.abs(x));
+        const ax = Math.abs(this.minX + i * cell);
+        const rampX = smoothstep(894, 1024, ax);
         const ramp = Math.max(rampX, rampZ);
         if (ramp <= 0) continue;
         const k = row + i;
-        const allowed = (z < -420) || (Math.abs(x) > 894 && H[k] < 1700);
-        if (!allowed) continue;
-        ramped[k] = 255;
-        H[k] = softMax(H[k] + ramp * 48, 1865, 14);
+        // Only lift ground that is *low*; the upper corners are already at
+        // the crest and need no rim. Every gate here is a smoothstep, not a
+        // threshold — a hard `if (h < 1700)` puts a 40 m cliff along an
+        // elevation contour, which is exactly the kind of seam getNormal()
+        // and the LOD skirts cannot hide.
+        const allow = Math.max(zoneZ, (1 - smoothstep(1620, 1730, H[k])) * smoothstep(880, 916, ax));
+        if (allow <= 0.001) continue;
+        if (ramp * allow > 0.35) ramped[k] = 255;
+        H[k] = softMax(H[k] + ramp * allow * 48, 1865, 14);
       }
     }
 
@@ -1523,9 +1575,10 @@ export class Terrain {
       const jm = (j > 0 ? j - 1 : j) * n, jp = (j < n - 1 ? j + 1 : j) * n;
       for (let i = 0; i < n; i++) {
         const k = row + i;
-        if (groom[k] > 128) continue;         // groomers are combed flat
+        const combed = groom[k] / 255;        // groomers are combed flat
+        if (combed > 0.985) continue;
         const x = this.minX + i * cell;
-        const dScale = clamp01(depth[k] / 1.5);
+        const dScale = clamp01(depth[k] / 1.5) * (1 - combed);
         if (dScale < 0.02) continue;
 
         // Steep ground sheds: drift only builds where it can sit. Without
@@ -1570,7 +1623,6 @@ export class Terrain {
     const surf = this.surf = new Uint8Array(N);
     const rough = this.rough = new Uint8Array(N);
     const rockBlend = this.rockBlend = new Uint8Array(N);
-    const slopeF = this.slope = new Float32Array(N);
     const depth = this.depth, expo = this.expo, curv = this.curv;
     const groom = this.groom, bluff = this.bluffMask;
 
@@ -1588,9 +1640,7 @@ export class Terrain {
         const hx = (H[row + ip] - H[row + im]) / (2 * cell);
         const hz = (H[jp + i] - H[jm + i]) / (2 * cell);
         const g = Math.hypot(hx, hz);
-        const slope = Math.atan(g);
-        slopeF[k] = slope;
-        const slopeDeg = slope / DEG;
+        const slopeDeg = Math.atan(g) / DEG;
 
         // Surface-projected wind: W minus its component along the normal.
         // Inside the bowl this flows cross-slope toward −X with a slight
@@ -1881,7 +1931,7 @@ export class Terrain {
         uv[vi * 2] = (x - this.minX) * invSize;
         uv[vi * 2 + 1] = (z - this.minZ) * invSize;
 
-        this._writeVertexAttrs(vi, x, z, attrs);
+        this._writeVertexAttrs(vi, x, z, attrs, Math.hypot(hx, hz));
 
         if (y < minY) minY = y;
         if (y > maxY) maxY = y;
@@ -1917,7 +1967,7 @@ export class Terrain {
    * colour so rock, windpack and the tussock-margin ground read correctly
    * even before the shading workstream lands.
    */
-  _writeVertexAttrs(vi, x, z, attrs) {
+  _writeVertexAttrs(vi, x, z, attrs, gradMag) {
     const inBox = x >= this.minX && x <= this.maxX && z >= this.minZ && z <= this.maxZ;
     let id = S_POWDER, d = 1.2, r = 0.30, e = 0, c = 0, rb = 0;
     if (inBox && this.surf) {
@@ -1930,7 +1980,8 @@ export class Terrain {
     } else if (!inBox) {
       // Far field: bare, wind-scoured ground on the steep bits.
       e = 0.5;
-      rb = clamp01((this.getSlope(x, z) / DEG - 40) / 14);
+      const sDeg = Math.atan(gradMag !== undefined ? gradMag : Math.tan(this.getSlope(x, z))) / DEG;
+      rb = clamp01((sDeg - 40) / 14);
       id = rb > 0.5 ? S_ROCK : S_WINDPACK;
     }
 
@@ -1953,9 +2004,10 @@ export class Terrain {
     // Snow tussock ground, the one natural colour accent on a white field.
     if (inBox && d < 0.25) {
       const y = this.getHeight(x, z);
+      const sDeg = Math.atan(gradMag !== undefined ? gradMag : Math.tan(this.getSlope(x, z))) / DEG;
       const tus = (1 - smoothstep(0.12, 0.25, d))
         * (1 - smoothstep(1500, 1570, y))
-        * (1 - smoothstep(20, 26, this.getSlope(x, z) / DEG));
+        * (1 - smoothstep(20, 26, sDeg));
       if (tus > 0) {
         const t = tus * 0.55;
         cr = lerp(cr, 0.58, t); cg = lerp(cg, 0.44, t); cb = lerp(cb, 0.23, t);
@@ -2041,7 +2093,7 @@ export class Terrain {
         nor[p] = -hx * inv; nor[p + 1] = inv; nor[p + 2] = -hz * inv;
         uv[vi * 2] = (x - this.minX) * invSize;
         uv[vi * 2 + 1] = (z - this.minZ) * invSize;
-        this._writeVertexAttrs(vi, x, z, attrs);
+        this._writeVertexAttrs(vi, x, z, attrs, Math.hypot(hx, hz));
       }
     }
 
