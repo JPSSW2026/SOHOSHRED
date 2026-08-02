@@ -492,10 +492,13 @@ function bakeSnowMacro(size, seed) {
     const steps = Math.max(8, Math.round(length * 2));
     let px = x0;
     let py = y0;
-    let ang = Math.atan2(dirY, dirX);
+    const base = Math.atan2(dirY, dirX);
     for (let s = 0; s < steps; s++) {
       const t = s / steps;
-      ang += simplex.noise2D(t * 3.1 + x0 * 0.01, y0 * 0.01) * wobble;
+      // Absolute deviation from the base heading, not an accumulated one: a
+      // random walk over ~1000 steps produces corkscrews, and a snowboard track
+      // is a long, shallow arc.
+      const ang = base + simplex.noise2D(t * 2.2, x0 * 0.017 + y0 * 0.011) * wobble;
       px += Math.cos(ang) * (length / steps);
       py += Math.sin(ang) * (length / steps);
       const r = Math.ceil(radius) + 1;
@@ -527,14 +530,14 @@ function bakeSnowMacro(size, seed) {
     // 6.6 cm/texel → a 0.28 m board track is ~4 texels wide.
     const radius = crossing ? 2.4 : rng.range(3.0, 4.6);
     const depth = crossing ? 0.45 : rng.range(0.55, 0.95);
-    stampTrack(x0, y0, Math.cos(base), Math.sin(base), len, radius, depth, 0.05);
+    stampTrack(x0, y0, Math.cos(base), Math.sin(base), len, radius, depth, 0.22);
     if (!crossing && rng() < 0.6) {
       // A second, parallel line 0.6–1.4 m away: the pair reads as one rider.
       const off = rng.range(9, 21);
       stampTrack(
         x0 + Math.cos(base + Math.PI / 2) * off,
         y0 + Math.sin(base + Math.PI / 2) * off,
-        Math.cos(base), Math.sin(base), len, radius * 0.9, depth * 0.85, 0.05,
+        Math.cos(base), Math.sin(base), len, radius * 0.9, depth * 0.85, 0.22,
       );
     }
   }
@@ -577,9 +580,9 @@ function bakeRockPack(size, seed) {
   const P = 8; // 2.4 m tile → 4.7 mm per texel
   _maxLatticePeriod = size * 0.5;
   // Linear-light reference colours from docs/TERRAIN_BRIEF.md §2.13.
-  const baseCol = [0.176, 0.186, 0.158]; // #6E7269 grey-green
-  const quartz = [0.322, 0.348, 0.315]; // #9AA096
-  const oxide = [0.202, 0.152, 0.090]; // #7A6A52 weathered
+  const baseCol = [0.200, 0.208, 0.176]; // #6E7269 grey-green
+  const quartz = [0.372, 0.396, 0.362]; // #9AA096 quartz segregation
+  const oxide = [0.235, 0.170, 0.098]; // #7A6A52 weathered / oxidised rind
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const i = y * size + x;
@@ -587,9 +590,12 @@ function bakeRockPack(size, seed) {
       const v = (y / size) * P;
 
       const grit = tileFbm(u * 24, v * 24, P * 24, P * 24, 3, seed + 71) * 0.5 + 0.5;
-      const blocky = tileWorley(u * 3, v * 3, P * 3, P * 3, seed + 83);
-      // Thin dark seams where plates part, not fat rounded cell walls.
-      const crack = 1 - smoothstep(0.02, 0.16, blocky.f2 - blocky.f1);
+      // Schist parts ALONG the foliation, so the fracture seams must be long and
+      // parallel, not an isotropic cobble mosaic.  Stretching the cell lattice
+      // 7:1 along U (the strike axis, which the shader orients) turns crazy
+      // paving into layered plates.
+      const blocky = tileWorley(u * 0.7, v * 5, Math.max(1, Math.round(P * 0.7)), P * 5, seed + 83);
+      const crack = 1 - smoothstep(0.03, 0.22, blocky.f2 - blocky.f1);
       const weather = clamp01(tileFbm(u * 1.5, v * 1.5, Math.round(P * 1.5), Math.round(P * 1.5), 4, seed + 97) * 1.1 + 0.5);
       // Quartz segregation lenses: strongly elongated, because they lie IN the
       // foliation.  The tile's U axis is the strike direction (the shader
@@ -644,10 +650,11 @@ function bakeRockNormal(size, seed) {
       // separated by sharp risers.  A smooth Worley blob field reads as cobble
       // or popcorn, which is exactly the wrong rock.  Quantising a smooth field
       // into steps and keeping the crack seams thin gives the platy break.
-      const blocky = tileWorley(u * 3, v * 3, P * 3, P * 3, seed + 83);
-      // Thin, dark fracture seams rather than fat rounded cell walls.
-      const crack = 1 - smoothstep(0.02, 0.16, blocky.f2 - blocky.f1);
-      const chunk = tileFbm(u * 2.5, v * 2.5, Math.round(P * 2.5), Math.round(P * 2.5), 4, seed + 139) * 0.5 + 0.5;
+      // Same anisotropic parting as the albedo map, so seams and relief agree.
+      const blocky = tileWorley(u * 0.7, v * 5, Math.max(1, Math.round(P * 0.7)), P * 5, seed + 83);
+      const crack = 1 - smoothstep(0.03, 0.22, blocky.f2 - blocky.f1);
+      // The plate levels step along V (across the layering), never across U.
+      const chunk = tileFbm(u * 0.8, v * 4, Math.max(1, Math.round(P * 0.8)), P * 4, 4, seed + 139) * 0.5 + 0.5;
       // 7 discrete slab levels with a slightly soft riser.
       const levels = 7;
       const q = chunk * levels;
@@ -821,7 +828,11 @@ float sohoGlintLayer( vec3 wp, vec3 wN, vec3 Hw, float density, float sharp, flo
 	// Slow per-facet breathing: real twinkle comes from motion, but a little
 	// life keeps a static frame from looking printed.  Never fast enough to read
 	// as noise.
-	float spread = 0.30 + 0.20 * sin( uSparkleTime * 0.85 + r.z * 6.2831853 );
+	// ~40 deg cone.  Too tight a cone and the half vector never lands inside it
+	// under a 17 deg sun with the camera looking down the slope, so the field
+	// goes completely dark; too wide and the glints stop clustering around the
+	// specular direction.
+	float spread = 0.58 + 0.22 * sin( uSparkleTime * 0.85 + r.z * 6.2831853 );
 	vec3 facet = normalize( wN + ( r.x * 2.0 - 1.0 ) * spread * sohoTanW + ( r.y * 2.0 - 1.0 ) * spread * sohoBitW );
 	float lobe = exp2( - ( 1.0 - saturate( dot( facet, Hw ) ) ) * sharp );
 	// Kill a lattice once its cells drop below a pixel, or it becomes shimmer.
@@ -959,28 +970,36 @@ const SNOW_SURFACE = /* glsl */ `
 		trkComp   = saturate( tk.b * tk.a );
 	#endif
 
-	// ---- snow-on-rock: never a razor edge ----
-	// Accumulation is biased by aspect (up-facing ledges hold), by the drift
-	// field (so the boundary is drift-shaped) and by the macro cavity field (so
-	// snow lodges in crevices).  ART_DIRECTION §6.1 / §11.22.
-	float accum = saturate(
-		( 1.0 - rockMask ) * 1.30
-		+ ( tMc.a - 0.35 ) * 0.30
-		+ ( tDr.w - 0.5 ) * 0.34
-		+ ( sohoWN.y - 0.55 ) * 0.75 * uSnowOnRock
-	);
-	float snowAmt = smoothstep( 0.28, 0.62, accum );
-	// Wind moat: rock re-radiates absorbed sun and melts the pack back 10-40 cm,
-	// leaving a narrow shadowed gap right at the boundary.
-	float moat = ( 1.0 - snowAmt ) * smoothstep( 0.06, 0.28, accum );
-	float rockF = 1.0 - snowAmt;
-
 	// ---- detail fades ----
 	float fadeFar = 1.0 - smoothstep( uDetailFade.x, uDetailFade.y, sohoDist );
 	float f1 = ( 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 24.0 / uDetailScale.x ) ) * fadeFar;
 	float f2 = ( 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 24.0 / uDetailScale.y ) ) * fadeFar;
 	float f3 = 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 16.0 / uDetailScale.z );
 	float f4 = 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 14.0 / uDetailScale.w );
+
+	// ---- snow-on-rock: never a razor edge ----
+	// Accumulation is biased by aspect (up-facing ledges hold), by the drift
+	// field (so the boundary is drift-shaped) and by the macro cavity field (so
+	// snow lodges in crevices).  ART_DIRECTION §6.1 / §11.22.
+	// The blend band is deliberately wide (0.18 -> 0.78) and is pushed around at
+	// three scales: 34 m lobes so the snow line wanders across the rib, 11 m
+	// drift lobes so it is scalloped, and grain-scale grit so the last centimetre
+	// is ragged.  A one-quad-wide ramp straight off the vertex attribute is the
+	// razor edge the art direction calls the most damning tell in the document.
+	float accum = saturate(
+		( 1.0 - rockMask ) * 1.25
+		+ ( tMc.z - 0.5 ) * 0.45
+		+ ( tDr.w - 0.5 ) * 0.62
+		+ ( tG1.z - 0.5 ) * 0.18 * f1
+		+ ( sohoWN.y - 0.55 ) * 0.70 * uSnowOnRock
+	);
+	float snowAmt = smoothstep( 0.18, 0.78, accum );
+	// Wind moat: rock re-radiates absorbed sun and melts the pack back 10-40 cm,
+	// leaving a narrow shadowed gap right at the boundary.
+	float moat = ( 1.0 - snowAmt ) * smoothstep( 0.02, 0.20, accum );
+	// ...and a bright lip of drifted snow on the other side of it.
+	float snowLip = smoothstep( 0.20, 0.40, accum ) * ( 1.0 - smoothstep( 0.40, 0.62, accum ) );
+	float rockF = 1.0 - snowAmt;
 
 	// Sastrugi only exist where the wind works the surface.
 	float sastrugiW = sfWind + 0.55 * sfIce + 0.30 * sfPow + 0.05 * sfGroom;
@@ -1064,7 +1083,8 @@ const SNOW_SURFACE = /* glsl */ `
 	rockAlb *= uRockTint;
 	rockAlb *= 1.0 + folA * 0.16 * folFade + folB * 0.10;
 	rockAlb = mix( rockAlb, rockAlb * vec3( 1.20, 1.00, 0.76 ), saturate( folB * 0.6 + 0.35 ) * 0.30 );
-	rockAlb *= 1.0 - moat * 0.32;
+	rockAlb *= 1.0 - moat * 0.24;
+	albedo *= 1.0 + snowLip * 0.05;
 
 	diffuseColor.rgb *= mix( albedo, rockAlb, rockF );
 
@@ -1149,8 +1169,11 @@ const ROCK_SURFACE = /* glsl */ `
 	vec3 nW = normalize( sohoWN + sg * ( uNormalStrength * rockFade * 0.55 ) );
 
 	// One foliation plane for the whole basin: strike +38 deg from +X, dip 32.
-	float folC = dot( sohoWP, uFoliationN );
-	float folA = sin( folC * ( 6.2831853 / uFoliationSpacing ) );
+	// Real foliation is a consistent *orientation*, not a consistent *spacing*.
+	// Jittering the phase with the plate-height field turns a mechanical comb
+	// into irregular layering while keeping the strike and dip globally exact.
+	float folC = dot( sohoWP, uFoliationN ) + ( rn.w - 0.5 ) * uFoliationSpacing * 3.2;
+	float folA = sin( folC * ( 6.2831853 / uFoliationSpacing ) ) * ( 0.35 + 1.05 * rn.z );
 	float folB = sin( folC * ( 6.2831853 / ( uFoliationSpacing * 7.3 ) ) + 1.7 );
 	float folFade = 1.0 - smoothstep( 0.22, 0.85, sohoFootprint / uFoliationSpacing );
 	vec3 folT = uFoliationN - nW * dot( nW, uFoliationN );
@@ -1174,8 +1197,9 @@ const ROCK_SURFACE = /* glsl */ `
 	rockAlb = mix( rockAlb, vec3( 0.022, 0.022, 0.019 ), saturate( lichen * 1.6 - 1.05 ) * 0.6 );
 
 	// ---- snow on every ledge ----
+	mat2 windM = mat2( uWindDir.x, -uWindDir.y, uWindDir.y, uWindDir.x );
 	vec4 sG = texture2D( uSnowGrain, sohoWP.xz / uDetailScale.x );
-	vec4 sD = texture2D( uSnowDrift, ( mat2( uWindDir.x, -uWindDir.y, uWindDir.y, uWindDir.x ) * sohoWP.xz ) / uDetailScale.z );
+	vec4 sD = texture2D( uSnowDrift, ( windM * sohoWP.xz ) / uDetailScale.z );
 	// Snow catches on every ledge — note this uses the *perturbed* normal, so the
 	// plate faces of the fracture relief hold it too.  The boundary is pushed
 	// around by the drift field with a wide blend band, because a hard geometric
@@ -1209,7 +1233,10 @@ const ROCK_SURFACE = /* glsl */ `
 	// detail, weighted by how much of it there is.
 	vec3 sgX = vec3( 1.0, 0.0, 0.0 ) - nW * nW.x;
 	vec3 sgZ = vec3( 0.0, 0.0, 1.0 ) - nW * nW.z;
-	vec2 sgrad = ( sG.xy * 2.0 - 1.0 ) * ( uDetailAmp.x * rockFade );
+	// Both the grain (0.37 m) and the drift (11 m) layers, so the cap still has
+	// shape at 30 m where the grain has long since mipped away.
+	vec2 sgrad = ( sG.xy * 2.0 - 1.0 ) * ( uDetailAmp.x * rockFade )
+		+ ( ( sD.xy * 2.0 - 1.0 ) * windM ) * ( uDetailAmp.z * 0.75 );
 	nW = normalize( mix( nW, normalize( sohoWN + ( sgrad.x * sgX + sgrad.y * sgZ ) * uNormalStrength ), snowAmt * 0.85 ) );
 
 	sohoNormalW = nW;
@@ -1303,7 +1330,7 @@ function buildUniforms(ctx, opts) {
     // Peak surface gradient contributed by each layer (the maps are normalised
     // at bake time, so these are the real numbers): 0.30 is a 17 deg facet.
     uDetailAmp: {
-      value: new THREE.Vector4(0.30, 0.20, 0.62 * (sastrugi / 0.55), 0.16),
+      value: new THREE.Vector4(0.30, 0.20, 0.62 * (sastrugi / 0.55), 0.13),
     },
     uDetailFade: { value: new THREE.Vector2(40, 250) },
 
@@ -1326,8 +1353,8 @@ function buildUniforms(ctx, opts) {
       value: new THREE.Vector4(
         34 * Math.sqrt(sparkleDensity / 1400),
         620,
-        7.5 * sparkleStrength,
-        0.30,
+        9.0 * sparkleStrength,
+        0.34,
       ),
     },
     uGlintRange: { value: new THREE.Vector2(25, 40) },
@@ -1482,7 +1509,7 @@ export function createRockMaterial(ctx, opts = {}) {
     rockScale: rockScale ?? 2.4,
     rockRoughness: rockRoughness ?? 0.68,
     normalStrength, forwardScatter, corduroySpacing,
-    foliationSpacing: foliationSpacing ?? 0.11,
+    foliationSpacing: foliationSpacing ?? 0.16,
     snowOnRock, trackStrength,
   };
 

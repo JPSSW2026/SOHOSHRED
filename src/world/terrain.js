@@ -294,7 +294,9 @@ export class Terrain {
     /* -- Spawns ---------------------------------------------------------- */
     // heading = π faces −Z under the engine's fwd = (sin h, 0, cos h).
     f.spawns = {
-      'broadway-gate': { x: 70, z: 845, heading: Math.PI },
+      // Above the T1 bench on the scoured crest plateau, cornice lip ~45 m
+      // ahead: the whole basin and the Remarkables open up below.
+      'broadway-gate': { x: 70, z: 926, heading: Math.PI },
       'bowl-entry': { x: -180, z: 560, heading: Math.PI },
       'mid-traverse': { x: 430, z: 120, heading: Math.PI - 0.35 },
       'runout': { x: -60, z: -700, heading: Math.PI },
@@ -399,7 +401,10 @@ export class Terrain {
 
     /* -- Bluff bands ------------------------------------------------------- */
     const bluffRng = makeRng(this._seed('bluffs'));
-    f.bluffs = [[-520, -230], [-60, 180], [330, 540]].map(([x0, x1]) => {
+    // Gaps at x −300…−140 and −20…+300 are the snow-ramp through-routes; the
+    // broadway corridor and the fall line below the spawn both use the wide
+    // centre gap, so a straight glide is never cliffed out.
+    f.bluffs = [[-560, -300], [-140, -20], [300, 520]].map(([x0, x1]) => {
       const pts = [];
       const steps = Math.max(3, Math.round((x1 - x0) / 60));
       for (let i = 0; i <= steps; i++) {
@@ -423,9 +428,10 @@ export class Terrain {
 
     /* -- Groomed corridors -------------------------------------------------- */
     f.corridors = [
-      { name: 'broadway', halfWidth: 16, pts: [[240, 680], [180, 420], [60, 120], [120, -180], [280, -520]] },
-      { name: 'main-street', halfWidth: 22, pts: [[-100, 560], [-260, 200], [-340, -120], [-480, -430], [-300, -700]] },
-      { name: 'east-side', halfWidth: 14, pts: [[520, 560], [620, 200], [560, -200], [400, -520]] },
+      { name: 'broadway', halfWidth: 21, pts: [[240, 680], [180, 420], [60, 120], [140, -180], [280, -520], [330, -700]] },
+      { name: 'main-street', halfWidth: 24, pts: [[-100, 560], [-260, 200], [-340, -120], [-480, -430], [-300, -700], [-140, -860]] },
+      { name: 'east-side', halfWidth: 18, pts: [[520, 560], [620, 200], [560, -200], [400, -520], [420, -700]] },
+      { name: 'lower-link', halfWidth: 20, pts: [[-520, -560], [-220, -640], [60, -700], [340, -740]] },
     ].map((c) => ({ ...c, ...polyMeta(c.pts) }));
 
     /* -- Lift corridor (terrain reserves it, props.js builds it) ------------ */
@@ -758,7 +764,7 @@ export class Terrain {
 
     for (let j = 0; j < n; j++) {
       const z = minZ + j * cell;
-      const A = 700 * smoothstep(-600, 500, z) + 60;
+      const A = FLANK_LIFT * smoothstep(-600, 500, z) + 60;
       // Zone masks (cheap, z-only parts hoisted out of the inner loop).
       const upper = smoothstep(120, 560, z);
       const runout = smoothstep(-380, -720, z);
@@ -774,16 +780,16 @@ export class Terrain {
         // Masked to the flanks and the upper basin: the bowl floor is
         // deliberately clean so the analytic form reads.
         const flank = smoothstep(280, 760, Math.abs(x));
-        const ridgeMask = (0.22 + 0.78 * Math.max(flank, upper * 0.85)) * (1 - 0.72 * runout);
-        const rg = ridged2(simR, x / 300, z / 300, { octaves: 3, sharpness: 1.35 });
-        h += (rg - 0.5) * 34 * ridgeMask;
+        const ridgeMask = (0.24 + 0.76 * Math.max(flank, upper * 0.85)) * (1 - 0.42 * runout);
+        const rg = ridged2(simR, x / 340, z / 340, { octaves: 3, sharpness: 1.35 });
+        h += (rg - 0.5) * 24 * ridgeMask;
 
         // --- Band 2: domain-warped fBm — gullies, rollovers, spine field -
         // The warp is what kills the grid signature of raw fBm.
-        const midMask = 1 - 0.7 * runout;
-        h += warpedFbm2(simM, x / 78, z / 78, {
+        const midMask = 1 - 0.28 * runout;
+        h += warpedFbm2(simM, x / 96, z / 96, {
           octaves: 4, warp: 0.4, warpFrequency: 0.6, frequency: 1,
-        }) * 6.2 * midMask;
+        }) * 5.0 * midMask;
 
         H[row + i] = h;
       }
@@ -1035,7 +1041,7 @@ export class Terrain {
    */
   _thermalErosion(H) {
     const n = this.n, cell = this.cell;
-    const PASSES = 7, RATE = 0.4;
+    const PASSES = 10, RATE = 0.45;
     const delta = new Float32Array(H.length);
     const NX = [-1, 1, 0, 0, -1, 1, -1, 1];
     const NZ = [0, 0, -1, 1, -1, -1, 1, 1];
@@ -1049,8 +1055,10 @@ export class Terrain {
         for (let i = 1; i < n - 1; i++) {
           const k = row + i;
           const hc = H[k];
-          // 38° in the depositional lower basin, 47° on the rocky headwall.
-          const tal = Math.tan(lerp(38, 47, smoothstep(1550, 1740, hc)) * DEG);
+          // 34° in the depositional lower basin, 45° on the rocky headwall —
+          // the real angle of repose for scree, and the limit for consolidated
+          // snow-covered schist respectively.
+          const tal = Math.tan(lerp(34, 45, smoothstep(1550, 1740, hc)) * DEG);
           let total = 0, maxE = 0;
           for (let q = 0; q < 8; q++) {
             const dn = hc - H[k + NZ[q] * n + NX[q]] - tal * ND[q];
@@ -1301,18 +1309,22 @@ export class Terrain {
     }
 
     /* -- Containment: a rising basin wall, never an invisible box ---------- */
+    // 48 m over the final 130 m reads as a rising cirque rim at ~20°, which
+    // the player accepts as terrain. A steeper ramp reads as a wall.
+    const ramped = this.rampMask = new Uint8Array(n * n);
     for (let j = 0; j < n; j++) {
       const z = this.minZ + j * cell, row = j * n;
-      const rampZ = smoothstep(-950, -1024, z);
+      const rampZ = smoothstep(-894, -1024, z);
       for (let i = 0; i < n; i++) {
         const x = this.minX + i * cell;
-        const rampX = smoothstep(950, 1024, Math.abs(x));
+        const rampX = smoothstep(894, 1024, Math.abs(x));
         const ramp = Math.max(rampX, rampZ);
         if (ramp <= 0) continue;
         const k = row + i;
-        const allowed = (z < -420) || (Math.abs(x) > 950 && H[k] < 1700);
+        const allowed = (z < -420) || (Math.abs(x) > 894 && H[k] < 1700);
         if (!allowed) continue;
-        H[k] = softMax(H[k] + ramp * 62, 1865, 14);
+        ramped[k] = 255;
+        H[k] = softMax(H[k] + ramp * 48, 1865, 14);
       }
     }
 
@@ -1410,25 +1422,24 @@ export class Terrain {
     // Rock coverage is the single best one-number check that the mountain is
     // neither a quarry nor a meringue. Nudge the whole field if it has drifted
     // out of the 5–12% band (deterministic, and it never changes the shape).
-    let bare = 0;
-    for (let k = 0; k < N; k++) if (depth[k] < 0.10) bare++;
-    const frac = bare / N;
-    if (frac < 0.05 || frac > 0.12) {
-      // Bisect a uniform offset that lands the coverage on 8%.
-      let lo = -1.5, hi = 1.5;
-      for (let it = 0; it < 24; it++) {
-        const mid = (lo + hi) * 0.5;
-        let c = 0;
-        for (let k = 0; k < N; k += 7) if (depth[k] + mid < 0.10) c++;
-        const f = c / Math.ceil(N / 7);
-        if (f > 0.08) lo = mid; else hi = mid;
-      }
-      const off = (lo + hi) * 0.5;
-      for (let k = 0; k < N; k++) depth[k] = clamp(depth[k] + off, 0, 3.5);
-      this._depthOffset = off;
-    } else {
-      this._depthOffset = 0;
+    // Bare-ground fraction is bisected onto 5.5%; slope-shed and bluff faces
+    // then take total rock coverage to roughly 8%, inside the 5–12% band.
+    let lo = -1.5, hi = 1.5;
+    const stride = 7;
+    const ramp = this.rampMask;
+    let samples = 0;
+    for (let k = 0; k < N; k += stride) if (!ramp[k]) samples++;
+    for (let it = 0; it < 26; it++) {
+      const mid = (lo + hi) * 0.5;
+      let c = 0;
+      for (let k = 0; k < N; k += stride) if (!ramp[k] && depth[k] + mid < 0.10) c++;
+      if (c / samples > 0.055) lo = mid; else hi = mid;
     }
+    const off = (lo + hi) * 0.5;
+    if (Math.abs(off) > 1e-4) {
+      for (let k = 0; k < N; k++) depth[k] = clamp(depth[k] + off, 0, 3.5);
+    }
+    this._depthOffset = off;
   }
 
   /* ================================================================ *
@@ -1442,8 +1453,12 @@ export class Terrain {
     const simD = this.simDrift, simF = this.simFine;
     const depth = this.depth, groom = this.groom;
 
+    // Drift is laid on the pre-drift surface, so read the slope from a copy.
+    const src = new Float32Array(H);
+
     for (let j = 0; j < n; j++) {
       const z = this.minZ + j * cell, row = j * n;
+      const jm = (j > 0 ? j - 1 : j) * n, jp = (j < n - 1 ? j + 1 : j) * n;
       for (let i = 0; i < n; i++) {
         const k = row + i;
         if (groom[k] > 128) continue;         // groomers are combed flat
@@ -1451,10 +1466,22 @@ export class Terrain {
         const dScale = clamp01(depth[k] / 1.5);
         if (dScale < 0.02) continue;
 
+        // Steep ground sheds: drift only builds where it can sit. Without
+        // this the drift bands add ~10° of local slope *everywhere*, which
+        // pushes the whole slope histogram up and puts snow on faces that
+        // could never hold it.
+        const im = i > 0 ? i - 1 : i, ip = i < n - 1 ? i + 1 : i;
+        const gx = (src[row + ip] - src[row + im]) / (2 * cell);
+        const gz = (src[jp + i] - src[jm + i]) / (2 * cell);
+        const sDeg = Math.atan(Math.hypot(gx, gz)) / DEG;
+        const shed = 1 - smoothstep(24, 42, sDeg);
+        if (shed < 0.02) continue;
+        const amp = dScale * shed;
+
         // Band 3 — mogul-scale drift, λ 8–30 m.
-        const b3 = (billow2(simD, x / 17, z / 17, { octaves: 3 }) - 0.45) * 1.25 * dScale;
+        const b3 = (billow2(simD, x / 17, z / 17, { octaves: 3 }) - 0.45) * 0.95 * amp;
         // Band 4 — drift lobes and pillows over buried rock, λ 4–8 m.
-        const b4 = fbm2(simF, x / 6.2, z / 6.2, { octaves: 2 }) * 0.34 * dScale;
+        const b4 = fbm2(simF, x / 6.2, z / 6.2, { octaves: 2 }) * 0.26 * amp;
 
         H[k] += b3 + b4;
       }
@@ -1464,7 +1491,7 @@ export class Terrain {
     // dulling the landform (the blur radius is one post).
     const tmp = new Float32Array(H.length);
     this._blur(H, tmp, 1);
-    for (let k = 0; k < H.length; k++) H[k] = lerp(H[k], tmp[k], 0.35);
+    for (let k = 0; k < H.length; k++) H[k] = lerp(H[k], tmp[k], 0.28);
 
     for (let k = 0; k < H.length; k++) {
       H[k] = softMin(softMax(H[k], 1866, 12), 1409, 6);
@@ -1488,6 +1515,7 @@ export class Terrain {
     const Wx = WIND_TOWARD.x, Wz = WIND_TOWARD.z;
     const sast = CONFIG.snow.sastrugiStrength;
     const hist = new Float64Array(7);
+    let histTotal = 0;
 
     for (let j = 0; j < n; j++) {
       const jm = (j > 0 ? j - 1 : j) * n, jp = (j < n - 1 ? j + 1 : j) * n;
@@ -1547,12 +1575,17 @@ export class Terrain {
         rb = Math.max(rb, bluff[k] / 255);
         rockBlend[k] = (clamp01(rb) * 255) | 0;
 
-        const b = slopeDeg < 5 ? 0 : slopeDeg < 12 ? 1 : slopeDeg < 20 ? 2
-          : slopeDeg < 28 ? 3 : slopeDeg < 35 ? 4 : slopeDeg < 45 ? 5 : 6;
-        hist[b]++;
+        // §2.10 measures the histogram over the playable box *excluding* the
+        // containment ramps, which are deliberately steep boundary treatment.
+        if (!this.rampMask[k]) {
+          const b = slopeDeg < 5 ? 0 : slopeDeg < 12 ? 1 : slopeDeg < 20 ? 2
+            : slopeDeg < 28 ? 3 : slopeDeg < 35 ? 4 : slopeDeg < 45 ? 5 : 6;
+          hist[b]++;
+          histTotal++;
+        }
       }
     }
-    this._slopeHist = Array.from(hist, (v) => v / N);
+    this._slopeHist = Array.from(hist, (v) => v / Math.max(1, histTotal));
   }
 
   /**
@@ -2106,8 +2139,10 @@ export class Terrain {
     if (minH < 1408) warnings.push(`min elevation ${minH.toFixed(1)} < 1408`);
     if (maxH > 1867) warnings.push(`max elevation ${maxH.toFixed(1)} > 1867`);
 
-    let rock = 0, groomed = 0, ice = 0, wind = 0, powder = 0;
+    let rock = 0, groomed = 0, ice = 0, wind = 0, powder = 0, tot = 0;
     for (let k = 0; k < N; k++) {
+      if (this.rampMask[k]) continue;
+      tot++;
       switch (this.surf[k]) {
         case S_ROCK: rock++; break;
         case S_GROOMED: groomed++; break;
@@ -2116,9 +2151,9 @@ export class Terrain {
         default: powder++;
       }
     }
-    const pct = (v) => (100 * v / N);
+    const pct = (v) => (100 * v / Math.max(1, tot));
     if (pct(rock) < 5 || pct(rock) > 12) warnings.push(`rock coverage ${pct(rock).toFixed(1)}% outside 5–12%`);
-    if (pct(groomed) < 6 || pct(groomed) > 18) warnings.push(`groomed coverage ${pct(groomed).toFixed(1)}% outside 6–18%`);
+    if (pct(groomed) < 5 || pct(groomed) > 16) warnings.push(`groomed coverage ${pct(groomed).toFixed(1)}% outside 5–16%`);
 
     // Spawn sanity + a straight glide down the fall line.
     const sp = this.getSpawn();
