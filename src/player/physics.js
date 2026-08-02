@@ -46,7 +46,11 @@ export class BoardPhysics {
     s.position.addScaledVector(s.velocity, h);
 
     const ground = terrain.getHeight(s.position.x, s.position.z);
-    s.position.y = damp(s.position.y, ground, 22, h);
+    // Sit exactly on the surface. Damping toward the ground height leaves a
+    // steady-state lag of (descent rate / lambda) — 0.3 m at 14 m/s on the
+    // 25 deg bowl pitch — and a board hovering a third of a metre above its own
+    // shadow is the first thing anyone notices in a close shot.
+    s.position.y = ground;
     s.grounded = true;
     s.edgeAngle = input.steer * 0.6;
     s.roll = damp(s.roll, -input.steer * 0.5, 8, h);

@@ -147,20 +147,20 @@ export const SHOTS = [
     settle: 0.5,
     prepare(ctx) { freeCam(ctx); },
     apply(ctx) {
-      // Untracked powder on the bowl-entry pitch rather than the scoured crest:
-      // the crest is windpack and shows none of the material's powder response.
+      // Wind-scoured crest snow, which is where the sastrugi actually are: the
+      // deep-powder pitches below the headwall carry none. `broadway-gate` sits
+      // on windpack at 8°, gentle enough that a shallow downhill look still
+      // meets the ground instead of grazing off into a landscape vista.
       const t = ctx.terrain;
-      const p = t ? t.getSpawn('bowl-entry').position : v(0, 0, 0);
-      const gx = p.x + 14, gz = p.z - 22;
-      const gy = gh(ctx, gx, gz);
+      const p = t ? t.getSpawn('broadway-gate').position : v(0, 0, 0);
+      const gx = p.x + 6, gz = p.z - 10;
       const cam = ctx.camera;
-      cam.fov = 28;
-      // Look ACROSS the fall line and steeply down. Aiming down-slope on a 25°
-      // pitch from 1.1 m up means the ray never catches the ground — the shot
-      // silently becomes a landscape vista instead of a macro. Traversing the
-      // slope keeps the ground at a constant range under the lens.
-      cam.position.set(gx + 1.9, gy + 1.05, gz);
-      cam.lookAt(gx - 0.6, gh(ctx, gx - 0.6, gz - 0.5) + 0.02, gz - 0.5);
+      cam.fov = 30;
+      // ~4.5 m of ground across the frame: three sastrugi wavelengths, a whole
+      // drift lobe, and still close enough for the crystal glints to survive
+      // their 25→40 m distance cutoff.
+      cam.position.set(gx, gh(ctx, gx, gz) + 2.05, gz);
+      cam.lookAt(gx - 1.2, gh(ctx, gx - 1.2, gz - 5.2) + 0.03, gz - 5.2);
       cam.updateProjectionMatrix();
     },
   },
