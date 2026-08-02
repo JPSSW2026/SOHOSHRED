@@ -119,7 +119,7 @@ const DEFAULT_TUNE = {
   },
   tussock: {
     limit: 5200,
-    chunk: 96,           // m; one InstancedMesh per chunk
+    chunk: 160,          // m; one InstancedMesh per chunk
     maxElevation: 1560,  // TERRAIN_BRIEF §2.13
     maxDepth: 0.25,
     maxSlopeDeg: 24,
@@ -503,12 +503,16 @@ function buildSlabStack(rng, opt = {}) {
       const bx = ox + cx * batter, bz = oz + cz * batter;
       top.push([bx, yB - bz * tanDip, bz]);
     }
+    // Winding: rings are generated with (cos a → x, sin a → z), so the
+    // outward-facing side quad is bottom→top→top→bottom and the up-facing cap
+    // is the *flipped* fan. Getting this backwards renders every rock
+    // inside-out, which back-face culling turns into a hollow shell.
     for (let j = 0; j < sides; j++) {
       const j2 = (j + 1) % sides;
-      B.quad(bot[j], bot[j2], top[j2], top[j]);
+      B.quad(bot[j], top[j], top[j2], bot[j2]);
     }
-    B.fan(top, false);
-    B.fan(bot, true);
+    B.fan(top, true);
+    B.fan(bot, false);
   }
   return B.build('soho-slab');
 }
@@ -534,11 +538,11 @@ function buildDriftMound(segs = 12, rings = 3, tail = 1.5) {
   };
   const apex = [0, 1, 0];
   for (let si = 0; si < segs; si++) {
-    B.tri(apex, ringPt(1, si), ringPt(1, si + 1));
+    B.tri(apex, ringPt(1, si + 1), ringPt(1, si));
   }
   for (let ri = 1; ri < rings; ri++) {
     for (let si = 0; si < segs; si++) {
-      B.quad(ringPt(ri, si), ringPt(ri + 1, si), ringPt(ri + 1, si + 1), ringPt(ri, si + 1));
+      B.quad(ringPt(ri, si), ringPt(ri, si + 1), ringPt(ri + 1, si + 1), ringPt(ri + 1, si));
     }
   }
   return B.build('soho-drift');
@@ -585,11 +589,11 @@ function buildPole(opt = {}) {
     const cur = ringAt(t), curC = colAt(t);
     for (let i = 0; i < radial; i++) {
       const j = (i + 1) % radial;
-      B.quad(prev[i], prev[j], cur[j], cur[i], prevC, prevC, curC, curC);
+      B.quad(prev[i], cur[i], cur[j], prev[j], prevC, curC, curC, prevC);
     }
     prev = cur; prevC = curC;
   }
-  B.fan(prev, false, prevC);
+  B.fan(prev, true, prevC);
   return B.build('soho-pole');
 }
 
@@ -716,9 +720,9 @@ function pushTube(B, cx, cz, y0, y1, r0, r1, radial, col) {
   const a = ring(y0, r0), b = ring(y1, r1);
   for (let i = 0; i < radial; i++) {
     const j = (i + 1) % radial;
-    B.quad(a[i], a[j], b[j], b[i], col, col, col, col);
+    B.quad(a[i], b[i], b[j], a[j], col, col, col, col);
   }
-  B.fan(b, false, col);
+  B.fan(b, true, col);
 }
 
 const STEEL = [0.415, 0.432, 0.452];
@@ -766,13 +770,13 @@ function pushTerminal(B, x, y, z, yaw, len) {
   const top = corners.map(([lx, lz]) => rot(lx, H, lz));
   for (let i = 0; i < 4; i++) {
     const j = (i + 1) % 4;
-    B.quad(bot[i], bot[j], top[j], top[i], wall, wall, wall, wall);
+    B.quad(bot[i], top[i], top[j], bot[j], wall, wall, wall, wall);
   }
   const ridgeA = rot(-L, H + 1.25, 0), ridgeB = rot(L, H + 1.25, 0);
-  B.quad(top[0], top[1], ridgeB, ridgeA, roof, roof, roof, roof);
-  B.quad(top[2], top[3], ridgeA, ridgeB, roof, roof, roof, roof);
-  B.tri(top[1], top[2], ridgeB, wall, wall, wall);
-  B.tri(top[3], top[0], ridgeA, wall, wall, wall);
+  B.quad(top[1], top[0], ridgeA, ridgeB, roof, roof, roof, roof);
+  B.quad(top[3], top[2], ridgeB, ridgeA, roof, roof, roof, roof);
+  B.tri(top[2], top[1], ridgeB, wall, wall, wall);
+  B.tri(top[0], top[3], ridgeA, wall, wall, wall);
 }
 
 /* ==========================================================================
@@ -800,9 +804,16 @@ function buildCorniceRibbon(stations) {
     const a1 = pt(a, 0.35 * a.over, a.lip), b1 = pt(b, 0.35 * b.over, b.lip);
     const a2 = pt(a, a.over, a.lip * 0.72), b2 = pt(b, b.over, b.lip * 0.72);
     const a3 = pt(a, a.over * 0.55, -0.35), b3 = pt(b, b.over * 0.55, -0.35);
-    B.quad(a0, b0, b1, a1);   // windward back, rising to the crest
-    B.quad(a1, b1, b2, a2);   // the lip itself
-    B.quad(a2, b2, b3, a3);   // the undercut, facing down and into shadow
+    // Handedness: the (along-crest, lee) frame flips sign depending on which
+    // way the polyline runs, and a flipped ribbon renders inside-out. The 2D
+    // cross product tells us which winding puts the top surface facing up.
+    const hand = (b.x - a.x) * a.lz - (b.z - a.z) * a.lx;
+    const q = hand <= 0
+      ? (p0, p1, p2, p3) => B.quad(p0, p1, p2, p3)
+      : (p0, p1, p2, p3) => B.quad(p3, p2, p1, p0);
+    q(a0, b0, b1, a1);   // windward back, rising to the crest
+    q(a1, b1, b2, a2);   // the lip itself
+    q(a2, b2, b3, a3);   // the undercut, facing down and into shadow
   }
   return B.build('soho-cornice');
 }
@@ -843,7 +854,7 @@ function buildRopeRun(stations, sag, radius, col) {
       if (prev) {
         for (let k = 0; k < 3; k++) {
           const k2 = (k + 1) % 3;
-          B.quad(prev[k], prev[k2], cur[k2], cur[k], col, col, col, col);
+          B.quad(prev[k], cur[k], cur[k2], prev[k2], col, col, col, col);
         }
       }
       prev = cur;
@@ -1011,7 +1022,7 @@ function installWind(material, uniforms, cacheKey, backlit) {
   };
   material.customProgramCacheKey = () => cacheKey;
   // Geometry that forgets the attribute still compiles and simply stands still.
-  material.defaultAttributeValues = { ...(material.defaultAttributeValues || {}), aBend: 0 };
+  material.defaultAttributeValues = { ...(material.defaultAttributeValues || {}), aBend: [0] };
 }
 
 /* ==========================================================================
@@ -1206,6 +1217,9 @@ class ChunkedField {
       mesh.castShadow = this.castShadow;
       mesh.receiveShadow = this.receiveShadow;
       mesh.computeBoundingSphere();
+      // Off until the first `update()` decides how close the camera is; the
+      // engine always updates before it renders, so nothing pops.
+      mesh.visible = false;
       parent.add(mesh);
       this.chunks.push({ mesh, total: b.n, cx: b.cx / b.n, cz: b.cz / b.n });
     }
@@ -1326,6 +1340,7 @@ export class Props {
     for (const f of this.fields) f.finalize(this.object3D);
     const shuffleRng = makeRng(this._seed('chunk.shuffle'));
     for (const c of this.chunked) c.finalize(this.object3D, shuffleRng);
+    this._poseChairs(0);
 
     this._collectStats();
     if (CONFIG.debug?.showColliders) this._buildColliderDebug();
@@ -1425,8 +1440,6 @@ export class Props {
    * ------------------------------------------------------------------ */
 
   _buildGeometryLibrary() {
-    const rng = makeRng(this._seed('geometry'));
-
     /**
      * Three rock archetypes, each at three levels of detail. They are
      * semantically different landforms, not just three random blobs: a tall
@@ -1453,7 +1466,10 @@ export class Props {
       ],
       pole: [
         { geometry: buildPole({ tipFrac: 0.14 }), angular: 0.010 },
-        { geometry: buildPole({ radial: 4, segs: 2, radius: 0.030, tipFrac: 0.16 }), angular: 0.0 },
+        // The far LOD is deliberately fatter: a 2 cm pole at 300 m is well
+        // under a pixel and simply vanishes, so it is thickened to hold the
+        // dotted line of poles that marks the piste edge into the distance.
+        { geometry: buildPole({ radial: 4, segs: 2, radius: 0.038, tipFrac: 0.16 }), angular: 0.0 },
       ],
       fencePost: [
         { geometry: buildPole({ height: 1.55, radius: 0.028, tipFrac: 0.0, body: [0.196, 0.166, 0.096] }), angular: 0.010 },
@@ -1467,8 +1483,6 @@ export class Props {
       chair: [{ geometry: buildChair(), angular: 0.0 }],
       tussock: buildTussock(makeRng(this._seed('geo.tussock')), { blades: 6, segs: 3, height: 1.0 }),
     };
-
-    void rng;
   }
 
   /** Create and register an InstancedField. */
@@ -1723,10 +1737,15 @@ export class Props {
     const T = this.tune;
     const rng = makeRng(this._seed('bluff.rubble'));
     const P = this.probe;
-    let budget = Math.round(T.rock.talusLimit * clamp(T.density ?? 1, 0.05, 4));
+    const bluffs = this.features.bluffs || [];
+    // Share the budget out so the first band does not eat the lot.
+    const perBand = Math.max(
+      12,
+      Math.floor(T.rock.talusLimit * clamp(T.density ?? 1, 0.05, 4) / Math.max(1, bluffs.length)),
+    );
 
-    for (const bl of this.features.bluffs || []) {
-      if (budget <= 0) break;
+    for (const bl of bluffs) {
+      let budget = perBand;
       const height = bl.height ?? 12;
       walkPolyline(bl.pts, 7, (x, z) => {
         if (budget <= 0) return;
@@ -1784,7 +1803,7 @@ export class Props {
     const P = this.probe;
 
     this.debrisField = this._field('avalanche-debris', this.snowMat, this.geo.snowBlock, {
-      castShadow: true, receiveShadow: true, shadowLevels: 1, cullAngular: 0.0075,
+      castShadow: true, receiveShadow: true, shadowLevels: 1, cullAngular: 0.0028,
     });
 
     const budgetTotal = Math.round(T.debris.limit * clamp(T.density ?? 1, 0.05, 4));
@@ -1804,14 +1823,18 @@ export class Props {
 
     const per = Math.max(20, Math.floor(budgetTotal / mouths.length));
     for (const m of mouths) {
-      // Downhill from the mouth: radially away from the cirque focus below the
-      // headwall, and straight down the fall line for the bluff gaps.
-      let ddx = m.x - FOCUS_X, ddz = m.z - FOCUS_Z;
-      const dl = Math.hypot(ddx, ddz) || 1;
+      // The fall line at the mouth, taken from the surface normal — correct
+      // for the headwall couloirs (which drain toward the cirque focus) and
+      // for the bluff gaps (which are below it) alike.
+      const n = P.normal(m.x, m.z, _v3);
+      let ddx = n.x, ddz = n.z;
+      let dl = Math.hypot(ddx, ddz);
+      if (dl < 1e-3) {
+        // Dead flat: fall back to "inward from the crest".
+        ddx = FOCUS_X - m.x; ddz = FOCUS_Z - m.z;
+        dl = Math.hypot(ddx, ddz) || 1;
+      }
       ddx /= dl; ddz /= dl;
-      // Radially outward from the focus points *uphill* on the headwall side,
-      // so the debris runs the other way.
-      ddx = -ddx; ddz = -ddz;
 
       const pts = poissonScatter(rng, {
         minX: m.x - m.spread * 2.4, maxX: m.x + m.spread * 2.4,
@@ -1961,10 +1984,10 @@ export class Props {
     const P = this.probe;
 
     this.poleField = this._field('marker-pole', this.poleMat, this.geo.pole, {
-      castShadow: true, receiveShadow: true, shadowLevels: 2, cullAngular: 0.0055,
+      castShadow: true, receiveShadow: true, shadowLevels: 2, cullAngular: 0.0038,
     });
     this.flagField = this._field('marker-flag', this.flagMat, this.geo.flag, {
-      castShadow: false, receiveShadow: true, cullAngular: 0.0022,
+      castShadow: false, receiveShadow: true, cullAngular: 0.0016,
     });
 
     let budget = Math.round(T.poles.limit * clamp(T.density ?? 1, 0.05, 4));
@@ -2047,7 +2070,7 @@ export class Props {
     const P = this.probe;
 
     this.fencePostField = this._field('fence-post', this.poleMat, this.geo.fencePost, {
-      castShadow: true, receiveShadow: true, shadowLevels: 2, cullAngular: 0.0060,
+      castShadow: true, receiveShadow: true, shadowLevels: 2, cullAngular: 0.0035,
     });
 
     let budget = Math.round(T.fence.limit * clamp(T.density ?? 1, 0.05, 4));
@@ -2129,5 +2152,460 @@ export class Props {
         castShadow: false, receiveShadow: false,
       });
     }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * the chairlift
+   * ------------------------------------------------------------------ */
+
+  /**
+   * The Soho Express: 14 towers over 379 m of rise and 1,318 m of slope
+   * length, two haul-rope strands, moving six-packs and a shed at each end.
+   *
+   * A lift line does more work than any other single prop: it is the one
+   * object in the frame whose scale the viewer knows absolutely, it draws a
+   * long converging line up the mountain that reads depth instantly, and its
+   * cable is a legitimate near-black silhouette against the sky in a scene
+   * that otherwise has no true darks.
+   */
+  _buildLift() {
+    const F = this.features.lift;
+    if (!F || !F.base || !F.top) return;
+    const T = this.tune;
+    const rng = makeRng(this._seed('lift'));
+    const P = this.probe;
+
+    const ax = F.base.x, az = F.base.z, bx = F.top.x, bz = F.top.z;
+    const dx = bx - ax, dz = bz - az;
+    const runLen = Math.hypot(dx, dz) || 1;
+    const tx = dx / runLen, tz = dz / runLen;
+    const px = -tz, pz = tx;                 // cross-line, cable offset axis
+    const yaw = Math.atan2(tx, tz);          // local +Z along the line
+    const gauge = 2.6;                       // half the rope spacing
+
+    this.towerField = this._field('lift-tower', this.steelMat, this.geo.tower, {
+      castShadow: true, receiveShadow: true, shadowLevels: 1, cullAngular: 0.0012,
+    });
+    this.chairField = this._field('lift-chair', this.steelMat, this.geo.chair, {
+      castShadow: true, receiveShadow: true, shadowLevels: 1, cullAngular: 0.0016,
+    });
+
+    /* -- Towers ----------------------------------------------------------- */
+    const nTowers = Math.max(2, F.towers ?? T.lift.towers);
+    const sheave = [];   // one entry per tower, plus a terminal at each end
+    const terminalDrop = 22;   // towers start this far in from each terminal
+
+    const addSheave = (x, z, y) => sheave.push({ x, y, z });
+    addSheave(ax, az, P.height(ax, az) + 5.4);
+
+    for (let i = 0; i < nTowers; i++) {
+      const u = (i + 0.5) / nTowers;
+      const s = terminalDrop + u * (runLen - terminalDrop * 2);
+      const x = ax + tx * s, z = az + tz * s;
+      const g = P.height(x, z);
+      // Towers stand taller where the ground sags away under the span.
+      const chord = lerp(P.height(ax, az), P.height(bx, bz), s / runLen);
+      const hs = clamp(0.78 + (chord - g) * 0.035, 0.70, 1.45) * rng.range(0.97, 1.03);
+      _e.set(0, yaw, 0, 'YXZ');
+      _q.setFromEuler(_e);
+      _v3.set(x, g, z);
+      _v3b.set(1, hs, 1);
+      _m4.compose(_v3, _q, _v3b);
+      this.towerField.add(_m4, 7.5 * hs, null);
+      addSheave(x, z, g + 9.5 * hs + 0.05);
+
+      this._colliders.push({
+        type: 'box',
+        position: new THREE.Vector3(x, g + 9.5 * hs * 0.5, z),
+        halfExtents: new THREE.Vector3(0.62, 9.5 * hs * 0.5, 0.62),
+        quaternion: new THREE.Quaternion(),
+        tag: 'lift-tower',
+      });
+    }
+    addSheave(bx, bz, P.height(bx, bz) + 5.4);
+
+    /* -- Haul rope: catenary sag between every pair of sheaves ------------ */
+    const path = [[], []];
+    const cableGeo = new TriBuilder();
+    const cableCol = [0.030, 0.032, 0.035];
+    for (let side = 0; side < 2; side++) {
+      const off = side === 0 ? gauge : -gauge;
+      let prevRing = null;
+      for (let i = 0; i < sheave.length - 1; i++) {
+        const A = sheave[i], B = sheave[i + 1];
+        const sx = B.x - A.x, sz = B.z - A.z;
+        const span = Math.hypot(sx, sz) || 1;
+        const sag = Math.min(2.6, span * 0.018);
+        const N = 6;
+        for (let s = (i === 0 ? 0 : 1); s <= N; s++) {
+          const t = s / N;
+          const x = A.x + sx * t + px * off;
+          const z = A.z + sz * t + pz * off;
+          const y = lerp(A.y, B.y, t) - sag * 4 * t * (1 - t);
+          path[side].push({ x, y, z });
+          // Triangular prism section — thin, dark, and it must survive at
+          // 800 m, so it is not allowed to get any thinner than this.
+          const r = 0.055;
+          const ring = [
+            [x, y + r, z],
+            [x + px * r * 0.87, y - r * 0.5, z + pz * r * 0.87],
+            [x - px * r * 0.87, y - r * 0.5, z - pz * r * 0.87],
+          ];
+          if (prevRing) {
+            for (let k = 0; k < 3; k++) {
+              const k2 = (k + 1) % 3;
+              cableGeo.quad(prevRing[k], prevRing[k2], ring[k2], ring[k], cableCol, cableCol, cableCol, cableCol);
+            }
+          }
+          prevRing = ring;
+        }
+      }
+      prevRing = null;
+    }
+    this._static(cableGeo.build('soho-cable'), this.steelMat, 'props-lift-cable', {
+      castShadow: false, receiveShadow: false,
+    });
+
+    /* -- Terminals -------------------------------------------------------- */
+    const term = new TriBuilder();
+    pushTerminal(term, ax, P.height(ax, az) - 0.6, az, yaw, 8.5);
+    pushTerminal(term, bx, P.height(bx, bz) - 0.6, bz, yaw, 7.0);
+    this._static(term.build('soho-terminals'), this.steelMat, 'props-lift-terminals', {
+      castShadow: true, receiveShadow: true,
+    });
+    for (const [cx, cz, len] of [[ax, az, 8.5], [bx, bz, 7.0]]) {
+      this._colliders.push({
+        type: 'box',
+        position: new THREE.Vector3(cx, P.height(cx, cz) + 1.1, cz),
+        halfExtents: new THREE.Vector3(len, 2.0, 4.6),
+        quaternion: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0, 'YXZ')),
+        tag: 'lift-terminal',
+      });
+    }
+
+    /* -- Chairs ----------------------------------------------------------- */
+    // Precompute arc length along each strand so a chair can be placed by
+    // distance travelled; the update loop then just moves one scalar.
+    const strands = [];
+    for (let side = 0; side < 2; side++) {
+      const pts = path[side];
+      if (pts.length < 2) continue;
+      const cum = [0];
+      for (let i = 1; i < pts.length; i++) {
+        cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y, pts[i].z - pts[i - 1].z));
+      }
+      strands.push({ pts, cum, total: cum[cum.length - 1], dir: side === 0 ? 1 : -1 });
+    }
+    const spacing = T.lift.chairSpacing;
+    const chairs = [];
+    for (const st of strands) {
+      const n = Math.max(1, Math.floor(st.total / spacing));
+      for (let i = 0; i < n; i++) {
+        const idx = this.chairField.add(_m4.identity(), 2.6, null);
+        chairs.push({ strand: st, s0: i * spacing, idx });
+      }
+    }
+    this._lift = { strands, chairs, speed: T.lift.chairSpeed, spacing };
+    this._poseChairs(0);
+  }
+
+  /** Slide every chair along its strand. Pure function of `t`, so it diffs. */
+  _poseChairs(t) {
+    const L = this._lift;
+    if (!L || !this.chairField || !this.chairField.matrices) return;
+    const M = this.chairField.matrices;
+    for (const c of L.chairs) {
+      const st = c.strand;
+      let s = (c.s0 + t * L.speed * st.dir) % st.total;
+      if (s < 0) s += st.total;
+      // Locate the segment (linear scan from a cached hint is overkill for 33).
+      let i = 1;
+      while (i < st.cum.length - 1 && st.cum[i] < s) i++;
+      const a = st.pts[i - 1], b = st.pts[i];
+      const seg = Math.max(1e-4, st.cum[i] - st.cum[i - 1]);
+      const u = clamp01((s - st.cum[i - 1]) / seg);
+      const x = lerp(a.x, b.x, u), y = lerp(a.y, b.y, u), z = lerp(a.z, b.z, u);
+      const dx = (b.x - a.x) * st.dir, dz = (b.z - a.z) * st.dir;
+      _e.set(0, Math.atan2(dx, dz), 0, 'YXZ');
+      _q.setFromEuler(_e);
+      _v3.set(x, y, z);
+      _v3b.set(1, 1, 1);
+      _m4.compose(_v3, _q, _v3b);
+      _m4.toArray(M, c.idx * 16);
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * tussock
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Narrow-leaved snow tussock (*Chionochloa rigida*) in the wind-scoured
+   * margins: only where the settled pack is under 25 cm, below 1,560 m and on
+   * ground under 24° (TERRAIN_BRIEF §2.13 — nowhere else). Against a white
+   * field these gold patches are the most valuable natural colour accent we
+   * have, and they are the direct substitute for the reference set's trees.
+   *
+   * Scattered in two levels — blue-noise patch centres, then a jittered lattice
+   * within each patch — because tussock genuinely grows in clumps separated by
+   * bare fellfield, and a single flat Poisson over 2 km² would need an 9M-cell
+   * background grid to resolve a 0.9 m spacing.
+   */
+  _placeTussock() {
+    const T = this.tune.tussock;
+    const density = clamp(this.tune.density ?? 1, 0.05, 4);
+    const rng = makeRng(this._seed('tussock'));
+    const P = this.probe;
+    const b = P.bounds;
+
+    this.tussockField = new ChunkedField('tussock', this.geo.tussock, this.tussockMat, {
+      size: T.chunk, near: T.near, far: T.far, cull: T.cull, minFrac: T.minFrac,
+      castShadow: false, receiveShadow: true, useColor: true,
+    });
+    this.chunked.push(this.tussockField);
+
+    // `relax` widens the depth window on a retry. The primary rule is the
+    // brief's (depth < 0.25 m), but a lean scour year on a given seed can
+    // leave almost nothing eligible, and a basin with no tussock at all loses
+    // the only saturated natural colour in the frame — so the second and third
+    // passes also take deeply wind-scoured convex ground, which is where
+    // ART_DIRECTION §6.2 puts tussock anyway.
+    let relax = 1;
+    const suitable = (x, z) => {
+      const s = P.sample(x, z);
+      if (s.slope / DEG > T.maxSlopeDeg) return false;
+      if (s.surface === 'groomed' || s.surface === 'rock') return false;
+      if (s.height <= T.maxElevation && s.depth <= T.maxDepth) return true;
+      if (relax < 2) return false;
+      // Tier 2 — scoured, convex, wind-blasted shoulders. §6.2 puts tussock
+      // exactly here: "wind-scoured patches on convex ridge shoulders".
+      if (s.height <= T.maxElevation && s.depth <= T.maxDepth * 2.2
+        && (s.exposure > 0.55 || s.curvature > 0.12)) return true;
+      if (relax < 3) return false;
+      // Tier 3 — the run-out margins below ~1,470 m, where the pack is thin
+      // and patchy and only the heads and seed stalks clear it.
+      return s.height < 1470 && s.depth <= 0.9;
+    };
+
+    const scatterPatches = () => poissonScatter(makeRng(this._seed('tussock.patches') + relax), {
+      minX: b.minX + 20, maxX: b.maxX - 20, minZ: b.minZ + 20, maxZ: b.maxZ - 20,
+      rMin: 9, rMax: 34, k: 8, limit: 420, seedBudget: 26000,
+      radiusAt: (x, z) => {
+        // Denser patches where the wind has scoured hardest.
+        const s = P.sample(x, z);
+        return lerp(34, 9, clamp01(s.exposure * 0.7 + (1 - s.depth / T.maxDepth) * 0.4));
+      },
+      accept: (x, z) => (this._cleared(x, z) ? false : suitable(x, z)),
+    });
+
+    let patches = scatterPatches();
+    while (patches.count < 90 && relax < 3) {
+      relax++;
+      patches = scatterPatches();
+    }
+
+    // Spread the budget across every patch rather than filling the first few:
+    // Bridson grows outward from its seeds, so a first-come budget would put
+    // the entire tussock population in one corner of the run-out.
+    const total = Math.round(T.limit * density);
+    const perPatch = Math.max(3, Math.floor(total / Math.max(1, patches.count)));
+    const baseCol = new THREE.Color();
+    for (let p = 0; p < patches.count; p++) {
+      let budget = perPatch;
+      const cx = patches.x[p], cz = patches.z[p];
+      const radius = rng.range(2.8, 9.0);
+      const spacing = rng.range(0.85, 1.5);
+      const n = Math.ceil((radius * 2) / spacing);
+      for (let j = 0; j <= n && budget > 0; j++) {
+        for (let i = 0; i <= n && budget > 0; i++) {
+          const gx = cx - radius + i * spacing + rng.range(-0.42, 0.42) * spacing;
+          const gz = cz - radius + j * spacing + rng.range(-0.42, 0.42) * spacing;
+          const rr = Math.hypot(gx - cx, gz - cz);
+          if (rr > radius) continue;
+          // Feather the patch edge, otherwise every clump field is a disc.
+          if (rng() > 1 - smoothstep(radius * 0.45, radius * 1.02, rr)) continue;
+          if (!suitable(gx, gz)) continue;
+          const s = P.sample(gx, gz);
+          // The plant is buried to whatever depth the pack has: a clump is
+          // 0.45–0.85 m tall, and the deeper the snow the less of it clears —
+          // down to heads and seed stalks only (§1.4: 0.1–0.4 m showing).
+          const sink = clamp(s.depth * 0.9, 0.0, 0.55);
+          const showing = clamp(0.86 - s.depth * 0.62, 0.14, 0.86) * rng.range(0.82, 1.12);
+          const h = showing + sink;
+          _e.set(rng.range(-0.10, 0.10), rng() * TAU, rng.range(-0.10, 0.10), 'YXZ');
+          _q.setFromEuler(_e);
+          _v3.set(gx, s.height - sink, gz);
+          _v3b.set(rng.range(0.80, 1.25), h, rng.range(0.80, 1.25));
+          _m4.compose(_v3, _q, _v3b);
+          // Bronze → straw → gold, plus the odd silvered seed head.
+          const k = rng();
+          baseCol.setRGB(
+            lerp(0.86, 1.28, k) * rng.range(0.94, 1.06),
+            lerp(0.88, 1.16, k) * rng.range(0.95, 1.05),
+            lerp(0.82, 1.05, k) * rng.range(0.92, 1.08),
+          );
+          this.tussockField.add(_m4, gx, gz, baseCol);
+          budget--;
+        }
+      }
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * bookkeeping
+   * ------------------------------------------------------------------ */
+
+  _collectStats() {
+    let instances = 0, objects = 0, triangles = 0;
+    const triOf = (g) => (g.index ? g.index.count : g.attributes.position.count) / 3;
+    for (const f of this.fields) {
+      instances += f.count;
+      objects += f.meshes.length;
+      if (f.count) triangles += triOf(f.levels[0].geometry) * f.count;
+    }
+    for (const c of this.chunked) {
+      instances += c.count;
+      objects += c.chunks.length;
+      triangles += triOf(c.geometry) * c.count;
+    }
+    for (const m of this.statics) {
+      objects++;
+      triangles += triOf(m.geometry);
+    }
+    this._stats = { instances, objects, triangles: Math.round(triangles) };
+  }
+
+  /** `CONFIG.debug.showColliders` — one wireframe box per collider. */
+  _buildColliderDebug() {
+    if (!this._colliders.length) return;
+    const geo = new THREE.BoxGeometry(2, 2, 2);
+    const mat = new THREE.MeshBasicMaterial({ color: 0x30ff90, wireframe: true, depthTest: false });
+    const mesh = new THREE.InstancedMesh(geo, mat, this._colliders.length);
+    mesh.name = 'props-collider-debug';
+    mesh.frustumCulled = false;
+    let i = 0;
+    for (const c of this._colliders) {
+      const he = c.halfExtents || new THREE.Vector3(c.radius ?? 1, c.radius ?? 1, c.radius ?? 1);
+      _m4.compose(c.position, c.quaternion || _q.identity(), _v3b.copy(he));
+      mesh.setMatrixAt(i++, _m4);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    this.object3D.add(mesh);
+    this._debugMesh = mesh;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * per-frame
+   * ------------------------------------------------------------------ */
+
+  _refreshLod(force) {
+    const cam = this.ctx.camera;
+    if (!cam) return;
+    const p = cam.position;
+    const moved = this._lodCam.distanceToSquared(p);
+    const eps = this.tune.lodEpsilon;
+    const frame = this.ctx.frame ?? 0;
+    if (!force && moved < eps * eps && frame - this._lodFrame < this.tune.lodMaxFrames) return;
+    this._lodCam.copy(p);
+    this._lodFrame = frame;
+    for (const f of this.fields) f.refresh(p);
+  }
+
+  update(dt, ctx) {
+    if (!this.built) return;
+    const cam = ctx.camera;
+
+    // Deterministic clock: the harness steps `elapsed` in exact increments.
+    this._time = Number.isFinite(ctx.elapsed) ? ctx.elapsed : this._time + (Number.isFinite(dt) ? dt : 0);
+
+    const u = this._windUniforms;
+    u.uPropTime.value = this._time;
+    u.uWindXZ.value.set(this.wind.x, this.wind.z);
+    // Gusting: a slow, smooth envelope rather than a per-frame jitter. At
+    // 4.2 m/s the tussock should breathe, not thrash.
+    const speed = clamp((CONFIG.world?.windSpeed ?? 4.2) / 8, 0.15, 1.6);
+    u.uWindGust.value = speed * (0.55 + 0.45 * this.simp.noise2D(this._time * 0.16, 3.7));
+
+    const sun = ctx.sky?.sunDirection;
+    if (sun && cam) {
+      _v3.copy(sun).transformDirection(cam.matrixWorldInverse);
+      u.uSunViewDir.value.copy(_v3);
+      // Translucent rim only matters under a low sun; at 10.6° it is huge.
+      u.uBacklitStrength.value = 0.85 * (1 - smoothstep(0.05, 0.55, Math.max(0, sun.y)));
+    }
+
+    this._refreshLod(false);
+
+    if (cam) {
+      for (const c of this.chunked) c.update(cam.position);
+    }
+
+    // Chairs move; they only need repositioning while anyone can see them.
+    if (this._lift && this.chairField && this.chairField.count && cam) {
+      const base = this._lift.strands[0]?.pts[0];
+      const far = base
+        ? Math.hypot(cam.position.x - base.x, cam.position.z - base.z) > 2600
+        : false;
+      if (!far) {
+        this._poseChairs(this._time);
+        // The chair field's LOD buckets read from `matrices`, so a pose change
+        // has to be followed by a re-pack; it is 33 instances, not a concern.
+        this.chairField.refresh(cam.position);
+      }
+    }
+
+    updateSnowMaterial(this.rockMat, dt, ctx);
+    updateSnowMaterial(this.snowMat, dt, ctx);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * physics interface
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Collision shapes for `physics.js`. Boxes for anything with a face the
+   * rider can hit square (tors, outcrops, lift towers, terminals); nothing is
+   * emitted for props a board just brushes through — poles, netting, tussock
+   * and debris are all deliberately non-colliding so a fast line is never
+   * stopped by set dressing.
+   *
+   * @returns {Array<{type:string, position:THREE.Vector3, radius?:number,
+   *                  halfExtents?:THREE.Vector3, quaternion?:THREE.Quaternion,
+   *                  tag:string}>}
+   */
+  getColliders() { return this._colliders; }
+
+  /**
+   * Broad-phase helper: everything whose centre is within `radius` of `pos`.
+   * Not part of the ARCHITECTURE contract, but a 1,400-entry linear scan per
+   * physics substep is not something `physics.js` should have to write itself.
+   */
+  getCollidersNear(pos, radius, out = []) {
+    out.length = 0;
+    const r2 = radius * radius;
+    for (const c of this._colliders) {
+      const dx = c.position.x - pos.x, dy = c.position.y - pos.y, dz = c.position.z - pos.z;
+      if (dx * dx + dy * dy + dz * dz <= r2) out.push(c);
+    }
+    return out;
+  }
+
+  /** Instance/triangle census, for the HUD debug overlay and the harness. */
+  getStats() { return this._stats; }
+
+  dispose() {
+    for (const f of this.fields) f.dispose();
+    for (const c of this.chunked) c.dispose();
+    for (const m of this.statics) { m.geometry.dispose(); }
+    for (const m of this.materials) m.dispose?.();
+    this._debugMesh?.geometry.dispose();
+    this._debugMesh?.material.dispose();
+    this.netTex?.dispose();
+    this.fields.length = 0;
+    this.chunked.length = 0;
+    this.statics.length = 0;
+    this._colliders.length = 0;
+    this.object3D.parent?.remove(this.object3D);
+    this.built = false;
   }
 }
