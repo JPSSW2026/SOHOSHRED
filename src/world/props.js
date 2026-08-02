@@ -1263,15 +1263,14 @@ export class Props {
     this._time = 0;
     this._stats = { instances: 0, triangles: 0, objects: 0 };
 
+    // Shared by every wind-animated material so one clock and one wind vector
+    // drive the whole field; per-material amplitude/frequency live alongside.
     this._windUniforms = {
       uPropTime: { value: 0 },
       uWindXZ: { value: new THREE.Vector2(-0.921, 0.391) },
       uWindGust: { value: 0.4 },
       uSunViewDir: { value: new THREE.Vector3(0, 0, -1) },
-      uBacklitColor: { value: new THREE.Color(0.66, 0.42, 0.13) },
       uBacklitStrength: { value: 0.0 },
-      uSwayAmp: { value: 0.10 },
-      uSwayFreq: { value: 1.35 },
     };
 
     ctx.props = this;
@@ -1383,7 +1382,8 @@ export class Props {
       metalness: 0.0,
     });
 
-    // Flag: light coated nylon. Fluttering, and lit from both sides.
+    // Flag: light coated nylon. Fluttering fast and shallow, and translucent
+    // enough that a low sun behind it lights the fabric through.
     this.flagMat = new THREE.MeshStandardMaterial({
       name: 'props-flag',
       color: new THREE.Color(0.760, 0.086, 0.020),
@@ -1391,9 +1391,15 @@ export class Props {
       metalness: 0.0,
       side: THREE.DoubleSide,
     });
-    installWind(this.flagMat, this._windUniforms, 'soho-flag', true);
+    installWind(this.flagMat, {
+      ...this._windUniforms,
+      uSwayAmp: { value: 0.055 },
+      uSwayFreq: { value: 3.4 },
+      uBacklitColor: { value: new THREE.Color(0.95, 0.24, 0.06) },
+    }, 'soho-flag', true);
 
-    // Snow tussock: double-sided ribbons, wind-swayed, backlit rim.
+    // Snow tussock: double-sided ribbons, slow deep sway, gold backlit rim —
+    // §6.2 wants the low sun to blow straight through the seed heads.
     this.tussockMat = new THREE.MeshStandardMaterial({
       name: 'props-tussock',
       vertexColors: true,
@@ -1401,7 +1407,12 @@ export class Props {
       metalness: 0.0,
       side: THREE.DoubleSide,
     });
-    installWind(this.tussockMat, this._windUniforms, 'soho-tussock', true);
+    installWind(this.tussockMat, {
+      ...this._windUniforms,
+      uSwayAmp: { value: 0.10 },
+      uSwayFreq: { value: 1.25 },
+      uBacklitColor: { value: new THREE.Color(0.72, 0.47, 0.15) },
+    }, 'soho-tussock', true);
 
     this.materials.push(
       this.rockMat, this.snowMat, this.poleMat, this.steelMat,
