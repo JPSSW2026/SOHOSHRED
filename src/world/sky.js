@@ -189,7 +189,7 @@ const SKY_CALIBRATION = 0.65;
  * sky is rebuilt — so it tracks time of day and weather instead of being a
  * fixed grey lift.
  */
-const BOUNCE_VIEW_FACTOR = 0.11;
+const BOUNCE_VIEW_FACTOR = 0.085;
 
 /** Resolution of the sky radiance tables (bins in zenith cosine). */
 const LUT_N = 20;
@@ -1937,7 +1937,7 @@ export class Sky {
     if (!light || !camera || !light.visible) return;
 
     const cfg = this._cfg;
-    const far = cfg.shadowDistance ?? 140;
+    const far = cfg.shadowDistance ?? 120;
     const near = Math.max(camera.near, 0.05);
 
     // Minimal bounding sphere of the frustum slice [near, far], in view space.
@@ -1992,10 +1992,20 @@ export class Sky {
     cam.far = back + radius * 2.2 + 400;
     cam.updateProjectionMatrix();
 
-    const grazing = Math.sqrt(Math.max(0, 1 - L.y * L.y));
-    light.shadow.normalBias = clamp(texel * (1.6 + 2.4 * grazing), 0.02, 0.45);
-    // Small constant bias in normalised depth: 6 cm of the camera's depth range.
-    light.shadow.bias = -0.06 / (cam.far - cam.near);
+    // Bias, sized from the geometry rather than guessed.
+    //
+    // At a 10.5 deg sun a horizontal snow surface is almost parallel to the
+    // light, so the depth stored across a single shadow texel varies by
+    // texel / tan(altitude) — here about 5.4 texels' worth of depth.  A
+    // constant bias smaller than that acnes; a normal offset large enough to
+    // cover it peter-pans, because offsetting along the normal displaces the
+    // shadow horizontally by offset / tan(altitude), which at this sun angle is
+    // 5.4x the offset.  So the depth term carries the slope and the normal
+    // offset stays at a couple of texels.  Net displacement works out at ~0.4 m
+    // on a 9.6 m rider shadow: 4%, invisible, and no acne.
+    const sinAlt = Math.max(0.12, Math.abs(L.y));
+    light.shadow.normalBias = clamp(texel * 1.5, 0.02, 0.20);
+    light.shadow.bias = -clamp(texel * 1.1 / sinAlt, 0.05, 1.2) / (cam.far - cam.near);
   }
 
   /* -------------------------------------------------------------- *

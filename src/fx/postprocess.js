@@ -137,6 +137,9 @@ const TUNE = {
     sunLumHi: 0.78,
     blurSpread: 1.7,
     depthSigma: 0.055,
+    /** Contact AO only: full strength to `fadeStart`, gone by `fadeEnd`. */
+    fadeStart: 22,
+    fadeEnd: 70,
   },
 
   dof: {
@@ -314,7 +317,6 @@ ${FRAG_DEPTH}
 
 uniform sampler2D tDepth;
 uniform vec2  uTexel;       // 1 / AO buffer size
-uniform vec2  uFullTexel;   // 1 / scene buffer size
 uniform vec2  uTanHalf;
 uniform float uNear;
 uniform float uFar;
@@ -324,6 +326,7 @@ uniform float uProjScale;   // full-res pixels per metre at 1 m distance
 uniform float uMaxRadius;   // AO-buffer pixels
 uniform float uBias;
 uniform float uAoScale;     // AO buffer size / scene buffer size
+uniform vec2  uFade;        // (start, end) metres
 
 varying vec2 vUv;
 
@@ -331,8 +334,14 @@ void main() {
 
   float zc = linearZ( tDepth, vUv, uNear, uFar );
 
-  // Sky (depth cleared to the far plane) never receives AO.
-  if ( zc >= uFar * 0.97 ) {
+  // AO is a *contact* effect: it has no business existing past a few tens of
+  // metres, where a 0.6 m radius is sub-pixel anyway. Cutting it off here is
+  // three things at once — it matches the art direction's rule that detail
+  // must vanish with distance, it removes the iso-depth banding that 24-bit
+  // depth quantisation produces when normals are differenced at long range,
+  // and it skips the whole sampling loop for most of a wide alpine frame.
+  float fade = 1.0 - smoothstep( uFade.x, uFade.y, zc );
+  if ( fade <= 0.001 ) {
     gl_FragColor = vec4( 1.0, zc, 0.0, 1.0 );
     return;
   }
@@ -340,8 +349,10 @@ void main() {
   vec3 P = viewPos( vUv, zc, uTanHalf );
 
   // --- depth-derived normal ------------------------------------------------
-  vec2 ox = vec2( uFullTexel.x, 0.0 );
-  vec2 oy = vec2( 0.0, uFullTexel.y );
+  // Differenced over one AO-buffer texel rather than one scene texel: the
+  // wider baseline halves the depth-quantisation noise in the slope estimate.
+  vec2 ox = vec2( uTexel.x, 0.0 );
+  vec2 oy = vec2( 0.0, uTexel.y );
   float zl = linearZ( tDepth, vUv - ox, uNear, uFar );
   float zr = linearZ( tDepth, vUv + ox, uNear, uFar );
   float zd = linearZ( tDepth, vUv - oy, uNear, uFar );
@@ -387,7 +398,7 @@ void main() {
     occ += clamp( dot( N, v / len ) - uBias, 0.0, 1.0 ) * range;
   }
 
-  float ao = 1.0 - uIntensity * occ / float( AO_SAMPLES );
+  float ao = 1.0 - uIntensity * fade * occ / float( AO_SAMPLES );
   gl_FragColor = vec4( clamp( ao, 0.0, 1.0 ), zc, 0.0, 1.0 );
 }
 `;
@@ -1104,7 +1115,6 @@ export class PostProcessing {
       {
         tDepth: { value: this.depthTexture },
         uTexel: { value: new THREE.Vector2() },
-        uFullTexel: { value: new THREE.Vector2() },
         uTanHalf: { value: new THREE.Vector2() },
         uNear: { value: 0.1 },
         uFar: { value: 1000 },
@@ -1114,6 +1124,7 @@ export class PostProcessing {
         uMaxRadius: { value: TUNE.ssao.maxRadiusPx },
         uBias: { value: TUNE.ssao.bias },
         uAoScale: { value: q.aoScale },
+        uFade: { value: new THREE.Vector2(TUNE.ssao.fadeStart, TUNE.ssao.fadeEnd) },
       },
       { name: 'post/ao', target: this.aoRT, defines: { AO_SAMPLES: q.aoSamples } },
     );
@@ -1320,7 +1331,6 @@ export class PostProcessing {
     const aspect = w / Math.max(1, h);
 
     this.aoPass.uniforms.uTexel.value.set(1 / this.aoSize.x, 1 / this.aoSize.y);
-    this.aoPass.uniforms.uFullTexel.value.set(1 / w, 1 / h);
     this.aoBlurPass.uniforms.uTexel.value.set(1 / this.aoSize.x, 1 / this.aoSize.y);
 
     this.sceneFxPass.uniforms.uTexel.value.set(1 / w, 1 / h);
@@ -1450,6 +1460,10 @@ export class PostProcessing {
     u.uIntensity.value = pick(cfg, 'intensity', 0.75);
     u.uBias.value = pick(cfg, 'bias', TUNE.ssao.bias);
     u.uMaxRadius.value = pick(cfg, 'maxRadiusPx', TUNE.ssao.maxRadiusPx);
+    u.uFade.value.set(
+      pick(cfg, 'fadeStart', TUNE.ssao.fadeStart),
+      pick(cfg, 'fadeEnd', TUNE.ssao.fadeEnd),
+    );
 
     const invExposure = 1 / Math.max(0.05, this.renderer.toneMappingExposure);
     const fx = this.sceneFxPass.uniforms;
