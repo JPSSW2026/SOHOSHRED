@@ -1039,6 +1039,12 @@ const SNOW_SURFACE = /* glsl */ `
 	float folB = sin( folC * ( 6.2831853 / ( uFoliationSpacing * 7.3 ) ) + 1.7 );
 	vec3 folT = uFoliationN - nW * dot( nW, uFoliationN );
 	float folFade = 1.0 - smoothstep( 0.22, 0.85, sohoFootprint / uFoliationSpacing );
+	// The coarse platy band is 7.3x the fine spacing but is still only ~0.6 m,
+	// which is well under a pixel on a bluff seen from 400 m.  Without its own
+	// footprint fade it aliases into a hard 1-px checkerboard across every rock
+	// band in a wide shot, so it gets the same treatment at its own scale.
+	float folFadeB = 1.0 - smoothstep( 0.22, 0.85, sohoFootprint / ( uFoliationSpacing * 7.3 ) );
+	folB *= folFadeB;
 	nW = normalize( nW + folT * ( ( folA * 0.18 * folFade + folB * 0.24 ) * rockF ) );
 
 	#ifdef USE_TRACK_MAP
@@ -1178,6 +1184,10 @@ const ROCK_SURFACE = /* glsl */ `
 	float folA = sin( folC * ( 6.2831853 / uFoliationSpacing ) ) * ( 0.35 + 1.05 * rn.z );
 	float folB = sin( folC * ( 6.2831853 / ( uFoliationSpacing * 7.3 ) ) + 1.7 );
 	float folFade = 1.0 - smoothstep( 0.22, 0.85, sohoFootprint / uFoliationSpacing );
+	// Same Nyquist guard as the snow material's rock blend: the coarse band is
+	// sub-pixel by ~200 m and aliases without it.
+	float folFadeB = 1.0 - smoothstep( 0.22, 0.85, sohoFootprint / ( uFoliationSpacing * 7.3 ) );
+	folB *= folFadeB;
 	vec3 folT = uFoliationN - nW * dot( nW, uFoliationN );
 	nW = normalize( nW + folT * ( folA * 0.20 * folFade + folB * 0.26 ) );
 

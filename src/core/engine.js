@@ -55,7 +55,9 @@ export class Engine {
     this.renderer.toneMapping = TONE_MAPPINGS[CONFIG.render.toneMapping] ?? THREE.AgXToneMapping;
     this.renderer.toneMappingExposure = CONFIG.render.exposure;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // r185 deprecated PCFSoftShadowMap and silently substitutes PCFShadowMap;
+    // naming the real path avoids a console warning on every boot.
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.info.autoReset = false;
 
     this.maxAnisotropy = Math.min(
@@ -135,8 +137,14 @@ export class Engine {
   /**
    * Advance the simulation by `dt` seconds and render exactly one frame.
    * Split out from the RAF loop so the capture harness can step deterministically.
+   *
+   * `doRender === false` runs the full simulation but skips the draw. The
+   * capture harness uses it to warm the world up (LOD streaming, physics,
+   * particles) without paying for hundreds of software-rasterised frames;
+   * `postRender` still runs so history-dependent effects (motion-blur
+   * reprojection) stay continuous across the settle.
    */
-  tick(dt) {
+  tick(dt, doRender = true) {
     const { fixedTimestep, maxSubSteps } = CONFIG.physics;
     dt = Math.min(dt, 0.1); // clamp huge stalls (tab restore, GC pause)
     this.elapsed += dt;
@@ -158,11 +166,13 @@ export class Engine {
 
     for (const s of this.systems) s.update?.(dt, this.ctx);
 
-    this.renderer.info.reset();
-    if (this.ctx.composer) {
-      this.ctx.composer.render(dt);
-    } else {
-      this.renderer.render(this.scene, this.camera);
+    if (doRender) {
+      this.renderer.info.reset();
+      if (this.ctx.composer) {
+        this.ctx.composer.render(dt);
+      } else {
+        this.renderer.render(this.scene, this.camera);
+      }
     }
     for (const s of this.systems) s.postRender?.(dt, this.ctx);
   }

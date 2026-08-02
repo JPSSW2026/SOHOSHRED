@@ -4,6 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
     <title>Soho Shred</title>
+    <!-- Empty inline icon: keeps the zero-external-asset rule and stops the
+         browser firing a 404 for /favicon.ico, which the capture harness
+         (correctly) reports as a console error. -->
+    <link rel="icon" href="data:," />
     <style>
       :root { color-scheme: dark; }
       * { margin: 0; padding: 0; box-sizing: border-box; }

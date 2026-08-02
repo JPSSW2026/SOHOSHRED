@@ -1826,7 +1826,8 @@ export class Terrain {
     const nor = new Float32Array(total * 3);
     const uv = new Float32Array(total * 2);
     const col = new Float32Array(total * 3);
-    const aSurface = new Float32Array(total);
+    // vec4, per SNOW_VERTEX_ATTRIBUTES: (groomed, windpack, ice, snowCover).
+    const aSurface = new Float32Array(total * 4);
     const aDepth = new Float32Array(total);
     const aRoughness = new Float32Array(total);
     const aExposure = new Float32Array(total);
@@ -1861,7 +1862,7 @@ export class Terrain {
     geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    geo.setAttribute('aSurface', new THREE.BufferAttribute(aSurface, 1));
+    geo.setAttribute('aSurface', new THREE.BufferAttribute(aSurface, 4));
     geo.setAttribute('aDepth', new THREE.BufferAttribute(aDepth, 1));
     geo.setAttribute('aRoughness', new THREE.BufferAttribute(aRoughness, 1));
     geo.setAttribute('aExposure', new THREE.BufferAttribute(aExposure, 1));
@@ -1995,7 +1996,10 @@ export class Terrain {
       nor[pd] = nor[ps]; nor[pd + 1] = nor[ps + 1]; nor[pd + 2] = nor[ps + 2];
       uv[dst * 2] = uv[src * 2]; uv[dst * 2 + 1] = uv[src * 2 + 1];
       col[pd] = col[ps]; col[pd + 1] = col[ps + 1]; col[pd + 2] = col[ps + 2];
-      aSurface[dst] = aSurface[src]; aDepth[dst] = aDepth[src];
+      const s4 = src * 4, d4 = dst * 4;
+      aSurface[d4] = aSurface[s4]; aSurface[d4 + 1] = aSurface[s4 + 1];
+      aSurface[d4 + 2] = aSurface[s4 + 2]; aSurface[d4 + 3] = aSurface[s4 + 3];
+      aDepth[dst] = aDepth[src];
       aRoughness[dst] = aRoughness[src]; aExposure[dst] = aExposure[src];
       aCurvature[dst] = aCurvature[src]; aRock[dst] = aRock[src];
     }
@@ -2033,7 +2037,18 @@ export class Terrain {
       id = rb > 0.5 ? S_ROCK : S_WINDPACK;
     }
 
-    attrs.aSurface[vi] = id;
+    // Pack the class index into snowMaterial's documented vec4 layout
+    // (groomed, windpack, ice, snowCover). Rock is the *absence* of cover
+    // rather than a fifth weight, so the shader's generic default (0,0,0,1)
+    // still means "deep powder". Cover fades with settled depth and with the
+    // terrain's own rock blend, which is what turns the snow/rock boundary
+    // into a drift-shaped gradient instead of a razor edge.
+    const so = vi * 4;
+    attrs.aSurface[so] = id === S_GROOMED ? 1 : 0;
+    attrs.aSurface[so + 1] = id === S_WINDPACK ? 1 : 0;
+    attrs.aSurface[so + 2] = id === S_ICE ? 1 : 0;
+    const cover = smoothstep(0.06, 0.45, d) * (1 - rb);
+    attrs.aSurface[so + 3] = id === S_ROCK ? Math.min(cover, 0.25) : cover;
     attrs.aDepth[vi] = d;
     attrs.aRoughness[vi] = r;
     attrs.aExposure[vi] = e;
@@ -2109,7 +2124,7 @@ export class Terrain {
     const nor = new Float32Array(total * 3);
     const uv = new Float32Array(total * 2);
     const col = new Float32Array(total * 3);
-    const aSurface = new Float32Array(total);
+    const aSurface = new Float32Array(total * 4);
     const aDepth = new Float32Array(total);
     const aRoughness = new Float32Array(total);
     const aExposure = new Float32Array(total);
@@ -2159,7 +2174,7 @@ export class Terrain {
     geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    geo.setAttribute('aSurface', new THREE.BufferAttribute(aSurface, 1));
+    geo.setAttribute('aSurface', new THREE.BufferAttribute(aSurface, 4));
     geo.setAttribute('aDepth', new THREE.BufferAttribute(aDepth, 1));
     geo.setAttribute('aRoughness', new THREE.BufferAttribute(aRoughness, 1));
     geo.setAttribute('aExposure', new THREE.BufferAttribute(aExposure, 1));

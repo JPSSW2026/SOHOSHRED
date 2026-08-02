@@ -33,6 +33,17 @@ function queryOverrides() {
   if (q.has('weather')) o.world = { ...(o.world || {}), weather: q.get('weather') };
   if (q.has('nopost')) o.post = { bloom: { enabled: false }, dof: { enabled: false }, motionBlur: { enabled: false }, ssao: { enabled: false } };
   if (q.has('exposure')) o.render = { ...(o.render || {}), exposure: parseFloat(q.get('exposure')) };
+  // Escape hatch for tuning passes: ?cfg={"sky":{"aerialStrength":0.5}} is
+  // deep-merged into CONFIG before any system is constructed, so it reaches
+  // values that are only read at build time.
+  if (q.has('cfg')) {
+    try {
+      const extra = JSON.parse(q.get('cfg'));
+      if (extra && typeof extra === 'object') applyOverrides(extra);
+    } catch (e) {
+      console.warn('[soho] ignoring malformed ?cfg=', e.message);
+    }
+  }
   return o;
 }
 
@@ -131,10 +142,22 @@ async function boot() {
 
     step(dt = 1 / 60) { engine.tick(dt); },
 
-    /** Advance `seconds` of simulation in fixed increments and render each. */
-    settle(seconds, dt = 1 / 60) {
+    /**
+     * Advance `seconds` of simulation in fixed increments.
+     *
+     * Only the final frames are actually drawn. On the SwiftShader software
+     * rasteriser a composed frame costs ~1.5 s, so rendering all ~450 warm-up
+     * frames of a 7.5 s settle would take nine minutes per shot for imagery
+     * that is thrown away. Simulation still runs at full fidelity every step,
+     * so the resulting state — and therefore the captured frame — is identical.
+     *
+     * The last two frames *are* drawn: the motion-blur pass reprojects against
+     * the previous frame, so it needs one real rendered predecessor or every
+     * shot would be treated as a hard cut.
+     */
+    settle(seconds, dt = 1 / 60, renderAll = false) {
       const n = Math.max(1, Math.round(seconds / dt));
-      for (let i = 0; i < n; i++) engine.tick(dt);
+      for (let i = 0; i < n; i++) engine.tick(dt, renderAll || i >= n - 2);
     },
 
     /**
