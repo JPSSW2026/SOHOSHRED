@@ -1389,7 +1389,7 @@ export class Terrain {
         for (let i = 0; i < n; i++) {
           const k = row + i;
           const h = H[k];
-          if (h > 1452) continue;
+          if (h > 1456) continue;      // must match the mask's upper edge
           const x = this.minX + i * cell;
           const mask = (1 - smoothstep(1436, 1456, h));
           const tread = 13 + 6 * fbm2(sim, x / 220, z / 220, { octaves: 2 });
@@ -2476,11 +2476,11 @@ export class Terrain {
     const verts = [], uvs = [], idx = [];
 
     for (const b of this.features.bluffs) {
-      const faceW = b.height / Math.tan(b.faceAngle);
+      const faceW0 = b.height / Math.tan(b.faceAngle);
       const cols = Math.max(2, Math.round(b.length / COL_STEP));
       // One row count for the whole segment keeps the grid rectangular; the
       // face length is the true down-dip run, not the vertical drop.
-      const rows = clamp(Math.round(Math.hypot(faceW + 2.0, b.height + 0.6) / ROW_STEP), 6, 72);
+      const rows = clamp(Math.round(Math.hypot(faceW0 + 1.2, b.height + 0.6) / ROW_STEP), 6, 72);
       const colFirst = new Int32Array(cols + 1).fill(-1);
 
       for (let c = 0; c <= cols; c++) {
@@ -2496,17 +2496,22 @@ export class Terrain {
         const perpX = -tz, perpZ = tx;          // points uphill for these segments
         const along = smoothstep(0, 55, sArc) * (1 - smoothstep(b.length - 55, b.length, sArc));
         if (along < 0.12) continue;
+        // The heightfield tapers the step by `along` at both ends, so the face
+        // width has to taper with it. Holding faceW fixed while the drop dies
+        // away is what turned the last 55 m of every segment into a 40° ramp
+        // wearing a rock material.
+        const faceW = faceW0 * along;
 
         // The break line meanders and the buttresses vary in stand-off: a
         // dead-straight top edge sampled on 2 m posts is what stair-steps.
-        const wobT = this.simFine.noise2D(px / 21 + 4.3, pz / 21 - 8.1) * 1.7
-          + this.simFine.noise2D(px / 5.5, pz / 5.5) * 0.5;
-        const wobB = rng.range(-0.6, 0.9) + this.simFine.noise2D(px / 17 - 2.7, pz / 17 + 5.9) * 2.2;
+        const wobT = this.simFine.noise2D(px / 21 + 4.3, pz / 21 - 8.1) * 0.6
+          + this.simFine.noise2D(px / 5.5, pz / 5.5) * 0.25;
+        const wobB = rng.range(-0.3, 0.5) + this.simFine.noise2D(px / 17 - 2.7, pz / 17 + 5.9) * 0.9;
 
-        const topX = px + perpX * (faceW * 0.5 + 0.6 + wobT);
-        const topZ = pz + perpZ * (faceW * 0.5 + 0.6 + wobT);
-        const botX = px - perpX * (faceW * 0.5 + 1.4 + wobB);
-        const botZ = pz - perpZ * (faceW * 0.5 + 1.4 + wobB);
+        const topX = px + perpX * (faceW * 0.5 + 0.35 + wobT);
+        const topZ = pz + perpZ * (faceW * 0.5 + 0.35 + wobT);
+        const botX = px - perpX * (faceW * 0.5 + 0.8 + wobB);
+        const botZ = pz - perpZ * (faceW * 0.5 + 0.8 + wobB);
         const topY = this.getHeight(topX, topZ) + 0.25;
         const botY = this.getHeight(botX, botZ) - 0.35;
 
@@ -2563,7 +2568,10 @@ export class Terrain {
     const vCount = nAttr.count;
     const aSurface = new Float32Array(vCount * 4);
     for (let i = 0; i < vCount; i++) {
-      aSurface[i * 4 + 3] = smoothstep(0.30, 0.52, nAttr.getY(i));
+      // A 65–75° face already carries n.y ≈ 0.26–0.42, so the band starts
+      // above that: only micro-facets the foliation relief has genuinely
+      // tilted up count as ledges.
+      aSurface[i * 4 + 3] = smoothstep(0.45, 0.72, nAttr.getY(i));
     }
     geo.setAttribute('aSurface', new THREE.BufferAttribute(aSurface, 4));
 
