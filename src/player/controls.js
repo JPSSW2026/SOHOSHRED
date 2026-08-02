@@ -142,9 +142,12 @@ export class Input {
   update(dt = 1 / 60) {
     const s = this.state;
     if (!this.enabled) {
+      // Hands off entirely — do NOT publish a zeroed struct. Disabling input
+      // is how a cutscene or a capture preset takes the controls, and if this
+      // kept writing zeros into physics every frame it would stamp out
+      // whatever the preset set, one frame after it set it.
       s.steer = 0; s.lean = 0; s.crouch = 0; s.spin = 0; s.flip = 0;
       s.pop = false; s.tuck = false; s.brake = 0; s.grab = null; s.reset = false;
-      this.ctx.physics?.applyInput?.(s);
       return;
     }
 

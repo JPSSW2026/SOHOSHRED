@@ -427,7 +427,7 @@ export class Rider {
       const shin = bone(`shin${side}`, thigh, 0, -DIM.thighLength, 0);
       part(limbGeometry(DIM.shinLength, 0.078, 0.062, 1.05), pants, shin);
       const bt = bone(`boot${side}`, shin, 0, -DIM.shinLength, 0);
-      const bootMesh = part(new THREE.BoxGeometry(0.12, DIM.bootHeight, 0.26), boot, bt, 0, -DIM.bootHeight * 0.5, 0.02);
+      const bootMesh = part(new THREE.BoxGeometry(0.105, DIM.bootHeight, 0.235), boot, bt, 0, -DIM.bootHeight * 0.45, 0.015);
       bootMesh.name = `bootMesh${tag}`;
       // Cuff.
       part(new THREE.CylinderGeometry(0.072, 0.078, 0.10, 8), boot, bt, 0, 0.03, -0.01);
@@ -536,7 +536,11 @@ export class Rider {
 
     // ---- Hips -------------------------------------------------------
     const hips = B.hips;
-    const standH = 0.86;
+    // Ride height. Total leg length is 0.88 m, so standing the hips at 0.86
+    // locks the knees straight — nobody rides like that. 0.735 puts roughly
+    // 25° of bend in a neutral stance, which is where a rider actually lives
+    // and which leaves the legs room to both extend and absorb.
+    const standH = 0.735;
     const squat = A.absorb * 0.20 + A.tuck * 0.26 + A.compress * 0.13;
     hips.position.y = standH - squat;
     // Lean the mass across the board to balance the carve.
@@ -638,7 +642,13 @@ export class Rider {
 
     const blend = clamp01(dt * 30);
     thigh.quaternion.slerp(this._ikQ, blend);
-    this._ikQ2.setFromAxisAngle(this._ikZ.set(0, 0, 1), knee);
+    // The shin bends by −knee, not +knee. The thigh was already swung off the
+    // hip→target line *toward* the pole, so the knee is displaced to that
+    // side; the shin has to come back across the line to put the foot on the
+    // target. Bending it the same way as the thigh sends the foot out to
+    // roughly twice the offset — which is exactly the half-metre miss that
+    // left the boots hanging in the air beside the bindings.
+    this._ikQ2.setFromAxisAngle(this._ikZ.set(0, 0, 1), -knee);
     shin.quaternion.slerp(this._ikQ2, blend);
 
     // Boot: cancel the accumulated leg rotation so the foot stays bolted flat

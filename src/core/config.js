@@ -100,8 +100,14 @@ export const CONFIG = {
      * (CONFIG.render.shotExposure[name] ?? 1)` and restoring it afterwards.
      */
     shotExposure: {
-      'rider-portrait': 0.65,
+      'rider-portrait': 0.75,
       'snow-detail': 0.60,
+      // The other direction: these two are framed into the light and onto
+      // shadowed slopes, so the base stop that suits a sunlit snowfield
+      // leaves them at mean 73 and 109 against a 130-185 band. Metered, not
+      // guessed - see the sweep in the commit that added them.
+      'ridge-backlight': 4.70,
+      'air-trick': 1.45,
     },
     toneMapping: 'agx',
     shadowMapSize: 4096,

@@ -171,10 +171,49 @@ async function boot() {
       // `prepare` chooses the rider's start state; it has to run before the
       // settle, because the settle is what turns that state into a run.
       preset.prepare?.(ctx);
-      this.settle(preset.settle ?? 0);
+
+      // A preset may script the controls across the settle via `tick`.
+      //
+      // It needs to, because a *constant* input is not a neutral choice: hold
+      // a fixed steering angle and the sidecut carves a circle, so at 16 m/s
+      // on a 6 m radius a six-second settle spins the rider through two and a
+      // half full turns and leaves them pointing in an arbitrary direction.
+      // Presets that want a carve therefore run straight to build speed and
+      // roll onto the edge only in the last fraction of a second, which is
+      // also exactly how a rider actually initiates one.
+      const secs = preset.settle ?? 0;
+      if (typeof preset.tick === 'function') {
+        const dt = 1 / 60;
+        const n = Math.max(1, Math.round(secs / dt));
+        for (let i = 0; i < n; i++) {
+          preset.tick(ctx, i * dt, dt, secs);
+          // Same rule as settle(): only the last two frames are drawn, because
+          // motion blur reprojects against its predecessor.
+          engine.tick(dt, i >= n - 2);
+        }
+      } else {
+        this.settle(secs);
+      }
       preset.apply(ctx);
+
+      // Per-shot exposure compensation. A cinematographer meters each setup
+      // rather than shooting a whole reel at one stop, and two of these
+      // presets are framed almost entirely on sunlit snow with no sky and no
+      // shadow in frame — their histogram *is* the snow, so no global stop can
+      // place them. CONFIG.render.shotExposure documents the values; this is
+      // the hook it is documented against.
+      //
+      // It has to be applied here rather than in engine.js because it is a
+      // property of the setup, not of the renderer, and it must be restored
+      // afterwards so an interactive session is never left mis-metered.
+      const base = engine.renderer.toneMappingExposure;
+      const comp = CONFIG.render.shotExposure?.[preset.name];
+      if (comp) engine.renderer.toneMappingExposure = CONFIG.render.exposure * comp;
+
       // Render one more frame so the new camera pose is what gets captured.
       engine.tick(1 / 60);
+
+      engine.renderer.toneMappingExposure = base;
       return { name: preset.name, description: preset.description };
     },
 

@@ -237,6 +237,57 @@ function dropIn(ctx, spawnName, speed = 0) {
   return s;
 }
 
+/** Neutral controls, so `ride()` always publishes a complete input struct. */
+const NEUTRAL_INPUT = {
+  steer: 0, lean: 0, crouch: 0, pop: false, spin: 0, flip: 0,
+  grab: null, tuck: false, brake: 0, reset: false,
+};
+
+/**
+ * Take the controls for a preset.
+ *
+ * A rider with no input travels in a straight line, and a straight line throws
+ * no snow: that is why `close-spray` photographed a rider standing still in a
+ * white field. Spray is a *consequence* in this build — particles.js reads
+ * `state.sprayIntensity`, which physics derives from lateral speed, edge load
+ * and sink — so the only way to photograph a spray wall is to actually make
+ * the rider carve.
+ *
+ * Disabling `ctx.input` matters: the Input system publishes every frame, and
+ * a live keyboard reader would stamp a zeroed struct over this one tick later.
+ */
+function ride(ctx, input) {
+  if (ctx.input) ctx.input.enabled = false;
+  ctx.physics?.applyInput?.({ ...NEUTRAL_INPUT, ...input });
+}
+
+/**
+ * Put the rider in the air, for the presets whose subject is the trick rather
+ * than the take-off.
+ *
+ * This is set in `apply()` rather than flown to during the settle, because the
+ * settle has no per-tick hook to release a pop at the right instant. The state
+ * it writes is one the physics genuinely produces — a pop off a rollover — so
+ * the rider, camera and FX all pose from it exactly as they would in play.
+ */
+function launch(ctx, up = 5.4, airTime = 0.62, grab = 'indy') {
+  const st = ctx.physics?.state;
+  if (!st) return;
+  st.velocity.y = up;
+  st.position.y += up * airTime * 0.5;
+  st.grounded = false;
+  st.airTime = airTime;
+  st.airHeight = up * airTime * 0.5;
+  st.speed = st.velocity.length();
+  ride(ctx, { grab, crouch: 0.55 });
+  if (ctx.tricks) {
+    ctx.tricks.current = {
+      name: null, rotation: 0, flip: 0, grab, grabTime: airTime,
+      grabSwitches: 0, score: 0, multiplier: 1, airTime, height: st.airHeight, popped: true,
+    };
+  }
+}
+
 export const SHOTS = [
   {
     name: 'hero-basin',
@@ -265,9 +316,14 @@ export const SHOTS = [
       // `bowl-entry` is the 25° powder pitch below the headwall; the default
       // crest-plateau spawn is 8° and the rider barely moves in five seconds.
       dropIn(ctx, 'bowl-entry', 14);
+      ride(ctx, { steer: 0 });
       // The mode has to be set before the settle so the follow spring is
       // already tracking the rider by the time the frame is taken.
       gameCam(ctx, 'chase');
+    },
+    tick(ctx, t, dt, total) {
+      const carving = t > total - 0.8;
+      ride(ctx, { steer: carving ? 0.5 : 0, crouch: carving ? 0.35 : 0.1 });
     },
     apply() {},
   },
@@ -275,18 +331,44 @@ export const SHOTS = [
     name: 'close-spray',
     description: 'Low, close on the board throwing a spray wall.',
     settle: 6.0,
-    prepare(ctx) { dropIn(ctx, 'bowl-entry', 16); freeCam(ctx); },
+    prepare(ctx) {
+      dropIn(ctx, 'bowl-entry', 16);
+      ride(ctx, { steer: 0 });
+      freeCam(ctx);
+    },
+    // Straight for five seconds to build speed, then roll hard onto the toe
+    // edge for the last half second. Spray is a consequence of lateral speed
+    // and edge load, so it needs a real carve — but a held edge describes a
+    // circle, and half a second is all it takes to throw a wall of snow
+    // without the rider spiralling away from the composition.
+    tick(ctx, t, dt, total) {
+      const carving = t > total - 0.55;
+      ride(ctx, { steer: carving ? 0.72 : 0, crouch: carving ? 0.5 : 0.1 });
+    },
     apply(ctx) {
       const st = ctx.physics?.state;
       const cam = ctx.camera;
       if (!st) return;
       cam.fov = 38;
-      const back = v(Math.sin(st.heading), 0, Math.cos(st.heading)).multiplyScalar(-4.2);
-      cam.position.copy(st.position).add(back).add(v(2.2, 0.75, 0));
+      // Station the camera in the *board's* frame, not the world's. A fixed
+      // world-space side offset walks the lens around the rider as they turn
+      // — and since this preset exists to photograph a turn, that reliably
+      // parked it behind a snow lip with the rider out of frame.
+      //
+      // Sit outside the arc (the side the snow is thrown toward), low and
+      // slightly ahead of square, so the spray wall crosses the lens rather
+      // than being hidden behind the rider.
+      const fwd = v(Math.sin(st.heading), 0, Math.cos(st.heading));
+      const right = v(fwd.z, 0, -fwd.x);
+      const side = st.lateralSpeed >= 0 ? -1 : 1;
+      cam.position.copy(st.position)
+        .addScaledVector(fwd, -2.6)
+        .addScaledVector(right, 2.4 * side)
+        .add(v(0, 1.15, 0));
       // Never let the camera end up inside the hill on a steep pitch.
-      const floor = gh(ctx, cam.position.x, cam.position.z) + 0.5;
+      const floor = gh(ctx, cam.position.x, cam.position.z) + 0.6;
       if (cam.position.y < floor) cam.position.y = floor;
-      cam.lookAt(st.position.x, st.position.y + 0.55, st.position.z);
+      cam.lookAt(st.position.x, st.position.y + 0.7, st.position.z);
       cam.updateProjectionMatrix();
     },
   },
@@ -295,7 +377,7 @@ export const SHOTS = [
     description: 'Rider mid-air off a natural rollover, backlit.',
     settle: 7.0,
     prepare(ctx) { dropIn(ctx, 'bowl-entry', 18); gameCam(ctx, 'cinematic'); },
-    apply() {},
+    apply(ctx) { launch(ctx, 5.8, 0.66, 'melon'); },
   },
   {
     name: 'snow-detail',
@@ -344,7 +426,8 @@ export const SHOTS = [
     name: 'rider-portrait',
     description: 'Three-quarter on the rider — tests character model + materials.',
     settle: 4.0,
-    prepare(ctx) { dropIn(ctx, 'bowl-entry', 10); freeCam(ctx); },
+    prepare(ctx) { dropIn(ctx, 'bowl-entry', 10); ride(ctx, { steer: 0 }); freeCam(ctx); },
+    tick(ctx, t, dt, total) { ride(ctx, { steer: t > total - 0.6 ? 0.34 : 0 }); },
     apply(ctx) {
       const st = ctx.physics?.state;
       const cam = ctx.camera;

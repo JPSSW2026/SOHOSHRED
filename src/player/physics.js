@@ -42,6 +42,12 @@ const MAX_EDGE = 1.08;
 const EDGE_LENGTH = 1.18;
 /** Gap above the surface before the board is considered airborne. */
 const AIRBORNE_GAP = 0.11;
+/**
+ * Deepest the board is ever *drawn* below the snow surface, metres.
+ * Must stay under the deck's own thickness (13 mm) or the topsheet vanishes
+ * beneath the heightfield and the rider reads as boots with no board.
+ */
+const VISUAL_SINK_CAP = 0.010;
 /** Closing speed into the snow, m/s, above which a landing hurts. */
 const HARD_LANDING = 9.0;
 /** Closing speed above which the rider cannot absorb it at all. */
@@ -285,7 +291,20 @@ export class BoardPhysics {
     // sink is deepest at low speed and shallows as the rider gets going.
     const planing = 1 - 0.55 * smoothstep(3, 16, s.speed);
     s.sinkDepth = damp(s.sinkDepth, sinkTarget * planing, 6, h);
-    const contactY = newGround - s.sinkDepth * 0.62;
+    // How far the board rides *below* the undisturbed snow surface.
+    //
+    // Physically the whole deck disappears in bottomless powder — that is what
+    // deep snow is — but the renderer cannot displace the snowpack around it,
+    // so an honest sink depth simply buries the board inside the heightfield
+    // and the rider reads as two boots floating on a white plane with no board
+    // at all. The snow that should have been pushed aside is still drawn.
+    //
+    // So the drag model keeps the true sink (it is what makes deep snow feel
+    // deep) and only the *visual* burial is capped, at just under the board's
+    // own thickness plus a little. The trench in trails.js and the plume in
+    // particles.js carry the impression of depth instead, which is how the
+    // reference does it too: in Shredders you always see the topsheet.
+    const contactY = newGround - Math.min(s.sinkDepth * 0.62, VISUAL_SINK_CAP);
 
     if (s.position.y <= contactY + 1e-4) {
       if (!s.grounded) this._land(s, n, contactY, g, h);
