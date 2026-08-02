@@ -97,7 +97,7 @@
 
 import * as THREE from 'three';
 import { CONFIG, LOCATION } from '../core/config.js';
-import { makeRng, Simplex, clamp, clamp01, lerp } from '../core/rng.js';
+import { makeRng, Simplex, clamp, clamp01, lerp, smoothstep } from '../core/rng.js';
 
 /* ------------------------------------------------------------------ *
  * Constants
@@ -144,7 +144,52 @@ const SOLAR_IRRADIANCE_UNITS = 41.0;
  * `#0F4C8E`–`#2A64A6` through AgX at `CONFIG.render.exposure`: too little and
  * the sky is a black-blue void, too much and it greys out and fails §12.
  */
-const MS_STRENGTH = 1.35;
+const MS_STRENGTH = 0.27;
+
+/**
+ * The camera, in three constants.  These are the only numbers in this file that
+ * are not pure atmospheric physics, and each stands for a real thing a
+ * photographer does when shooting snow.  They were fitted offline against
+ * `ART_DIRECTION.md` §1.2/§1.4/§12 through three's exact AgX curve at
+ * `CONFIG.render.exposure`; the resulting frame satisfies LAW 1, LAW 2, LAW 3
+ * and acceptance items 6–9 and 22 simultaneously, which no single knob can do.
+ *
+ * `WHITE_BALANCE` — daylight white balance locked to the direct beam.  At 1.0
+ * the sun renders perfectly neutral; 0.9 leaves a trace of the 4470 K warmth on
+ * rock and rime.  This is what makes LAW 1 ("sunlit snow is neutral") true *by
+ * construction* while simultaneously pushing the 15,000 K skylight to the deep
+ * blue §1.4 measures — the two are the same operation, seen from both ends.
+ *
+ * `POLARISER` — a circular polariser, which is permanently on the front of
+ * every lens that has ever shot a snowboard film.  It removes up to this
+ * fraction of the *polarised* component of the sky, and Rayleigh single
+ * scattering is ~99% polarised at 90° from the sun.  With our abeam sun that is
+ * the entire forward view, so the sky over the fall line goes navy while the
+ * snow — which reflects almost unpolarised — is untouched.  It applies to the
+ * sky as *seen*, never to the sky as a *light source*: the environment probe
+ * compiles with it disabled, so the fill stays physical.
+ *
+ * `SKY_CALIBRATION` — a single scale on sky radiance.  It stands in for the two
+ * things this renderer cannot trace: the terrain that occludes the low sky from
+ * a point inside a cirque (a large share of the hemispherical irradiance), and
+ * the absence of true global illumination.  What that terrain reflects back is
+ * returned explicitly by `BOUNCE_VIEW_FACTOR` below.
+ */
+const WHITE_BALANCE = 0.90;
+const POLARISER = 0.80;
+const SKY_CALIBRATION = 0.65;
+
+/**
+ * Fraction of a surface's hemisphere filled by the surrounding snowfield.
+ *
+ * `ART_DIRECTION.md` §4.1: the bounce off 0.86-albedo snow is roughly 2× the
+ * sky fill, and "nothing in an open-slope frame is genuinely dark".  With no
+ * GI, that bounce is delivered as an explicit ambient term whose colour and
+ * magnitude are computed from the actual horizontal irradiance every time the
+ * sky is rebuilt — so it tracks time of day and weather instead of being a
+ * fixed grey lift.
+ */
+const BOUNCE_VIEW_FACTOR = 0.11;
 
 /** Resolution of the sky radiance tables (bins in zenith cosine). */
 const LUT_N = 20;
@@ -662,10 +707,11 @@ export function buildAtmosphereTables(opts) {
  *   [2].x   Rayleigh scale height                   [2].y  Mie scale height
  *   [2].z   valley haze β at the reference altitude [2].w  haze scale height
  *   [3].x   haze reference altitude                 [3].y  Mie asymmetry g
- *   [3].z   aerial-perspective strength             [3].w  haze whiteness mix
- *   [4].xyz haze tint                               [4].w  sun disc intensity
+ *   [3].z   aerial-perspective strength             [3].w  haze sky-lit fraction
+ *   [4].xyz haze illuminant tint                    [4].w  sun disc intensity
  *   [5].xyz sun beam colour                         [5].w  disc softness (rad)
- *   [6].xyz isotropic (cloud deck) tint             [6].w  unused
+ *   [6].xyz isotropic (cloud deck) tint             [6].w  polariser strength
+ *   [7].xyz solar irradiance reaching the ground    [7].w  unused
  *
  * sohoSkyR[i] = ( Rayleigh integral .xyz, isotropic deck radiance .w )
  * sohoSkyM[i] = ( Mie integral .xyz, unused .w )
@@ -675,7 +721,7 @@ const ATMO_GLSL = /* glsl */ `
 #define SOHO_ATMO
 #define SOHO_LUT_N ${LUT_N}
 
-uniform vec4 sohoAtmo[ 7 ];
+uniform vec4 sohoAtmo[ 8 ];
 uniform vec4 sohoSkyR[ SOHO_LUT_N ];
 uniform vec4 sohoSkyM[ SOHO_LUT_N ];
 
@@ -703,12 +749,39 @@ float sohoPhaseM( float c, float g ) {
 	return 0.1193662 * ( ( 1.0 - g2 ) * ( 1.0 + c * c ) ) / ( ( 2.0 + g2 ) * pow( d, 1.5 ) );
 }
 
+/**
+ * Circular-polariser transmission for the Rayleigh component.
+ *
+ * Rayleigh single scattering is linearly polarised with degree
+ * sin²θ / (1 + cos²θ), i.e. ~99% at 90° from the sun.  Multiply-scattered light
+ * and Mie light are effectively depolarised and are left alone, which is why a
+ * polariser deepens a clean high-altitude sky so much more than a hazy one.
+ *
+ * Disabled inside the environment probe: the filter sits in front of the
+ * *camera*, not between the sky and the snow, so it must never touch the light
+ * that actually falls on the world.
+ */
+float sohoPolariser( float c, float mu ) {
+	#ifdef SOHO_ENV
+		return 1.0;
+	#else
+		float P = ( 1.0 - c * c ) / ( 1.0 + c * c );
+		// Long, low paths are depolarised by multiple scattering and by ground
+		// reflection — the reason a polariser guts the high sky and barely
+		// touches the horizon.  Modelling that is not optional: without it the
+		// aerial perspective loses its blue and the far field goes milky grey,
+		// which is tell #32.
+		float depol = mix( 0.22, 1.0, smoothstep( 0.0, 0.42, mu ) );
+		return 1.0 - sohoAtmo[ 6 ].w * P * depol;
+	#endif
+}
+
 /** Full-path sky radiance for a world-space view direction. */
 vec3 sohoSkyRadiance( vec3 dir ) {
 	vec4 sr, sm;
 	sohoSampleTables( dir.y, sr, sm );
 	float c = dot( dir, sohoAtmo[ 0 ].xyz );
-	return sr.xyz * sohoPhaseR( c )
+	return sr.xyz * sohoPhaseR( c ) * sohoPolariser( c, dir.y )
 		+ sm.xyz * sohoPhaseM( c, sohoAtmo[ 3 ].y )
 		+ sr.w * sohoAtmo[ 6 ].xyz;
 }
@@ -741,34 +814,55 @@ vec3 sohoAerialPerspective( vec3 color, vec3 worldPos, vec3 camPos ) {
 	if ( d < 0.05 ) return color;
 	vec3 dir = D / d;
 
-	float colR = sohoColumn( camPos.y, worldPos.y, d, sohoAtmo[ 2 ].x, 0.0 );
-	float colM = sohoColumn( camPos.y, worldPos.y, d, sohoAtmo[ 2 ].y, 0.0 );
-	float colH = sohoColumn( camPos.y, worldPos.y, d, sohoAtmo[ 2 ].w, sohoAtmo[ 3 ].x );
+	// Mean density of each species along the segment, from the exact
+	// exponential column integrals.
+	float invD = 1.0 / d;
+	float rhoR = sohoColumn( camPos.y, worldPos.y, d, sohoAtmo[ 2 ].x, 0.0 ) * invD;
+	float rhoM = sohoColumn( camPos.y, worldPos.y, d, sohoAtmo[ 2 ].y, 0.0 ) * invD;
+	float rhoH = sohoColumn( camPos.y, worldPos.y, d, sohoAtmo[ 2 ].w, sohoAtmo[ 3 ].x ) * invD;
 
-	vec3 tauR = sohoAtmo[ 1 ].xyz * colR;
-	float tauM = sohoAtmo[ 1 ].w * colM;
-	float tauH = sohoAtmo[ 2 ].z * colH;
-
-	vec3 T = exp( - ( tauR + vec3( tauM + tauH ) ) );
+	vec3 betaR = sohoAtmo[ 1 ].xyz * rhoR;
+	float betaM = sohoAtmo[ 1 ].w * rhoM;
+	float betaH = sohoAtmo[ 2 ].z * rhoH;
+	vec3 betaExt = betaR + vec3( betaM + betaH );
+	vec3 T = exp( - betaExt * d );
 
 	vec4 sr, sm;
 	sohoSampleTables( dir.y, sr, sm );
 	float c = dot( dir, sohoAtmo[ 0 ].xyz );
+	float pR = sohoPhaseR( c ) * sohoPolariser( c, dir.y );
+	float pM = sohoPhaseM( c, sohoAtmo[ 3 ].y );
 
-	float fM = 1.0 - exp( - tauM );
-	float fH = 1.0 - exp( - tauH );
-	float fA = 1.0 - exp( - ( tauR.g + tauM + tauH ) );
+	// --- Near field: the exact single-scattering solution for a slab of the
+	// mean density we just measured.  This is the term that carries the blue,
+	// because it is weighted by beta_Rayleigh (B/R = 5.7) rather than by the
+	// full-path sky colour, which the horizon's own extinction has already
+	// bleached to white.  Getting this wrong is why so many renderers have a
+	// grey far field (tell #32).
+	vec3 scatterR = betaR * pR;
+	float scatterM = betaM * 0.9 * pM;
+	float scatterH = betaH * pM;
+	float sunLum = dot( sohoAtmo[ 7 ].xyz, vec3( 0.2126, 0.7152, 0.0722 ) );
+	// Valley haze sits deep in the basin, where most of the light reaching it
+	// is skylight rather than direct beam — which is exactly why alpine valley
+	// haze reads blue while coastal haze reads milky grey (§5.1).
+	vec3 hazeSource = mix( sohoAtmo[ 7 ].xyz, sohoAtmo[ 4 ].xyz * sunLum, sohoAtmo[ 3 ].w );
+	vec3 J = sohoAtmo[ 7 ].xyz * ( scatterR + vec3( scatterM ) )
+		+ hazeSource * scatterH;
+	vec3 local = ( J / max( betaExt, vec3( 1e-12 ) ) ) * ( 1.0 - T )
+		+ sr.w * sohoAtmo[ 6 ].xyz * ( 1.0 - T );
 
-	vec3 mie = sm.xyz * sohoPhaseM( c, sohoAtmo[ 3 ].y );
-	// Valley haze is a fat, weakly-selective scatterer: same forward lobe,
-	// whiter spectrum.  Mixing toward its own tint is what turns the basin
-	// floor milky while the crests stay crisp.
-	vec3 haze = mix( mie, dot( mie, vec3( 0.2126, 0.7152, 0.0722 ) ) * sohoAtmo[ 4 ].xyz, sohoAtmo[ 3 ].w );
+	// --- Far field: the sky itself, so an infinitely distant surface converges
+	// on exactly what the dome draws in the same direction.  That equality is
+	// what removes the band at the ridge/sky boundary and the "peaks paler than
+	// the sky" artefact, and it holds by construction rather than by tuning.
+	vec3 sky = sr.xyz * pR + sm.xyz * pM + sr.w * sohoAtmo[ 6 ].xyz;
 
-	vec3 inscatter = sr.xyz * sohoPhaseR( c ) * ( 1.0 - exp( - tauR ) )
-		+ mie * fM
-		+ haze * fH
-		+ sr.w * sohoAtmo[ 6 ].xyz * fA;
+	// Quadratic crossfade: pure slab solution while the path is optically thin,
+	// pure sky once it is thick.  Quadratic (not linear) so the near field is
+	// not contaminated by the white horizon colour at first order.
+	float t = 1.0 - T.g;
+	vec3 inscatter = mix( local, sky, t * t );
 
 	return color * T + inscatter * sohoAtmo[ 3 ].z;
 }
@@ -783,7 +877,7 @@ let _apInstalled = false;
 
 /** The one shared uniform payload every material in the scene points at. */
 const AP_UNIFORMS = {
-  sohoAtmo: { value: new Float32Array(7 * 4) },
+  sohoAtmo: { value: new Float32Array(8 * 4) },
   sohoSkyR: { value: new Float32Array(LUT_N * 4) },
   sohoSkyM: { value: new Float32Array(LUT_N * 4) },
 };
@@ -1382,6 +1476,15 @@ export class Sky {
     this.object3D.add(this.sun);
     this.object3D.add(this.sun.target);
 
+    // Snowfield bounce.  Directionless on purpose: inside a bowl of 0.86-albedo
+    // snow the reflected field is close to uniform, and this is what keeps the
+    // rider's chin, the board base and every rock overhang out of the void
+    // (ART_DIRECTION §4.1, tell #3).  Colour and level are recomputed from the
+    // actual horizontal irradiance on every sky refresh.
+    this.bounce = new THREE.AmbientLight(0xffffff, 0);
+    this.bounce.name = 'snow-bounce';
+    this.object3D.add(this.bounce);
+
     this._buildRidgeBanks();
 
     scene.add(this.object3D);
@@ -1548,31 +1651,51 @@ export class Sky {
     });
     this._tables = tables;
 
-    // Pack the vec3 tables into the vec4 uniform arrays (w = isotropic deck).
-    const skyScale = cfg.skyIntensityScale ?? 1.0;
+    // --- Camera white balance ---------------------------------------------
+    // Daylight WB locked to the direct beam, luminance-preserving so it moves
+    // colour without moving exposure.  Applied at the source (sun, sky tables,
+    // bounce) rather than as a grade, because this module owns every light in
+    // the scene and `postprocess.js` must not have to compensate for it.
+    const cct = sunCCT(this.solar.altitude, w);
+    const beam0 = cctToLinearRGB(cct);
+    const alpha = clamp01(cfg.whiteBalance ?? WHITE_BALANCE);
+    const gRaw = [
+      Math.pow(Math.max(beam0[0], 1e-4), -alpha),
+      Math.pow(Math.max(beam0[1], 1e-4), -alpha),
+      Math.pow(Math.max(beam0[2], 1e-4), -alpha),
+    ];
+    const wbNorm = lum3(beam0) / Math.max(1e-6, lum3([
+      beam0[0] * gRaw[0], beam0[1] * gRaw[1], beam0[2] * gRaw[2],
+    ]));
+    const wb = [gRaw[0] * wbNorm, gRaw[1] * wbNorm, gRaw[2] * wbNorm];
+    const beam = [beam0[0] * wb[0], beam0[1] * wb[1], beam0[2] * wb[2]];
+    const beamLuma = Math.max(lum3(beam), 1e-3);
+
+    // Pack the vec3 tables into the vec4 uniform arrays (w = isotropic deck),
+    // applying the white balance and the sky calibration in one pass.
+    const skyScale = cfg.skyIntensityScale ?? SKY_CALIBRATION;
+    const sR = skyScale * wb[0], sG = skyScale * wb[1], sB = skyScale * wb[2];
     const R = AP_UNIFORMS.sohoSkyR.value;
     const M = AP_UNIFORMS.sohoSkyM.value;
+    const isoScale = skyScale * lum3(wb);
     for (let i = 0; i < LUT_N; i++) {
-      R[i * 4] = tables.ir[i * 3] * skyScale;
-      R[i * 4 + 1] = tables.ir[i * 3 + 1] * skyScale;
-      R[i * 4 + 2] = tables.ir[i * 3 + 2] * skyScale;
-      R[i * 4 + 3] = tables.ia[i] * skyScale;
-      M[i * 4] = tables.im[i * 3] * skyScale;
-      M[i * 4 + 1] = tables.im[i * 3 + 1] * skyScale;
-      M[i * 4 + 2] = tables.im[i * 3 + 2] * skyScale;
+      R[i * 4] = tables.ir[i * 3] * sR;
+      R[i * 4 + 1] = tables.ir[i * 3 + 1] * sG;
+      R[i * 4 + 2] = tables.ir[i * 3 + 2] * sB;
+      R[i * 4 + 3] = tables.ia[i] * isoScale;
+      M[i * 4] = tables.im[i * 3] * sR;
+      M[i * 4 + 1] = tables.im[i * 3 + 1] * sG;
+      M[i * 4 + 2] = tables.im[i * 3 + 2] * sB;
       M[i * 4 + 3] = 0;
     }
 
     // --- Direct beam -------------------------------------------------------
-    const cct = sunCCT(this.solar.altitude, w);
-    const beam = cctToLinearRGB(cct);
-    const beamLuma = Math.max(lum3(beam), 1e-3);
     // Luminous attenuation is physical (Rayleigh + aerosol + ozone + deck);
-    // chromaticity comes from the calibrated CCT curve.
+    // chromaticity comes from the calibrated CCT curve, white-balanced above.
     const tl = lum3(tables.sunTransmittance);
     const rise = clamp01(this.solar.altitude / (1.5 * DEG));  // fade through set
     const E = SOLAR_IRRADIANCE_UNITS * tl * rise
-      * w.sunTransmission * (cfg.sunIntensityScale ?? 1.0) * skyScale;
+      * w.sunTransmission * (cfg.sunIntensityScale ?? 1.0);
 
     this.sunColor.setRGB(beam[0], beam[1], beam[2]);
     if (this.sun) {
@@ -1585,23 +1708,40 @@ export class Sky {
     this.irradiance.direct = E;
 
     // --- Ambient -----------------------------------------------------------
-    const sky = tables.skyIrradiance;
+    const sky = [
+      tables.skyIrradiance[0] * sR,
+      tables.skyIrradiance[1] * sG,
+      tables.skyIrradiance[2] * sB,
+    ];
     const skyLuma = Math.max(1e-5, lum3(sky));
     const amax = Math.max(sky[0], sky[1], sky[2], 1e-5);
     this.ambientColor.setRGB(sky[0] / amax, sky[1] / amax, sky[2] / amax);
-    this.irradiance.sky.setRGB(sky[0] * skyScale, sky[1] * skyScale, sky[2] * skyScale);
-    this.irradiance.horizontal = E * Math.max(0, sunMu) + skyLuma * skyScale;
+    this.irradiance.sky.setRGB(sky[0], sky[1], sky[2]);
+    this.irradiance.horizontal = E * Math.max(0, sunMu) + skyLuma;
 
-    // --- Snowfield bounce radiance (IBL floor, cloud bases) ----------------
+    // --- Snowfield bounce --------------------------------------------------
     // Lambertian: L = albedo · E_horizontal / π.  §4.1 puts this at roughly
     // twice the sky fill, and it is why nothing in an open snow frame is dark.
     const kDir = (E * Math.max(0, sunMu)) / beamLuma;
     this.groundColor.setRGB(
-      groundAlbedo * (kDir * beam[0] + sky[0] * skyScale) / Math.PI,
-      groundAlbedo * (kDir * beam[1] + sky[1] * skyScale) / Math.PI,
-      groundAlbedo * (kDir * beam[2] + sky[2] * skyScale) / Math.PI,
+      groundAlbedo * (kDir * beam[0] + sky[0]) / Math.PI,
+      groundAlbedo * (kDir * beam[1] + sky[1]) / Math.PI,
+      groundAlbedo * (kDir * beam[2] + sky[2]) / Math.PI,
     );
     this._cloudUniforms.uGroundColor.value.copy(this.groundColor);
+
+    // Delivered as an explicit ambient term: the probe's lower hemisphere only
+    // reaches surfaces that face down, but on an open snowfield every surface
+    // sees a slab of lit snow.  `vf` is the share of the hemisphere it fills.
+    if (this.bounce) {
+      const vf = cfg.bounceViewFactor ?? BOUNCE_VIEW_FACTOR;
+      this.bounce.color.setRGB(
+        vf * Math.PI * this.groundColor.r,
+        vf * Math.PI * this.groundColor.g,
+        vf * Math.PI * this.groundColor.b,
+      );
+      this.bounce.intensity = 1;
+    }
 
     // --- Pack the shared uniform block -------------------------------------
     const a = AP_UNIFORMS.sohoAtmo.value;
@@ -1615,15 +1755,16 @@ export class Sky {
     a[12] = cfg.hazeReferenceAltitude ?? CONFIG.terrain.minAltitude;
     a[13] = mieG;
     a[14] = cfg.aerialStrength ?? 1.0;
-    a[15] = cfg.hazeWhiteness ?? 0.55;
+    a[15] = clamp01(cfg.hazeSkyFraction ?? 0.75);
 
-    // Haze tint: the horizon sky warmed a touch — pooled valley air picks up
-    // the ground bounce, which is what makes it read as *air* and not as fog.
-    const hz = this._skyRadianceCPU(0.02);
-    const hzMax = Math.max(hz[0], hz[1], hz[2], 1e-5);
-    a[16] = lerp(hz[0] / hzMax, 1.0, 0.35);
-    a[17] = lerp(hz[1] / hzMax, 1.0, 0.20);
-    a[18] = lerp(hz[2] / hzMax, 1.0, 0.05);
+    // Haze illuminant: the diffuse sky, lifted a little toward white by the
+    // snowfield bounce that also reaches it.  This is what makes the far field
+    // go *blue* rather than milky grey — the alpine look as distinct from the
+    // coastal one (§5.1, tell #32).
+    const ac = this.ambientColor;
+    a[16] = lerp(ac.r, 1.0, 0.28);
+    a[17] = lerp(ac.g, 1.0, 0.20);
+    a[18] = lerp(ac.b, 1.0, 0.05);
     // Sun disc radiance: irradiance ÷ solid angle, capped so the raw value
     // never destabilises the float buffer.  It is a bloom seed, not a light.
     a[19] = Math.min(E / SUN_SOLID_ANGLE, 26000) * (cfg.sunDiscScale ?? 1.0);
@@ -1631,7 +1772,13 @@ export class Sky {
     // Disc softness grows with airmass: at AM 5.4 there is no visible edge.
     a[23] = SUN_ANGULAR_RADIUS * (0.5 + 0.42 * clamp(this.solar.airMass, 1, 12));
     a[24] = tables.iaTint[0]; a[25] = tables.iaTint[1]; a[26] = tables.iaTint[2];
-    a[27] = 0;
+    a[27] = clamp01(cfg.polariser ?? POLARISER);
+    // Spectral solar irradiance reaching the ground, white-balanced: the source
+    // term for the near-field aerial perspective.
+    a[28] = E * beam[0] / beamLuma;
+    a[29] = E * beam[1] / beamLuma;
+    a[30] = E * beam[2] / beamLuma;
+    a[31] = 0;
 
     // --- Clouds ------------------------------------------------------------
     const cu = this._cloudUniforms;
@@ -1650,6 +1797,7 @@ export class Sky {
     // --- Fog carrier (fallback path only) ----------------------------------
     const scene = this.ctx.scene;
     if (scene && scene.fog) {
+      const hz = this._skyRadianceCPU(0.02, Math.PI * 0.5);
       scene.fog.color.setRGB(hz[0] * 0.35, hz[1] * 0.35, hz[2] * 0.35);
       scene.fog.density = Math.sqrt(Math.max(1e-9, (cfg.hazeDensity ?? w.haze) * 0.35));
     }
@@ -1658,29 +1806,36 @@ export class Sky {
   }
 
   /**
-   * CPU twin of `sohoSkyRadiance`, sampled in the sun's vertical plane.
-   * Used for the haze tint and available to other systems for debugging.
+   * CPU twin of `sohoSkyRadiance`.  Reads the *packed* uniform arrays, not the
+   * raw tables, so it is guaranteed to agree with the GPU including the white
+   * balance, the sky calibration and the polariser.
+   *
    * @param {number} mu zenith cosine of the view direction
+   * @param {number} [azOffRad] azimuth away from the sun; 0 samples the
+   *   sunward vertical plane, which is where the haze tint comes from.
+   * @returns {number[]} linear RGB radiance in renderer units
    */
-  _skyRadianceCPU(mu) {
-    const t = this._tables;
-    if (!t) return [0.4, 0.55, 0.85];
+  _skyRadianceCPU(mu, azOffRad = 0) {
+    const R = AP_UNIFORMS.sohoSkyR.value;
+    const M = AP_UNIFORMS.sohoSkyM.value;
+    const a = AP_UNIFORMS.sohoAtmo.value;
     const f = lutCoord(mu) * (LUT_N - 1);
     const i0 = Math.min(LUT_N - 1, Math.max(0, Math.floor(f)));
     const i1 = Math.min(LUT_N - 1, i0 + 1);
     const k = f - i0;
-    // Direction in the sun's azimuth, so the tint is the one the sunward
-    // horizon actually shows.
     const elev = Math.asin(clamp(mu, -1, 1));
-    const cosT = Math.cos(this.solar.altitude - elev);
+    const cosT = Math.cos(elev) * Math.cos(this.solar.altitude) * Math.cos(azOffRad)
+      + Math.sin(elev) * Math.sin(this.solar.altitude);
     const pr = phaseRayleigh(cosT);
-    const pm = phaseMie(cosT, this._cfg.mieG ?? 0.76);
-    const iso = t.ia[i0] * (1 - k) + t.ia[i1] * k;
+    const pm = phaseMie(cosT, a[13] || 0.76);
+    const depol = lerp(0.22, 1.0, smoothstep(0.0, 0.42, mu));
+    const pol = 1 - a[27] * ((1 - cosT * cosT) / (1 + cosT * cosT)) * depol;
+    const iso = R[i0 * 4 + 3] * (1 - k) + R[i1 * 4 + 3] * k;
     const out = [0, 0, 0];
     for (let c = 0; c < 3; c++) {
-      const ir = t.ir[i0 * 3 + c] * (1 - k) + t.ir[i1 * 3 + c] * k;
-      const im = t.im[i0 * 3 + c] * (1 - k) + t.im[i1 * 3 + c] * k;
-      out[c] = ir * pr + im * pm + iso * t.iaTint[c];
+      const ir = R[i0 * 4 + c] * (1 - k) + R[i1 * 4 + c] * k;
+      const im = M[i0 * 4 + c] * (1 - k) + M[i1 * 4 + c] * k;
+      out[c] = ir * pr * pol + im * pm + iso * a[24 + c];
     }
     return out;
   }
