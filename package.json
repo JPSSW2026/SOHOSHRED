@@ -1,0 +1,25 @@
+{
+  "name": "soho-shred",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Soho Shred - a AAA snowboarding game set in the Soho Basin, Cardrona, New Zealand",
+  "repository": {
+    "type": "git",
+    "url": "http://local_proxy@127.0.0.1:41729/git/JPSSW2026/SOHOSHRED"
+  },
+  "license": "ISC",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "shoot": "node tools/shoot.mjs"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1",
+    "vite": "^8.2.0"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "width": 960,
+  "height": 540,
+  "query": "",
+  "shots": [
+    {
+      "name": "hero-basin",
+      "file": "shots/smoke/hero-basin.png",
+      "description": "Wide establishing shot of the Soho Basin headwall at low sun.",
+      "stats": {
+        "drawCalls": 3,
+        "triangles": 131396,
+        "programs": 2,
+        "textures": 3,
+        "geometries": 3,
+        "frame": 64
+      },
+      "seconds": 12.6
+    },
+    {
+      "name": "snow-detail",
+      "file": "shots/smoke/snow-detail.png",
+      "description": "Macro on untracked snow — tests sparkle, sastrugi, SSS.",
+      "stats": {
+        "drawCalls": 5,
+        "triangles": 131720,
+        "programs": 2,
+        "textures": 3,
+        "geometries": 3,
+        "frame": 95
+      },
+      "seconds": 5.7
+    }
+  ],
+  "errors": [
+    "error: Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ]
+}
