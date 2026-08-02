@@ -636,15 +636,25 @@ function bakeRockNormal(size, seed) {
       const i = y * size + x;
       const u = (x / size) * P;
       const v = (y / size) * P;
-      const blocky = tileWorley(u * 4, v * 4, P * 4, P * 4, seed + 83);
-      const slab = clamp01((blocky.f2 - blocky.f1) * 2.2);
-      const grit = tileFbm(u * 20, v * 20, P * 20, P * 20, 3, seed + 71) * 0.5 + 0.5;
+      // Schist splits into PLATES, so the relief must be terraced: flat facets
+      // separated by sharp risers.  A smooth Worley blob field reads as cobble
+      // or popcorn, which is exactly the wrong rock.  Quantising a smooth field
+      // into steps and keeping the crack seams thin gives the platy break.
+      const blocky = tileWorley(u * 3, v * 3, P * 3, P * 3, seed + 83);
+      // Thin, dark fracture seams rather than fat rounded cell walls.
+      const crack = 1 - smoothstep(0.02, 0.16, blocky.f2 - blocky.f1);
       const chunk = tileFbm(u * 2.5, v * 2.5, Math.round(P * 2.5), Math.round(P * 2.5), 4, seed + 139) * 0.5 + 0.5;
-      const hv = 0.46 * slab + 0.30 * chunk + 0.24 * grit;
+      // 7 discrete slab levels with a slightly soft riser.
+      const levels = 7;
+      const q = chunk * levels;
+      const step = Math.floor(q);
+      const terrace = (step + smoothstep(0.72, 0.94, q - step)) / levels;
+      const grit = tileFbm(u * 20, v * 20, P * 20, P * 20, 3, seed + 71) * 0.5 + 0.5;
+      const hv = 0.70 * terrace + 0.16 * grit - 0.30 * crack;
       h[i] = hv;
       const o = i * 4;
-      data[o + 2] = byte(0.35 + 0.65 * slab);
-      data[o + 3] = byte(hv);
+      data[o + 2] = byte(clamp01(0.45 + 0.55 * (1 - crack) * (0.5 + 0.5 * terrace)));
+      data[o + 3] = byte(clamp01(hv * 1.15 + 0.1));
     }
   }
   encodeGradient(h, size, 0.88, data, 0);
