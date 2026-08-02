@@ -786,10 +786,17 @@ export class Terrain {
 
         // --- Band 2: domain-warped fBm — gullies, rollovers, spine field -
         // The warp is what kills the grid signature of raw fBm.
-        const midMask = 1 - 0.28 * runout;
         h += warpedFbm2(simM, x / 96, z / 96, {
           octaves: 4, warp: 0.4, warpFrequency: 0.6, frequency: 1,
-        }) * 5.0 * midMask;
+        }) * 5.0;
+
+        // --- Run-out roll: the basin floor is 1.7° in section, which would
+        // leave a third of the map dead flat. Real cirque floors are
+        // hummocky — moraine, debris fans and braided outwash — so add a
+        // broad low roll there and nowhere else.
+        if (runout > 0) {
+          h += billow2(simM, x / 130 + 31.7, z / 130 - 12.3, { octaves: 2 }) * 4.6 * runout;
+        }
 
         H[row + i] = h;
       }
@@ -928,7 +935,7 @@ export class Terrain {
     const DROPLETS = 165000;
     const LIFETIME = 40;
     const INERTIA = 0.055;
-    const CAPACITY = 2.4;
+    const CAPACITY = 2.1;
     const MIN_SLOPE = 0.012;
     const ERODE = 0.24;
     const DEPOSIT = 0.30;
@@ -1029,7 +1036,7 @@ export class Terrain {
         const edge = Math.min(edgeZ, x - this.minX, this.maxX - x);
         const fade = smoothstep(0, 110, edge);
         const k = row + i;
-        H[k] += clamp(W[k] - H[k], -16, 16) * fade;
+        H[k] += clamp(W[k] - H[k], -11, 11) * fade;
       }
     }
   }
@@ -1041,7 +1048,7 @@ export class Terrain {
    */
   _thermalErosion(H) {
     const n = this.n, cell = this.cell;
-    const PASSES = 10, RATE = 0.45;
+    const PASSES = 12, RATE = 0.45;
     const delta = new Float32Array(H.length);
     const NX = [-1, 1, 0, 0, -1, 1, -1, 1];
     const NZ = [0, 0, -1, 1, -1, -1, 1, 1];
@@ -1055,10 +1062,10 @@ export class Terrain {
         for (let i = 1; i < n - 1; i++) {
           const k = row + i;
           const hc = H[k];
-          // 34° in the depositional lower basin, 45° on the rocky headwall —
+          // 33° in the depositional lower basin, 43° on the rocky headwall —
           // the real angle of repose for scree, and the limit for consolidated
           // snow-covered schist respectively.
-          const tal = Math.tan(lerp(34, 45, smoothstep(1550, 1740, hc)) * DEG);
+          const tal = Math.tan(lerp(33, 43, smoothstep(1550, 1740, hc)) * DEG);
           let total = 0, maxE = 0;
           for (let q = 0; q < 8; q++) {
             const dn = hc - H[k + NZ[q] * n + NX[q]] - tal * ND[q];
@@ -1282,7 +1289,7 @@ export class Terrain {
         if (w <= 0) return;
         // Grooming removes everything below ~8 m wavelength and flattens the
         // cross-slope camber; corduroy itself is snowMaterial.js's job.
-        H[k] = lerp(H[k], hSmooth[k], 0.88 * w);
+        H[k] = lerp(H[k], hSmooth[k], 0.72 * w);
         if (w > 0.5) groom[k] = 255;
       });
     }
@@ -1415,7 +1422,9 @@ export class Terrain {
         const slopeDeg = Math.atan(Math.hypot(hx, hz)) / DEG;
         d -= clamp01((slopeDeg - 38) / 14) * 1.2;
 
-        depth[k] = clamp(d, 0, 3.5);
+        // Left unclamped below zero on purpose: the bare-ground balance pass
+        // needs to know *how* bare a cell is, not just that it hit the floor.
+        depth[k] = Math.min(d, 3.5);
       }
     }
 
@@ -1436,9 +1445,7 @@ export class Terrain {
       if (c / samples > 0.055) lo = mid; else hi = mid;
     }
     const off = (lo + hi) * 0.5;
-    if (Math.abs(off) > 1e-4) {
-      for (let k = 0; k < N; k++) depth[k] = clamp(depth[k] + off, 0, 3.5);
-    }
+    for (let k = 0; k < N; k++) depth[k] = clamp(depth[k] + off, 0, 3.5);
     this._depthOffset = off;
   }
 
@@ -1491,7 +1498,7 @@ export class Terrain {
     // dulling the landform (the blur radius is one post).
     const tmp = new Float32Array(H.length);
     this._blur(H, tmp, 1);
-    for (let k = 0; k < H.length; k++) H[k] = lerp(H[k], tmp[k], 0.28);
+    for (let k = 0; k < H.length; k++) H[k] = lerp(H[k], tmp[k], 0.12);
 
     for (let k = 0; k < H.length; k++) {
       H[k] = softMin(softMax(H[k], 1866, 12), 1409, 6);
