@@ -1466,4 +1466,376 @@ export class Props {
     this.fields.push(f);
     return f;
   }
+
+  /* ------------------------------------------------------------------ *
+   * exclusion mask — nothing gets planted in a piste or a lift corridor
+   * ------------------------------------------------------------------ */
+
+  _buildExclusion() {
+    const N = 256;
+    const b = this.probe.bounds;
+    const w = b.maxX - b.minX, h = b.maxZ - b.minZ;
+    const cell = Math.max(w, h) / N;
+    const mask = new Uint8Array(N * N);
+    const stamp = (x, z, r) => {
+      const gx0 = Math.max(0, Math.floor((x - r - b.minX) / cell));
+      const gx1 = Math.min(N - 1, Math.ceil((x + r - b.minX) / cell));
+      const gz0 = Math.max(0, Math.floor((z - r - b.minZ) / cell));
+      const gz1 = Math.min(N - 1, Math.ceil((z + r - b.minZ) / cell));
+      const r2 = r * r;
+      for (let j = gz0; j <= gz1; j++) {
+        const cz = b.minZ + (j + 0.5) * cell;
+        for (let i = gx0; i <= gx1; i++) {
+          const cx = b.minX + (i + 0.5) * cell;
+          if ((cx - x) * (cx - x) + (cz - z) * (cz - z) <= r2) mask[j * N + i] = 1;
+        }
+      }
+    };
+
+    const F = this.features;
+    for (const c of F.corridors || []) walkPolyline(c.pts, 8, (x, z) => stamp(x, z, (c.halfWidth ?? 20) + 7));
+    for (const t of F.tracks || []) walkPolyline(t.pts, 6, (x, z) => stamp(x, z, (t.halfWidth ?? 3) + 5));
+    if (F.lift) {
+      walkPolyline(
+        [[F.lift.base.x, F.lift.base.z], [F.lift.top.x, F.lift.top.z]], 10,
+        (x, z) => stamp(x, z, (F.lift.corridorHalfWidth ?? 20) + 4),
+      );
+    }
+    // The four spawns need clean ground under the rider's board.
+    for (const k of Object.keys(F.spawns || {})) {
+      const s = F.spawns[k];
+      if (s) stamp(s.x, s.z, 14);
+    }
+
+    this._ex = { mask, N, cell, minX: b.minX, minZ: b.minZ };
+  }
+
+  /** True where props must not be planted (piste, cat track, lift line). */
+  _cleared(x, z) {
+    const e = this._ex;
+    if (!e) return false;
+    const i = ((x - e.minX) / e.cell) | 0;
+    const j = ((z - e.minZ) / e.cell) | 0;
+    if (i < 0 || j < 0 || i >= e.N || j >= e.N) return false;
+    return e.mask[j * e.N + i] === 1;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * rock
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Plant one schist mass. `strike` is the plan bearing of the long axis; the
+   * instance is yawed by −strike so the local +X (which the slab builder used
+   * as the strike axis) lands on it and the foliation comes out globally
+   * consistent — the single most important cue for "this is Otago schist".
+   */
+  _addRock(field, opt) {
+    const { x, z, length, height, width, strike, rng } = opt;
+    const y = opt.y ?? this.probe.height(x, z);
+    // Rocks are *in* the snow, not on it: sink by a fraction of their height
+    // plus whatever the local pack is, so nothing reads as a decal.
+    const sink = opt.sink ?? (0.16 * height + Math.min(0.5, opt.depth ?? 0.3));
+    _e.set(rng.range(-0.10, 0.10), -strike, rng.range(-0.10, 0.10), 'YXZ');
+    _q.setFromEuler(_e);
+    _v3.set(x, y - sink, z);
+    _v3b.set(length, height + sink, width);
+    _m4.compose(_v3, _q, _v3b);
+    // Base tint: schist varies from grey-green to a rusty weathered rind.
+    const rust = clamp01(rng() * 0.9 - 0.35);
+    _col.setRGB(
+      lerp(0.94, 1.16, rust) * rng.range(0.92, 1.08),
+      lerp(0.97, 1.02, rust) * rng.range(0.93, 1.06),
+      lerp(1.02, 0.86, rust) * rng.range(0.92, 1.06),
+    );
+    const radius = Math.max(length, width, height + sink) * 0.62;
+    field.add(_m4, radius, _col);
+
+    if (height >= 1.15 && this._colliders.length < 1400) {
+      this._colliders.push({
+        type: 'box',
+        position: new THREE.Vector3(x, y - sink + (height + sink) * 0.45, z),
+        halfExtents: new THREE.Vector3(length * 0.38, (height + sink) * 0.46, width * 0.38),
+        quaternion: _q.clone(),
+        tag: 'rock',
+      });
+    }
+
+    // Lee drift collar. Snow loads downwind of anything standing proud, and
+    // the collar is what removes the hard rock/snow intersection at the base.
+    if (this.driftField && this.tune.rock.driftCollars && height > 0.9) {
+      const scale = Math.max(length, width);
+      const dx = this.wind.x, dz = this.wind.z;
+      // Offset the mound so its steep face hugs the rock and the tail runs off.
+      const ox = x + dx * scale * 0.18, oz = z + dz * scale * 0.18;
+      const gy = this.probe.height(ox, oz);
+      _e.set(0, this.windYaw, 0, 'YXZ');
+      _q.setFromEuler(_e);
+      _v3.set(ox, gy - 0.28, oz);
+      const rr = scale * rng.range(0.70, 1.05);
+      _v3b.set(rr, Math.min(height * 0.55, 1.5) * rng.range(0.6, 1.0) + 0.25, rr * 0.85);
+      _m4.compose(_v3, _q, _v3b);
+      this.driftField.add(_m4, rr * 1.6, null);
+    }
+  }
+
+  _placeRocks() {
+    this._buildExclusion();
+    const T = this.tune;
+    const density = clamp(T.density ?? 1, 0.05, 4);
+
+    this.torField = this._field('tor', this.rockMat, this.geo.tor, {
+      useColor: true, shadowLevels: 2, cullAngular: 0.0022,
+    });
+    this.outcropField = this._field('outcrop', this.rockMat, this.geo.outcrop, {
+      useColor: true, shadowLevels: 2, cullAngular: 0.0026,
+    });
+    this.blockField = this._field('block', this.rockMat, this.geo.block, {
+      useColor: true, shadowLevels: 1, cullAngular: 0.0040,
+    });
+    this.driftField = this._field('rock-drift', this.snowMat, this.geo.drift, {
+      castShadow: false, receiveShadow: true, cullAngular: 0.0060,
+    });
+
+    const rng = makeRng(this._seed('rock'));
+    const P = this.probe;
+
+    /* -- 1. Terrain's own tor register (crest plateau + both spur crests) -- */
+    const clusters = this.features.torClusters || [];
+    for (const c of clusters) {
+      for (const t of c.tors || []) {
+        const s = P.sample(t.x, t.z);
+        this._addRock(this.torField, {
+          x: t.x, z: t.z, y: Number.isFinite(t.y) ? t.y : s.height,
+          length: t.length ?? 6, height: t.height ?? 3, width: t.width ?? 3,
+          strike: t.yaw ?? FOLIATION_STRIKE, rng, depth: s.depth,
+        });
+        // A scatter of frost-shattered plates around the base of each tor:
+        // periglacial blockfield is what tors shed, and it kills the "single
+        // object dropped on a smooth plane" look.
+        const n = rng.int(1, 4);
+        for (let i = 0; i < n; i++) {
+          const a = rng() * TAU;
+          const r = (t.length ?? 6) * rng.range(0.6, 1.9);
+          const bx = t.x + Math.cos(a) * r, bz = t.z + Math.sin(a) * r;
+          if (Math.abs(bx) > 1010 || Math.abs(bz) > 1010) continue;
+          const bs = P.sample(bx, bz);
+          if (bs.depth > 0.55) continue;
+          const l = rng.range(0.5, 1.6);
+          this._addRock(this.blockField, {
+            x: bx, z: bz, y: bs.height, length: l, height: l * rng.range(0.18, 0.42),
+            width: l * rng.range(0.5, 0.85), strike: FOLIATION_STRIKE + rng.range(-0.25, 0.25),
+            rng, depth: bs.depth,
+          });
+        }
+      }
+    }
+
+    /* -- 2. Free-standing outcrops wherever the snow cannot hold ---------- */
+    // Rock shows on rib crests, bluff faces, tor tops and anything sluffed
+    // clean; the density field bunches them where the pack is thinnest so the
+    // blue-noise radius does the clustering for us.
+    const b = P.bounds;
+    const outcrops = poissonScatter(rng, {
+      minX: b.minX + 12, maxX: b.maxX - 12, minZ: b.minZ + 12, maxZ: b.maxZ - 12,
+      rMin: 13, rMax: 62, k: 9,
+      limit: Math.round(T.rock.scatterLimit * density),
+      seedBudget: 24000,
+      radiusAt: (x, z) => {
+        const s = P.sample(x, z);
+        // Thin pack and high exposure → tight spacing → a real outcrop field.
+        const bare = clamp01(1 - s.depth / 0.6) * 0.6 + clamp01(s.exposure) * 0.4;
+        return lerp(62, 13, clamp01(bare));
+      },
+      accept: (x, z) => {
+        if (this._cleared(x, z)) return false;
+        const s = P.sample(x, z);
+        const slopeDeg = s.slope / DEG;
+        if (s.surface === 'groomed') return false;
+        const bare = s.surface === 'rock' || s.depth < 0.24 || slopeDeg > 43;
+        if (!bare) return false;
+        // Nothing free-standing on a face too steep to have a footing.
+        return slopeDeg < 62;
+      },
+    });
+    for (let i = 0; i < outcrops.count; i++) {
+      const x = outcrops.x[i], z = outcrops.z[i];
+      const s = P.sample(x, z);
+      const big = rng() < 0.30;
+      const len = big ? rng.range(6, 15) : rng.range(2.2, 6.5);
+      this._addRock(this.outcropField, {
+        x, z, y: s.height,
+        length: len,
+        height: len * rng.range(0.20, 0.55) * (big ? 1.0 : 0.8),
+        width: len * rng.range(0.35, 0.70),
+        strike: FOLIATION_STRIKE + rng.range(-0.12, 0.12),
+        rng, depth: s.depth,
+      });
+    }
+
+    /* -- 3. Crest blockfield: flat-lying angular plates on the scoured top - */
+    const plates = poissonScatter(makeRng(this._seed('blockfield')), {
+      minX: -1000, maxX: 1000, minZ: 720, maxZ: 1010,
+      rMin: 3.2, rMax: 11, k: 8,
+      limit: Math.round(T.rock.blockLimit * density),
+      seedBudget: 14000,
+      radiusAt: (x, z) => {
+        const s = P.sample(x, z);
+        return lerp(3.2, 11, clamp01(s.depth / 0.35));
+      },
+      accept: (x, z) => {
+        if (this._cleared(x, z)) return false;
+        const s = P.sample(x, z);
+        return s.height > 1800 && s.depth < 0.30 && s.slope / DEG < 24;
+      },
+    });
+    for (let i = 0; i < plates.count; i++) {
+      const x = plates.x[i], z = plates.z[i];
+      const s = P.sample(x, z);
+      const l = rng.range(0.25, 1.25);
+      this._addRock(this.blockField, {
+        x, z, y: s.height, length: l,
+        height: l * rng.range(0.16, 0.34), width: l * rng.range(0.55, 0.9),
+        strike: FOLIATION_STRIKE + rng.range(-0.35, 0.35),
+        rng, depth: s.depth, sink: l * 0.10,
+      });
+    }
+  }
+
+  /**
+   * Bluff bands. The terrain already builds the 55–80° face strip; what it
+   * cannot do on a 2 m heightfield is the broken edge — so this adds blocky
+   * teeth standing proud of the lip and a talus apron at the toe, which is
+   * where a real schist bluff sheds its plates.
+   */
+  _placeBluffRubble() {
+    const T = this.tune;
+    const rng = makeRng(this._seed('bluff.rubble'));
+    const P = this.probe;
+    let budget = Math.round(T.rock.talusLimit * clamp(T.density ?? 1, 0.05, 4));
+
+    for (const bl of this.features.bluffs || []) {
+      if (budget <= 0) break;
+      const height = bl.height ?? 12;
+      walkPolyline(bl.pts, 7, (x, z) => {
+        if (budget <= 0) return;
+        // Downhill direction from the local surface normal (the bluff faces
+        // down the fall line, but the ribbon meanders, so measure it).
+        const n = P.normal(x, z, _v3);
+        let dx = n.x, dz = n.z;
+        const l = Math.hypot(dx, dz);
+        if (l < 1e-3) { dx = 0; dz = -1; } else { dx /= l; dz /= l; }
+
+        // Teeth on the lip.
+        if (rng() < 0.55) {
+          const ux = x - dx * rng.range(1.5, 5), uz = z - dz * rng.range(1.5, 5);
+          const s = P.sample(ux, uz);
+          const len = rng.range(1.4, 4.2);
+          this._addRock(this.outcropField, {
+            x: ux, z: uz, y: s.height, length: len,
+            height: len * rng.range(0.45, 1.05), width: len * rng.range(0.4, 0.75),
+            strike: FOLIATION_STRIKE + rng.range(-0.15, 0.15), rng, depth: s.depth,
+          });
+          budget--;
+        }
+        // Talus apron at the toe: plates get smaller and denser downslope.
+        const nBlocks = rng.int(1, 3);
+        for (let i = 0; i < nBlocks && budget > 0; i++) {
+          const run = height / Math.tan(60 * DEG) + rng.range(2, 26);
+          const jitter = rng.range(-6, 6);
+          const bx = x + dx * run - dz * jitter;
+          const bz = z + dz * run + dx * jitter;
+          if (Math.abs(bx) > 1015 || Math.abs(bz) > 1015) continue;
+          const s = P.sample(bx, bz);
+          const fall = 1 - smoothstep(4, 30, run);
+          const len = rng.range(0.4, 2.4) * (0.5 + fall);
+          this._addRock(this.blockField, {
+            x: bx, z: bz, y: s.height, length: len,
+            height: len * rng.range(0.30, 0.70), width: len * rng.range(0.55, 0.9),
+            strike: FOLIATION_STRIKE + rng.range(-0.6, 0.6), rng, depth: s.depth,
+          });
+          budget--;
+        }
+      });
+    }
+  }
+
+  /**
+   * Avalanche debris. Every couloir mouth on the headwall base arc and every
+   * gap in the bluff band runs sluff, and the pile at the bottom is chunky,
+   * angular slab — a completely different snow texture from the smooth apron
+   * around it, and one of the few things that tells the viewer the slope is
+   * steep enough to slide.
+   */
+  _placeAvalancheDebris() {
+    const T = this.tune;
+    const rng = makeRng(this._seed('debris'));
+    const P = this.probe;
+
+    this.debrisField = this._field('avalanche-debris', this.snowMat, this.geo.snowBlock, {
+      castShadow: true, receiveShadow: true, shadowLevels: 1, cullAngular: 0.0075,
+    });
+
+    const budgetTotal = Math.round(T.debris.limit * clamp(T.density ?? 1, 0.05, 4));
+    const mouths = [];
+    for (const g of this.features.gullies || []) {
+      mouths.push({
+        x: FOCUS_X + Math.sin(g.phi) * BASE_R,
+        z: FOCUS_Z + Math.cos(g.phi) * BASE_R,
+        len: 135, spread: 62,
+      });
+    }
+    // The two through-routes in the bluff band funnel sluff onto the flats.
+    for (const [gx, gz] of [[-190, -185], [230, -190]]) {
+      mouths.push({ x: gx, z: gz, len: 90, spread: 42 });
+    }
+    if (!mouths.length) return;
+
+    const per = Math.max(20, Math.floor(budgetTotal / mouths.length));
+    for (const m of mouths) {
+      // Downhill from the mouth: radially away from the cirque focus below the
+      // headwall, and straight down the fall line for the bluff gaps.
+      let ddx = m.x - FOCUS_X, ddz = m.z - FOCUS_Z;
+      const dl = Math.hypot(ddx, ddz) || 1;
+      ddx /= dl; ddz /= dl;
+      // Radially outward from the focus points *uphill* on the headwall side,
+      // so the debris runs the other way.
+      ddx = -ddx; ddz = -ddz;
+
+      const pts = poissonScatter(rng, {
+        minX: m.x - m.spread * 2.4, maxX: m.x + m.spread * 2.4,
+        minZ: m.z - m.len * 1.4, maxZ: m.z + m.len * 0.4,
+        rMin: 2.4, rMax: 9, k: 7, limit: per, seedBudget: per * 26,
+        radiusAt: () => rng.range(2.4, 6.5),
+        accept: (x, z) => {
+          const rx = x - m.x, rz = z - m.z;
+          const along = rx * ddx + rz * ddz;
+          if (along < 2 || along > m.len) return false;
+          const across = Math.abs(-rx * ddz + rz * ddx);
+          const w = lerp(16, m.spread, along / m.len);
+          if (across > w) return false;
+          const s = P.sample(x, z);
+          // Debris lies where the slope flattens out, not on the face itself.
+          return s.slope / DEG < 34 && s.surface !== 'groomed';
+        },
+      });
+
+      for (let i = 0; i < pts.count; i++) {
+        const x = pts.x[i], z = pts.z[i];
+        const s = P.sample(x, z);
+        const rx = x - m.x, rz = z - m.z;
+        const along = clamp01((rx * ddx + rz * ddz) / m.len);
+        // Runout: blocks are biggest near the top of the fan and get buried
+        // and rounded as the pile thins downslope.
+        const size = lerp(2.1, 0.55, along) * rng.range(0.55, 1.35);
+        _e.set(rng.range(-0.30, 0.30), rng() * TAU, rng.range(-0.30, 0.30), 'YXZ');
+        _q.setFromEuler(_e);
+        const hgt = size * rng.range(0.32, 0.72);
+        _v3.set(x, s.height - hgt * 0.42, z);
+        _v3b.set(size, hgt, size * rng.range(0.6, 0.95));
+        _m4.compose(_v3, _q, _v3b);
+        this.debrisField.add(_m4, size * 0.7, null);
+      }
+    }
+  }
 }
