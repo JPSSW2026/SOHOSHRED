@@ -8,3 +8,4 @@ compare/
 shots/
 .smoke-*.mjs
 .snowmat-*.mjs
+.shadercheck-*.js

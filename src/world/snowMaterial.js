@@ -199,6 +199,14 @@ function tileNoise(x, y, px, py, seed) {
   return (a + (b - a) * v) * 1.4142;
 }
 
+/**
+ * Nyquist guard.  Each baker sets this to the texture resolution; any octave
+ * whose lattice would land finer than two texels per cell is skipped, because
+ * such an octave cannot survive mip generation — it only costs bake time and
+ * adds aliasing energy to the top mip.  Set to `Infinity` it is a no-op.
+ */
+let _maxLatticePeriod = Infinity;
+
 /** Tiling fBm with independent x/y periods.  Returns roughly [-1, 1]. */
 function tileFbm(x, y, px, py, octaves, seed, gain = 0.5, lacunarity = 2) {
   let f = 1;
@@ -206,7 +214,10 @@ function tileFbm(x, y, px, py, octaves, seed, gain = 0.5, lacunarity = 2) {
   let sum = 0;
   let norm = 0;
   for (let o = 0; o < octaves; o++) {
-    sum += amp * tileNoise(x * f, y * f, Math.round(px * f), Math.round(py * f), seed + o * 131);
+    const ox = Math.round(px * f);
+    const oy = Math.round(py * f);
+    if (o > 0 && Math.max(ox, oy) > _maxLatticePeriod) break;
+    sum += amp * tileNoise(x * f, y * f, ox, oy, seed + o * 131);
     norm += amp;
     f *= lacunarity;
     amp *= gain;
@@ -221,7 +232,10 @@ function tileRidged(x, y, px, py, octaves, seed) {
   let sum = 0;
   let norm = 0;
   for (let o = 0; o < octaves; o++) {
-    const n = 1 - Math.abs(tileNoise(x * f, y * f, Math.round(px * f), Math.round(py * f), seed + o * 71));
+    const ox = Math.round(px * f);
+    const oy = Math.round(py * f);
+    if (o > 0 && Math.max(ox, oy) > _maxLatticePeriod) break;
+    const n = 1 - Math.abs(tileNoise(x * f, y * f, ox, oy, seed + o * 71));
     sum += amp * n * n;
     norm += amp;
     f *= 2;
@@ -334,6 +348,7 @@ function bakeSnowGrain(size, seed) {
   const data = new Uint8Array(size * size * 4);
   const h = new Float32Array(size * size);
   const P = 8; // lattice units across the tile
+  _maxLatticePeriod = size * 0.5;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const i = y * size + x;
@@ -342,20 +357,18 @@ function bakeSnowGrain(size, seed) {
       // Rounded, packed ice grains: inverted Worley F1 gives convex lobes.
       const w = tileWorley(u * 6, v * 6, P * 6, P * 6, seed + 11);
       const grain = 1 - Math.min(1, w.f1 * 1.55);
-      // A second, finer cellular layer breaks the first one's obvious cells.
-      const w2 = tileWorley(u * 17, v * 17, P * 17, P * 17, seed + 29);
-      const grain2 = 1 - Math.min(1, w2.f1 * 1.7);
-      // Broad settling undulation + faceted crystal sparkle relief.
+      const grainEdge = clamp01((w.f2 - w.f1) * 2.2); // inter-grain interstices
+      // Broad settling undulation + faceted crystal relief.
       const soft = tileFbm(u * 2, v * 2, P * 2, P * 2, 5, seed + 3) * 0.5 + 0.5;
-      const facet = tileRidged(u * 11, v * 11, P * 11, P * 11, 2, seed + 47);
-      const hv = 0.30 * grain + 0.16 * grain2 + 0.36 * soft + 0.18 * facet;
+      const facet = tileRidged(u * 11, v * 11, P * 11, P * 11, 3, seed + 47);
+      const hv = 0.34 * grain + 0.12 * grainEdge + 0.34 * soft + 0.20 * facet;
       h[i] = hv;
       const o = i * 4;
       data[o + 2] = byte(1 - Math.min(1, hv * 1.25));
       // Coarse-grain clusters: old, metamorphosed snow has bigger facets and
       // therefore far more glint than fresh dendritic snow 30 cm away.
       const cluster = tileFbm(u * 1.5, v * 1.5, Math.round(P * 1.5), Math.round(P * 1.5), 3, seed + 21);
-      data[o + 3] = byte(0.30 + 0.85 * (cluster * 0.5 + 0.5) * (0.55 + 0.75 * grain2));
+      data[o + 3] = byte(0.30 + 0.85 * (cluster * 0.5 + 0.5) * (0.45 + 0.90 * facet));
     }
   }
   encodeGradient(h, size, 9.0, data, 0);
@@ -380,6 +393,7 @@ function bakeSnowDrift(size, seed) {
   const data = new Uint8Array(size * size * 4);
   const h = new Float32Array(size * size);
   const P = 8; // 11 m tile / 8 = 1.375 m per lattice unit
+  _maxLatticePeriod = size * 0.5;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const i = y * size + x;
@@ -434,6 +448,7 @@ function bakeSnowMacro(size, seed) {
   const h = new Float32Array(size * size);
   const scar = new Float32Array(size * size);
   const P = 8; // 34 m / 8 = 4.25 m per lattice unit
+  _maxLatticePeriod = size * 0.5;
 
   // --- old tracks -------------------------------------------------------
   // Stamped rather than distance-field-tested: marching a soft groove along the
@@ -528,6 +543,7 @@ function bakeSnowMacro(size, seed) {
 function bakeRockPack(size, seed) {
   const data = new Uint8Array(size * size * 4);
   const P = 8; // 2.4 m tile → 4.7 mm per texel
+  _maxLatticePeriod = size * 0.5;
   // Linear-light reference colours from docs/TERRAIN_BRIEF.md §2.13.
   const baseCol = [0.160, 0.172, 0.150]; // #6E7269 grey-green
   const quartz = [0.322, 0.348, 0.315]; // #9AA096
@@ -582,6 +598,7 @@ function bakeRockNormal(size, seed) {
   const data = new Uint8Array(size * size * 4);
   const h = new Float32Array(size * size);
   const P = 8;
+  _maxLatticePeriod = size * 0.5;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const i = y * size + x;
