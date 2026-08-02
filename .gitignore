@@ -6,3 +6,4 @@ dist-*/
 reference/
 compare/
 shots/
+.smoke-*.mjs

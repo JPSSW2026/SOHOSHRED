@@ -1,23 +1,1512 @@
-/** PLACEHOLDER — replaced by the snow-shading workstream. */
+/**
+ * Soho Shred — snow and rock surface shading.
+ *
+ * Snow is ~90% of every frame, so this module is the single most load-bearing
+ * visual system in the game. It is built on `THREE.MeshPhysicalMaterial` and
+ * patched through `onBeforeCompile`, which buys us the engine's lights, shadow
+ * cascades, IBL, fog and tone mapping for free while letting us replace the
+ * parts of the BRDF that make snow look like snow rather than white plastic.
+ *
+ * What is implemented here, and why (see docs/ART_DIRECTION.md §3):
+ *
+ *   (a) Wrapped multiple-scatter diffuse.  Photons enter a snow bump on the lit
+ *       side and leave on the dark side, so the terminator is soft and wide.
+ *       `saturate((N·L + w)/(1 + w))`, w varying 0.50 (powder) → 0.10 (ice).
+ *   (b) Forward-scatter lobe.  Ice grains are 600–14,000 wavelengths across, so
+ *       scattering is geometric-optics dominated with an asymmetry parameter
+ *       g ≈ 0.85.  A slope viewed *toward* a low sun is 3–5× brighter than the
+ *       same slope with the sun behind you.  Henyey–Greenstein with an
+ *       effective g ≈ 0.62 (lower than physical because we approximate many
+ *       scattering events, not one).
+ *   (c) Transport blue.  Ice absorbs ~30× more at 700 nm than at 450 nm, so
+ *       light that travels far inside the pack comes back cyan-blue.  Gated on
+ *       local concavity and on the shadowed hemisphere only — never applied to
+ *       the base albedo, which must stay neutral (ART_DIRECTION LAW 1).
+ *   (d) Broad GGX sheen from the packed surface (ior 1.40 → F0 ≈ 0.028).
+ *   (e) Sparse, intense, world-anchored crystal glints with a tight lobe, a
+ *       sub-pixel size cull and a hard distance cutoff at ~40 m.
+ *
+ * All texture data is generated at runtime from the deterministic noise toolkit
+ * in `core/rng.js` into `THREE.DataTexture`s — there are no external assets and
+ * no calls to `Math.random()` anywhere in this file.
+ *
+ * ---------------------------------------------------------------------------
+ * CONTRACT WITH `terrain.js` / `props.js`
+ * ---------------------------------------------------------------------------
+ * See `SNOW_VERTEX_ATTRIBUTES` below.  The single attribute the shader reads is
+ * `aSurface` (vec4).  Its WebGL generic default is (0,0,0,1), which this module
+ * deliberately interprets as "deep powder, fully snow covered" — so geometry
+ * that does not supply the attribute still renders correctly.  Use
+ * `surfaceClassWeights()` to convert `terrain.sample().surface` strings into
+ * the packed vec4.
+ */
+
 import * as THREE from 'three';
 import { CONFIG } from '../core/config.js';
+import {
+  hash32,
+  makeRng,
+  seedFromString,
+  Simplex,
+  clamp,
+  clamp01,
+  lerp,
+  smoothstep,
+} from '../core/rng.js';
 
+/* ==========================================================================
+ * 0.  PUBLIC CONTRACT
+ * ======================================================================== */
+
+/**
+ * Vertex attributes this material reads.  Everything is optional: the shader
+ * falls back to the documented default via `material.defaultAttributeValues`,
+ * so a geometry that supplies none of these still shades as clean powder.
+ *
+ * `aSurface` packs the five surface classes from `terrain.sample().surface`
+ * into four channels:
+ *
+ *   x — groomed weight   [0..1]
+ *   y — windpack weight  [0..1]
+ *   z — ice weight       [0..1]
+ *   w — snow cover       [0..1]   (1 = snow, 0 = bare rock)
+ *
+ * powder = clamp(1 − x − y − z, 0, 1).  Rock is `1 − w`, *not* a fifth weight,
+ * precisely so that the WebGL default (0,0,0,1) means "powder, fully covered".
+ *
+ * Float32BufferAttribute is the obvious encoding, but a *normalized*
+ * Uint8BufferAttribute works identically and is 4× smaller — recommended for
+ * the big LOD rings.
+ */
+export const SNOW_VERTEX_ATTRIBUTES = Object.freeze({
+  surface: Object.freeze({
+    name: 'aSurface',
+    itemSize: 4,
+    channels: Object.freeze(['groomed', 'windpack', 'ice', 'snowCover']),
+    default: Object.freeze([0, 0, 0, 1]),
+    normalizedUint8Ok: true,
+  }),
+});
+
+/**
+ * Channel layout the snow shader expects from `ctx.trails.getTrackTexture()`.
+ * Every channel is optional — a trails system that writes a single grey splat
+ * into RGB with alpha 1 still produces a believable trench, it just also gets a
+ * lip and a compaction term of the same shape.
+ *
+ *   R — trench depth      [0..1]  → cut down, darken, tint blue, kill glints
+ *   G — displaced lip     [0..1]  → raise, brighten slightly
+ *   B — compaction        [0..1]  → lower roughness (slick, polished base line)
+ *   A — overall amount    [0..1]  → multiplies all three (age / fade)
+ *
+ * The world → uv mapping is `(worldXZ − region.xy) * region.zw`.  A trails
+ * system may publish it as `trails.getTrackRegion() -> {minX, minZ, size}` or
+ * as `trails.trackRegion`; if neither exists the material falls back to
+ * `ctx.terrain.bounds`.
+ */
+export const SNOW_TRACK_TEXTURE_CHANNELS = Object.freeze({
+  r: 'trenchDepth',
+  g: 'displacedLip',
+  b: 'compaction',
+  a: 'amount',
+});
+
+/** True-north bearing of game −Z (docs/TERRAIN_BRIEF.md §2.1). */
+export const TRUE_NORTH_BEARING_OF_MINUS_Z = 225;
+
+const SURFACE_WEIGHTS = {
+  powder: [0, 0, 0, 1],
+  groomed: [1, 0, 0, 1],
+  windpack: [0, 1, 0, 1],
+  ice: [0, 0, 1, 1],
+  rock: [0, 0, 0, 0],
+};
+
+/**
+ * Convert a `terrain.sample()` result into the packed `aSurface` vec4.
+ *
+ * @param {string} surface  one of powder|groomed|ice|rock|windpack
+ * @param {number} [snowDepth]  metres of settled snow; below ~0.10 m the
+ *        surface reads as rock regardless of class, and between 0.10 and 0.45 m
+ *        the cover fades so the snow/rock edge is a gradient, never a razor.
+ * @param {number[]} [out]  optional 4-element destination
+ * @returns {number[]} [groomed, windpack, ice, snowCover]
+ */
+export function surfaceClassWeights(surface, snowDepth = 1.5, out = [0, 0, 0, 1]) {
+  const base = SURFACE_WEIGHTS[surface] || SURFACE_WEIGHTS.powder;
+  out[0] = base[0];
+  out[1] = base[1];
+  out[2] = base[2];
+  // Cover ramps 0 → 1 across 0.06 m → 0.45 m of settled depth.  Terrain's own
+  // rock classification (depth < 0.10) therefore lands mid-ramp, which is what
+  // produces the drift-shaped snow-on-rock edge rather than a hard boundary.
+  const cover = base[3] * clamp01(smoothstep(0.06, 0.45, snowDepth));
+  out[3] = surface === 'rock' ? Math.min(cover, 0.25) : cover;
+  return out;
+}
+
+/* ==========================================================================
+ * 1.  DETERMINISTIC, TILEABLE NOISE
+ *
+ * `core/rng.js` owns the general-purpose toolkit, but a *seamlessly tiling*
+ * field needs a lattice that wraps, which simplex cannot give us in 2D.  These
+ * helpers build periodic gradient- and cellular-noise on top of the shared
+ * `hash32`, so every texel is still a pure function of `CONFIG.seed`.
+ * ======================================================================== */
+
+const TAU = Math.PI * 2;
+
+/** 256 unit gradient directions — avoids two trig calls per lattice corner. */
+const GRAD_TABLE = new Float32Array(512);
+for (let i = 0; i < 256; i++) {
+  const a = (i * TAU) / 256;
+  GRAD_TABLE[i * 2] = Math.cos(a);
+  GRAD_TABLE[i * 2 + 1] = Math.sin(a);
+}
+
+function latticeHash(ix, iy, px, py, seed) {
+  const x = ((ix % px) + px) % px;
+  const y = ((iy % py) + py) % py;
+  return hash32(
+    Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(seed | 0, 1442695041),
+  );
+}
+
+/** Gradient dot product at a wrapped lattice corner. */
+function gdot(ix, iy, px, py, seed, dx, dy) {
+  const gi = (latticeHash(ix, iy, px, py, seed) & 255) << 1;
+  return GRAD_TABLE[gi] * dx + GRAD_TABLE[gi + 1] * dy;
+}
+
+/**
+ * Perlin gradient noise on a lattice that wraps every (px, py) units.
+ * Anisotropic periods are supported so wind-elongated fields can tile.
+ * Result is approximately [-1, 1].
+ */
+function tileNoise(x, y, px, py, seed) {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const fx = x - ix;
+  const fy = y - iy;
+  const u = fx * fx * fx * (fx * (fx * 6 - 15) + 10);
+  const v = fy * fy * fy * (fy * (fy * 6 - 15) + 10);
+  const n00 = gdot(ix, iy, px, py, seed, fx, fy);
+  const n10 = gdot(ix + 1, iy, px, py, seed, fx - 1, fy);
+  const n01 = gdot(ix, iy + 1, px, py, seed, fx, fy - 1);
+  const n11 = gdot(ix + 1, iy + 1, px, py, seed, fx - 1, fy - 1);
+  const a = n00 + (n10 - n00) * u;
+  const b = n01 + (n11 - n01) * u;
+  return (a + (b - a) * v) * 1.4142;
+}
+
+/** Tiling fBm with independent x/y periods.  Returns roughly [-1, 1]. */
+function tileFbm(x, y, px, py, octaves, seed, gain = 0.5, lacunarity = 2) {
+  let f = 1;
+  let amp = 1;
+  let sum = 0;
+  let norm = 0;
+  for (let o = 0; o < octaves; o++) {
+    sum += amp * tileNoise(x * f, y * f, Math.round(px * f), Math.round(py * f), seed + o * 131);
+    norm += amp;
+    f *= lacunarity;
+    amp *= gain;
+  }
+  return sum / (norm || 1);
+}
+
+/** Tiling ridged noise — sharp crests, used for crystal facets and rock. */
+function tileRidged(x, y, px, py, octaves, seed) {
+  let f = 1;
+  let amp = 1;
+  let sum = 0;
+  let norm = 0;
+  for (let o = 0; o < octaves; o++) {
+    const n = 1 - Math.abs(tileNoise(x * f, y * f, Math.round(px * f), Math.round(py * f), seed + o * 71));
+    sum += amp * n * n;
+    norm += amp;
+    f *= 2;
+    amp *= 0.5;
+  }
+  return sum / (norm || 1);
+}
+
+const _wl = { f1: 0, f2: 0, id: 0 };
+
+/** Tiling Worley (cellular) noise.  Distances are in cell units. */
+function tileWorley(x, y, px, py, seed) {
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  const fx = x - xi;
+  const fy = y - yi;
+  let f1 = 1e9;
+  let f2 = 1e9;
+  let id = 0;
+  for (let j = -1; j <= 1; j++) {
+    for (let i = -1; i <= 1; i++) {
+      const h = latticeHash(xi + i, yi + j, px, py, seed);
+      const ox = i + (h & 0xffff) / 65535 - fx;
+      const oy = j + ((h >>> 16) & 0xffff) / 65535 - fy;
+      const d = Math.sqrt(ox * ox + oy * oy);
+      if (d < f1) {
+        f2 = f1;
+        f1 = d;
+        id = h;
+      } else if (d < f2) {
+        f2 = d;
+      }
+    }
+  }
+  _wl.f1 = f1;
+  _wl.f2 = f2;
+  _wl.id = id;
+  return _wl;
+}
+
+const frac = (v) => v - Math.floor(v);
+
+/* ==========================================================================
+ * 2.  PROCEDURAL TEXTURE BAKERY
+ *
+ * Five packed RGBA maps, all tiling, all mip-mapped.  Every one is cached at
+ * module scope keyed on (seed, size) so the LOD rings, the props and the
+ * backdrop shell all share exactly one set of GPU textures.
+ * ======================================================================== */
+
+const _textureCache = new Map();
+
+function makeDataTexture(data, size, { srgb = false, anisotropy = 4 } = {}) {
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.anisotropy = anisotropy;
+  // RGB of the rock albedo is authored in sRGB so the 8-bit quantisation lands
+  // where the eye is sensitive; the packed data maps stay linear.
+  tex.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * Encode a wrapped height field as a two-channel derivative map.
+ *
+ * We store the *height gradient* (as −dh/du, −dh/dv) rather than a unit normal.
+ * That is what makes multi-scale blending correct: gradients from independent
+ * octaves simply add, whereas unit normals have to be re-normalised and lose
+ * amplitude.  The shader reconstructs the perturbed normal with Mikkelsen's
+ * surface-gradient formulation, which also handles the sloped ground correctly.
+ */
+function encodeGradient(height, size, strength, data, rOff) {
+  for (let y = 0; y < size; y++) {
+    const ym = ((y - 1) + size) % size;
+    const yp = (y + 1) % size;
+    for (let x = 0; x < size; x++) {
+      const xm = ((x - 1) + size) % size;
+      const xp = (x + 1) % size;
+      const dhdu = (height[y * size + xp] - height[y * size + xm]) * 0.5 * strength;
+      const dhdv = (height[yp * size + x] - height[ym * size + x]) * 0.5 * strength;
+      const i = (y * size + x) * 4 + rOff;
+      data[i] = Math.round(clamp01(0.5 - dhdu * 0.5) * 255);
+      data[i + 1] = Math.round(clamp01(0.5 - dhdv * 0.5) * 255);
+    }
+  }
+}
+
+const byte = (v) => Math.round(clamp01(v) * 255);
+/** Linear → sRGB transfer, for the one texture the GPU decodes on sample. */
+const toSrgbByte = (v) => {
+  const c = clamp01(v);
+  return Math.round((c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055) * 255);
+};
+
+/**
+ * GRAIN — the macro-shot map.  One tile covers 0.37 m of ground, so a texel is
+ * ~0.7 mm: this is the layer that survives a close-up of the board sinking in.
+ *
+ *   R,G — height gradient (fine crystalline granulation)
+ *   B   — cavity / self-occlusion, for a very slight albedo darkening
+ *   A   — crystal-cluster density, drives where glints are allowed to live
+ */
+function bakeSnowGrain(size, seed) {
+  const data = new Uint8Array(size * size * 4);
+  const h = new Float32Array(size * size);
+  const P = 8; // lattice units across the tile
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      const u = (x / size) * P;
+      const v = (y / size) * P;
+      // Rounded, packed ice grains: inverted Worley F1 gives convex lobes.
+      const w = tileWorley(u * 6, v * 6, P * 6, P * 6, seed + 11);
+      const grain = 1 - Math.min(1, w.f1 * 1.55);
+      // A second, finer cellular layer breaks the first one's obvious cells.
+      const w2 = tileWorley(u * 17, v * 17, P * 17, P * 17, seed + 29);
+      const grain2 = 1 - Math.min(1, w2.f1 * 1.7);
+      // Broad settling undulation + faceted crystal sparkle relief.
+      const soft = tileFbm(u * 2, v * 2, P * 2, P * 2, 5, seed + 3) * 0.5 + 0.5;
+      const facet = tileRidged(u * 11, v * 11, P * 11, P * 11, 2, seed + 47);
+      const hv = 0.30 * grain + 0.16 * grain2 + 0.36 * soft + 0.18 * facet;
+      h[i] = hv;
+      const o = i * 4;
+      data[o + 2] = byte(1 - Math.min(1, hv * 1.25));
+      // Coarse-grain clusters: old, metamorphosed snow has bigger facets and
+      // therefore far more glint than fresh dendritic snow 30 cm away.
+      const cluster = tileFbm(u * 1.5, v * 1.5, Math.round(P * 1.5), Math.round(P * 1.5), 3, seed + 21);
+      data[o + 3] = byte(0.30 + 0.85 * (cluster * 0.5 + 0.5) * (0.55 + 0.75 * grain2));
+    }
+  }
+  encodeGradient(h, size, 9.0, data, 0);
+  return data;
+}
+
+/**
+ * DRIFT — the wind map.  Baked in a frame whose +U axis is the direction the
+ * wind travels, so the shader only has to rotate the lookup by the current
+ * `CONFIG.world.windDirection`.  One tile covers 11 m.
+ *
+ * Sastrugi are asymmetric: the upwind face is a near-vertical scarp (~70°) and
+ * the downwind tail is gentle (~10–12°).  A symmetric sine gives corduroy, not
+ * sastrugi, so the profile here is a descending sawtooth with a softened riser.
+ * Features are stretched 4:1 along the wind, per docs/TERRAIN_BRIEF.md §2.8.
+ *
+ *   R,G — height gradient (sastrugi + wind pillows)
+ *   B   — sastrugi crest mask (crests are scoured and harder)
+ *   A   — drift/pillow height, 0 = trough (lee, deep, soft), 1 = crest
+ */
+function bakeSnowDrift(size, seed) {
+  const data = new Uint8Array(size * size * 4);
+  const h = new Float32Array(size * size);
+  const P = 8; // 11 m tile / 8 = 1.375 m per lattice unit
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      const u = (x / size) * P;
+      const v = (y / size) * P;
+
+      // Meander the ridge lines so they are not dead-straight combs.
+      const warp = tileFbm(u * 0.5, v * 2, 4, 16, 3, seed + 31) * 0.55;
+      // Sastrugi occur in patches, elongated 4:1 downwind.
+      const patch = clamp01(tileFbm(u * 0.5, v * 2, 4, 16, 4, seed + 13) * 1.3 + 0.42);
+      // Ridge segments have finite length: an anisotropic cellular field breaks
+      // each comb into 3–8 m long individual sastrugi.
+      const seg = tileWorley(u * 0.75, v * 3, 6, 24, seed + 53);
+      const segMask = clamp01(1.25 - seg.f1 * 1.1);
+
+      // Wavelength ≈ 1.375 m (spec: 0.35–2.2 m).
+      const t = frac(u + warp);
+      // Riser occupies 6% of the wavelength → 0.2 m over 0.082 m ≈ 68°.
+      const riser = smoothstep(0, 0.06, t);
+      const tail = Math.pow(1 - t, 1.25);
+      const saw = riser * tail;
+
+      // Wind pillows / dunes: rounded lobes at 3–8 m, also downwind-elongated.
+      const dune = Math.abs(tileFbm(u * 0.75, v * 1.5, 6, 12, 4, seed + 41));
+      const dune2 = tileFbm(u * 0.35, v * 0.9, 3, 7, 3, seed + 67) * 0.5 + 0.5;
+
+      const sastrugi = saw * patch * segMask;
+      const drift = 0.62 * dune2 + 0.38 * (1 - dune);
+      h[i] = sastrugi * 0.68 + drift * 0.32;
+
+      const o = i * 4;
+      data[o + 2] = byte(clamp01(sastrugi * 1.4));
+      data[o + 3] = byte(clamp01(drift * 0.72 + sastrugi * 0.42));
+    }
+  }
+  encodeGradient(h, size, 7.5, data, 0);
+  return data;
+}
+
+/**
+ * MACRO — the "history and weathering" map at a 34 m tile (≈6.6 cm per texel).
+ * Carries sun-cupping, broad albedo breakup, and old ski/board track scars.
+ * Art direction §9.3: untouched snow across a whole frame reads as a raw
+ * heightfield, so *something* must show that people have been here.
+ *
+ *   R,G — height gradient (cups + scars + broad settling)
+ *   B   — albedo breakup, 0.5 neutral
+ *   A   — scar / compaction mask
+ */
+function bakeSnowMacro(size, seed) {
+  const data = new Uint8Array(size * size * 4);
+  const h = new Float32Array(size * size);
+  const scar = new Float32Array(size * size);
+  const P = 8; // 34 m / 8 = 4.25 m per lattice unit
+
+  // --- old tracks -------------------------------------------------------
+  // Stamped rather than distance-field-tested: marching a soft groove along the
+  // polyline is O(length) instead of O(pixels × segments), and wrapping the
+  // stamp indices keeps the tile seamless.
+  const rng = makeRng(seed ^ 0x51ed270b);
+  const simplex = new Simplex(seed + 5);
+  const stampTrack = (x0, y0, dirX, dirY, length, radius, depth, wobble) => {
+    const steps = Math.max(8, Math.round(length * 2));
+    let px = x0;
+    let py = y0;
+    let ang = Math.atan2(dirY, dirX);
+    for (let s = 0; s < steps; s++) {
+      const t = s / steps;
+      ang += simplex.noise2D(t * 3.1 + x0 * 0.01, y0 * 0.01) * wobble;
+      px += Math.cos(ang) * (length / steps);
+      py += Math.sin(ang) * (length / steps);
+      const r = Math.ceil(radius) + 1;
+      const cx = Math.round(px);
+      const cy = Math.round(py);
+      for (let j = -r; j <= r; j++) {
+        for (let i = -r; i <= r; i++) {
+          const d = Math.hypot(i + (px - cx), j + (py - cy));
+          if (d > radius) continue;
+          const fall = 1 - smoothstep(radius * 0.35, radius, d);
+          const ix = ((cx + i) % size + size) % size;
+          const iy = ((cy + j) % size + size) % size;
+          const k = iy * size + ix;
+          scar[k] = Math.max(scar[k], fall * depth);
+        }
+      }
+    }
+  };
+
+  const trackCount = 7;
+  for (let n = 0; n < trackCount; n++) {
+    const x0 = rng() * size;
+    const y0 = rng() * size;
+    // Board/ski tracks run broadly down the fall line (game −Z, i.e. −V in the
+    // tile) with a wide spread; a couple of skin tracks cut across it.
+    const crossing = n >= trackCount - 2;
+    const base = crossing ? Math.PI * (0.5 + rng.range(-0.18, 0.18)) : Math.PI * rng.range(0.82, 1.18);
+    const len = size * rng.range(0.8, 1.6);
+    // 6.6 cm/texel → a 0.28 m board track is ~4 texels wide.
+    const radius = crossing ? 2.4 : rng.range(3.0, 4.6);
+    const depth = crossing ? 0.45 : rng.range(0.55, 0.95);
+    stampTrack(x0, y0, Math.cos(base), Math.sin(base), len, radius, depth, 0.05);
+    if (!crossing && rng() < 0.6) {
+      // A second, parallel line 0.6–1.4 m away: the pair reads as one rider.
+      const off = rng.range(9, 21);
+      stampTrack(
+        x0 + Math.cos(base + Math.PI / 2) * off,
+        y0 + Math.sin(base + Math.PI / 2) * off,
+        Math.cos(base), Math.sin(base), len, radius * 0.9, depth * 0.85, 0.05,
+      );
+    }
+  }
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      const u = (x / size) * P;
+      const v = (y / size) * P;
+      // Sun cupping: shallow dishes 0.4–1.5 m across on the ablation surface.
+      const cup = tileWorley(u * 7, v * 7, P * 7, P * 7, seed + 91);
+      const cupH = -0.55 * (1 - Math.min(1, cup.f1 * 1.9)) * (1 - Math.min(1, cup.f1 * 1.9));
+      // Broad settling and old wind events.
+      const broad = tileFbm(u, v, P, P, 5, seed + 17);
+      const hv = broad * 0.55 + cupH * 0.45 - scar[i] * 1.15;
+      h[i] = hv;
+      const o = i * 4;
+      data[o + 2] = byte(0.5 + broad * 0.5);
+      data[o + 3] = byte(clamp01(scar[i]));
+    }
+  }
+  encodeGradient(h, size, 3.2, data, 0);
+  return data;
+}
+
+/**
+ * ROCK ALBEDO — Otago (Haast) schist.  Greenschist facies, ~200 Ma, strongly
+ * foliated.  The *directional* part of the look — foliation banding, quartz
+ * segregation veins and the platy fracture steps — is computed analytically in
+ * the shader from a single global foliation plane, because every exposure in
+ * the basin shares one strike and dip and randomly-oriented rock reads as fake
+ * instantly.  This texture therefore carries only the isotropic part:
+ * granularity, blocky micro-fracture, oxidation blotches, and a lichen mask.
+ *
+ *   RGB — albedo (sRGB encoded, hardware-decoded on sample)
+ *   A   — lichen mask
+ */
+function bakeRockPack(size, seed) {
+  const data = new Uint8Array(size * size * 4);
+  const P = 8; // 2.4 m tile → 4.7 mm per texel
+  // Linear-light reference colours from docs/TERRAIN_BRIEF.md §2.13.
+  const baseCol = [0.160, 0.172, 0.150]; // #6E7269 grey-green
+  const quartz = [0.322, 0.348, 0.315]; // #9AA096
+  const oxide = [0.202, 0.152, 0.090]; // #7A6A52 weathered
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      const u = (x / size) * P;
+      const v = (y / size) * P;
+
+      const grit = tileFbm(u * 24, v * 24, P * 24, P * 24, 3, seed + 71) * 0.5 + 0.5;
+      const blocky = tileWorley(u * 4, v * 4, P * 4, P * 4, seed + 83);
+      const fracture = clamp01((blocky.f2 - blocky.f1) * 2.6);
+      const weather = clamp01(tileFbm(u * 1.5, v * 1.5, Math.round(P * 1.5), Math.round(P * 1.5), 4, seed + 97) * 1.1 + 0.5);
+      const vein = clamp01(tileRidged(u * 3, v * 3, P * 3, P * 3, 3, seed + 103) * 1.6 - 0.55);
+
+      let r = lerp(baseCol[0], quartz[0], vein) * (0.78 + 0.44 * grit);
+      let g = lerp(baseCol[1], quartz[1], vein) * (0.78 + 0.44 * grit);
+      let b = lerp(baseCol[2], quartz[2], vein) * (0.78 + 0.44 * grit);
+      // Oxidised, rust-brown weathering rind.
+      const ox = clamp01((weather - 0.62) * 2.4);
+      r = lerp(r, oxide[0], ox * 0.75);
+      g = lerp(g, oxide[1], ox * 0.75);
+      b = lerp(b, oxide[2], ox * 0.75);
+      // Fracture edges catch light; recesses go dark.
+      const edge = 0.72 + 0.55 * fracture;
+      r *= edge; g *= edge; b *= edge;
+
+      const o = i * 4;
+      data[o] = toSrgbByte(r);
+      data[o + 1] = toSrgbByte(g);
+      data[o + 2] = toSrgbByte(b);
+
+      // Lichen: 0.05–0.4 m blotches.  Coverage is biased in the shader toward
+      // sun-facing rock, so this is only the shape, not the placement.
+      const lich = tileWorley(u * 5, v * 5, P * 5, P * 5, seed + 113);
+      const lichShape = clamp01(1.35 - lich.f1 * 2.5) * (0.5 + 0.5 * grit);
+      const lichBreak = tileFbm(u * 9, v * 9, P * 9, P * 9, 3, seed + 127) * 0.5 + 0.5;
+      data[o + 3] = byte(clamp01(lichShape * lichBreak * 1.4 - 0.18));
+    }
+  }
+  return data;
+}
+
+/**
+ * ROCK NORMAL / CAVITY.
+ *   R,G — height gradient (blocky fracture + grit)
+ *   B   — cavity occlusion
+ *   A   — height, used to decide where snow lodges
+ */
+function bakeRockNormal(size, seed) {
+  const data = new Uint8Array(size * size * 4);
+  const h = new Float32Array(size * size);
+  const P = 8;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      const u = (x / size) * P;
+      const v = (y / size) * P;
+      const blocky = tileWorley(u * 4, v * 4, P * 4, P * 4, seed + 83);
+      const slab = clamp01((blocky.f2 - blocky.f1) * 2.2);
+      const grit = tileFbm(u * 20, v * 20, P * 20, P * 20, 3, seed + 71) * 0.5 + 0.5;
+      const chunk = tileFbm(u * 2.5, v * 2.5, Math.round(P * 2.5), Math.round(P * 2.5), 4, seed + 139) * 0.5 + 0.5;
+      const hv = 0.46 * slab + 0.30 * chunk + 0.24 * grit;
+      h[i] = hv;
+      const o = i * 4;
+      data[o + 2] = byte(0.35 + 0.65 * slab);
+      data[o + 3] = byte(hv);
+    }
+  }
+  encodeGradient(h, size, 7.0, data, 0);
+  return data;
+}
+
+/** Build (or fetch from cache) the whole texture set. */
+function getTextures(opts) {
+  const seed = seedFromString(String(opts.seed ?? CONFIG.seed ?? 'soho')) >>> 0;
+  const size = opts.textureSize | 0;
+  const aniso = opts.anisotropy | 0;
+  const key = `${seed}:${size}:${aniso}`;
+  let set = _textureCache.get(key);
+  if (set) return set;
+
+  const big = size;
+  const small = Math.max(128, size >> 1);
+  set = {
+    grain: makeDataTexture(bakeSnowGrain(big, seed + 1), big, { anisotropy: aniso }),
+    drift: makeDataTexture(bakeSnowDrift(big, seed + 2), big, { anisotropy: aniso }),
+    macro: makeDataTexture(bakeSnowMacro(big, seed + 3), big, { anisotropy: aniso }),
+    rock: makeDataTexture(bakeRockPack(big, seed + 4), big, { srgb: true, anisotropy: aniso }),
+    rockNormal: makeDataTexture(bakeRockNormal(small, seed + 5), small, { anisotropy: aniso }),
+  };
+  _textureCache.set(key, set);
+  return set;
+}
+
+/** Release every cached GPU texture (engine teardown / hot reload). */
+export function disposeSnowTextures() {
+  for (const set of _textureCache.values()) {
+    for (const tex of Object.values(set)) tex.dispose?.();
+  }
+  _textureCache.clear();
+}
+
+/* ==========================================================================
+ * 3.  GLSL
+ * ======================================================================== */
+
+/**
+ * Vertex: publish world position (batching/instancing aware) and the packed
+ * surface class.  Injected in place of `<project_vertex>` so `transformed` is
+ * already through morph/skin/displacement but not yet through the view matrix.
+ */
+const VERTEX_PARS = /* glsl */ `
+attribute vec4 aSurface;
+varying vec4 vSnowSurface;
+varying vec3 vSnowWorldPos;
+`;
+
+const VERTEX_MAIN = /* glsl */ `
+vec4 sohoWorld4 = vec4( transformed, 1.0 );
+#ifdef USE_BATCHING
+	sohoWorld4 = batchingMatrix * sohoWorld4;
+#endif
+#ifdef USE_INSTANCING
+	sohoWorld4 = instanceMatrix * sohoWorld4;
+#endif
+vSnowWorldPos = ( modelMatrix * sohoWorld4 ).xyz;
+vSnowSurface = aSurface;
+#include <project_vertex>
+`;
+
+/**
+ * Fragment declarations shared by the snow and the rock material.  Appended
+ * after `<common>` so `saturate`, `PI` and `RECIPROCAL_PI` are already defined
+ * and so the globals below are visible inside `RE_Direct_Physical`.
+ */
+const FRAGMENT_PARS = /* glsl */ `
+#define SOHO_SNOW
+
+uniform sampler2D uSnowGrain;
+uniform sampler2D uSnowDrift;
+uniform sampler2D uSnowMacro;
+uniform sampler2D uRockPack;
+uniform sampler2D uRockNormal;
+
+uniform vec4  uDetailScale;      // metres per tile: grainFine, grainMid, drift, macro
+uniform vec4  uDetailAmp;        // gradient amplitude per layer
+uniform vec2  uDetailFade;       // start / end distance for the fine grain layers
+uniform float uRockScale;        // metres per rock tile
+uniform vec3  uRockTint;
+uniform float uRockRough;
+uniform vec4  uSurfRough;        // powder, windpack, groomed, ice
+uniform vec4  uSurfWrap;         // diffuse wrap width per class
+uniform vec3  uSssColor;         // transport tint, raw
+uniform vec3  uSssTint;          // transport tint, max-channel normalised
+uniform float uSssStrength;
+uniform vec2  uWindDir;          // unit, world XZ, direction the wind TRAVELS
+uniform float uSparkleTime;
+uniform vec4  uGlint;            // density (cells/m), sharpness, strength, coverage
+uniform vec2  uGlintRange;       // full strength / zero distance in metres
+uniform float uForwardStrength;
+uniform vec3  uSunDirWorld;
+uniform float uNormalStrength;
+uniform float uCorduroySpacing;
+uniform vec3  uFoliationN;       // unit normal of the schist foliation planes
+uniform float uFoliationSpacing;
+uniform float uAlbedoScale;
+uniform float uSnowOnRock;
+uniform float uTrackStrength;
+
+#ifdef USE_TRACK_MAP
+	uniform sampler2D uTrackMap;
+	uniform vec4 uTrackRegion;   // xy = min corner (x,z), zw = 1 / extent
+#endif
+
+varying vec4 vSnowSurface;
+varying vec3 vSnowWorldPos;
+
+// A rotation used to decorrelate the second detail octave from the first, so
+// the two layers never share a tiling period (ART_DIRECTION §11.14).
+const mat2 SOHO_ROT2 = mat2( 0.80902, -0.58779, 0.58779, 0.80902 );
+
+// Written by the surface block, consumed by RE_Direct_Physical and by the
+// indirect tint after <lights_fragment_end>.
+float sohoWrap;
+float sohoSSSAmount;
+float sohoGlintMul;
+float sohoForwardMul;
+float sohoFootprint;
+vec3  sohoNormalW;
+vec3  sohoTanW;
+vec3  sohoBitW;
+
+/** Hash without sin() — stable, cheap, exact for integer lattice coords. */
+vec3 sohoHash33( vec3 p ) {
+	p = fract( p * vec3( 0.1031, 0.1030, 0.0973 ) );
+	p += dot( p, p.yxz + 33.33 );
+	return fract( ( p.xxy + p.yxx ) * p.zyx );
+}
+
+/** Henyey-Greenstein phase function. */
+float sohoHG( float cosT, float g ) {
+	float g2 = g * g;
+	float d = max( 1.0 + g2 - 2.0 * g * cosT, 1.0e-3 );
+	return ( 1.0 - g2 ) / ( 4.0 * PI * d * sqrt( d ) );
+}
+
+/**
+ * One lattice of crystal facets.
+ *
+ * The facet normals are a pure function of a quantised *world* position, so the
+ * glints are nailed to the snow: they do not crawl when the camera moves, which
+ * is the difference between "diamond dust" and "animated static".  A glint
+ * lights only when the world-space half vector falls inside a very tight cone
+ * about its facet, so the firing set is naturally densest near the sun's
+ * specular direction and migrates as the camera swings.
+ */
+float sohoGlintLayer( vec3 wp, vec3 wN, vec3 Hw, float density, float sharp, float coverage, float seed ) {
+	vec2 cell = floor( wp.xz * density + seed );
+	vec3 r = sohoHash33( vec3( cell, seed ) );
+	float active = step( 1.0 - coverage, r.z );
+	// Slow per-facet breathing: real twinkle comes from motion, but a little
+	// life keeps a static frame from looking printed.  Never fast enough to read
+	// as noise.
+	float spread = 0.30 + 0.20 * sin( uSparkleTime * 0.85 + r.z * 6.2831853 );
+	vec3 facet = normalize( wN + ( r.x * 2.0 - 1.0 ) * spread * sohoTanW + ( r.y * 2.0 - 1.0 ) * spread * sohoBitW );
+	float lobe = exp2( - ( 1.0 - saturate( dot( facet, Hw ) ) ) * sharp );
+	// Kill a lattice once its cells drop below a pixel, or it becomes shimmer.
+	float sizeFade = 1.0 - smoothstep( 0.30, 0.95, sohoFootprint * density );
+	return lobe * active * sizeFade;
+}
+
+/** Mikkelsen bump-from-screen-derivatives (as used by three's bumpmap chunk). */
+vec3 sohoPerturb( vec3 N, vec3 dpdx, vec3 dpdy, float dhdx, float dhdy ) {
+	vec3 r1 = cross( dpdy, N );
+	vec3 r2 = cross( N, dpdx );
+	float det = dot( dpdx, r1 );
+	vec3 grad = sign( det ) * ( dhdx * r1 + dhdy * r2 );
+	return normalize( abs( det ) * N - grad );
+}
+`;
+
+/**
+ * Replacement tail for `RE_Direct_Physical`.  Everything above it in the stock
+ * function (clearcoat, sheen, the GGX specular) is left untouched; we only
+ * swap the Lambert diffuse for the five-term snow response.
+ */
+const RE_DIRECT_SNOW = /* glsl */ `
+#ifdef SOHO_SNOW
+
+	{
+		vec3 sL = directLight.direction;
+		vec3 sV = geometryViewDir;
+		vec3 sN = geometryNormal;
+		float ndl = dot( sN, sL );
+
+		// (a) Wrapped multiple-scatter diffuse.  Photons enter on the lit side
+		//     of a bump and leave on the dark side, so the terminator spreads an
+		//     extra ~24 deg at w = 0.40.  Normalised by (1 + w) to hold albedo.
+		float w = sohoWrap;
+		float wrapped = saturate( ( ndl + w ) / ( 1.0 + w ) );
+		reflectedLight.directDiffuse += directLight.color * wrapped * BRDF_Lambert( material.diffuseContribution );
+
+		// (b) Forward-scatter lobe.  cos of the scattering angle between the
+		//     photon's incoming direction (-L) and its outgoing direction (V):
+		//     it peaks when you look *toward* the sun across a slope, which is
+		//     the blinding-when-you-skin-up-and-dull-when-you-turn-around effect.
+		float cosPhase = - dot( sL, sV );
+		float grazing = 1.0 - saturate( dot( sN, sV ) );
+		float fw = sohoHG( cosPhase, 0.62 ) * uForwardStrength * sohoForwardMul * ( 0.65 + 1.05 * grazing );
+		reflectedLight.directDiffuse += directLight.color * ( fw * saturate( ndl + 0.25 ) ) * material.diffuseContribution * RECIPROCAL_PI;
+
+		// (c) Transport blue emerging just past the terminator.  Ice absorbs
+		//     ~30x more at 700 nm than at 450 nm, so a long path returns cyan.
+		float trans = smoothstep( 0.30, -0.35, ndl ) * sohoSSSAmount;
+		reflectedLight.directDiffuse += directLight.color * ( trans * 0.85 ) * uSssColor * material.diffuseContribution * RECIPROCAL_PI;
+
+		// (e) Crystal glints — two non-harmonic world lattices.
+		vec3 Hw = normalize( ( vec4( normalize( sL + sV ), 0.0 ) * viewMatrix ).xyz );
+		float gl = sohoGlintLayer( vSnowWorldPos, sohoNormalW, Hw, uGlint.x, uGlint.y, uGlint.w, 0.0 );
+		gl += 0.55 * sohoGlintLayer( vSnowWorldPos, sohoNormalW, Hw, uGlint.x * 3.87, uGlint.y * 0.7, uGlint.w * 0.7, 17.0 );
+		reflectedLight.directSpecular += directLight.color * ( gl * uGlint.z * sohoGlintMul * saturate( ndl * 5.0 ) );
+	}
+
+#else
+
+	reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseContribution );
+
+#endif
+`;
+
+/**
+ * Indirect side.  The direct sun term must stay neutral or LAW 1 breaks, so the
+ * transport tint is applied to the sky/bounce term only — which is also where
+ * it physically belongs: an occluded pocket sees less sky and proportionally
+ * more of the pack's own red-depleted multiply-scattered light.
+ */
+const INDIRECT_TINT = /* glsl */ `
+#ifdef SOHO_SNOW
+	reflectedLight.indirectDiffuse *= mix( vec3( 1.0 ), uSssTint, saturate( sohoSSSAmount ) );
+#endif
+`;
+
+/**
+ * The snow surface block.  Injected after `<normal_fragment_begin>`, which is
+ * the one point in the physical shader where `diffuseColor`, `roughnessFactor`,
+ * `normal` and `nonPerturbedNormal` are all live and nothing downstream has
+ * consumed them yet.
+ */
+const SNOW_SURFACE = /* glsl */ `
+	/* ---------------- SOHO SNOW SURFACE ---------------- */
+	vec3 sohoWP = vSnowWorldPos;
+	float sohoDist = length( vViewPosition );
+	// World-space size of one pixel on this surface.  Everything fades against
+	// this rather than against raw distance, so detail disappears at exactly the
+	// point where it stops being resolvable instead of at an arbitrary radius.
+	sohoFootprint = max( 1.0e-4, length( fwidth( sohoWP.xz ) ) );
+	vec3 sohoWN = normalize( ( vec4( normal, 0.0 ) * viewMatrix ).xyz );
+
+	// ---- surface class (see SNOW_VERTEX_ATTRIBUTES) ----
+	float sfGroom = clamp( vSnowSurface.x, 0.0, 1.0 );
+	float sfWind  = clamp( vSnowSurface.y, 0.0, 1.0 );
+	float sfIce   = clamp( vSnowSurface.z, 0.0, 1.0 );
+	float sfCover = clamp( vSnowSurface.w, 0.0, 1.0 );
+	float sfPow   = clamp( 1.0 - sfGroom - sfWind - sfIce, 0.0, 1.0 );
+	float sfNorm  = 1.0 / max( sfPow + sfGroom + sfWind + sfIce, 1.0e-3 );
+	sfPow *= sfNorm; sfGroom *= sfNorm; sfWind *= sfNorm; sfIce *= sfNorm;
+
+	// Snow does not hold above ~55 deg and is gone by ~68 deg, whatever the
+	// heightfield claims (ART_DIRECTION §11.21).
+	float steep = 1.0 - saturate( sohoWN.y );
+	float rockMask = max( 1.0 - sfCover, smoothstep( 0.40, 0.63, steep ) );
+
+	// ---- detail lookups ----
+	mat2 windM = mat2( uWindDir.x, -uWindDir.y, uWindDir.y, uWindDir.x );
+	vec2 uvG1 = sohoWP.xz / uDetailScale.x;
+	vec2 uvG2 = ( SOHO_ROT2 * sohoWP.xz ) / uDetailScale.y + vec2( 0.31, 0.77 );
+	vec2 uvDr = ( windM * sohoWP.xz ) / uDetailScale.z;
+	vec2 uvMc = sohoWP.xz / uDetailScale.w;
+
+	vec4 tG1 = texture2D( uSnowGrain, uvG1 );
+	vec4 tDr = texture2D( uSnowDrift, uvDr );
+	vec4 tMc = texture2D( uSnowMacro, uvMc );
+	#if SOHO_QUALITY > 1
+		vec4 tG2 = texture2D( uSnowGrain, uvG2 );
+	#else
+		vec4 tG2 = vec4( 0.5, 0.5, 0.0, 0.5 );
+	#endif
+
+	// ---- track / carve splat ----
+	float trkTrench = 0.0;
+	float trkLip = 0.0;
+	float trkComp = 0.0;
+	#ifdef USE_TRACK_MAP
+		vec2 tuv = ( sohoWP.xz - uTrackRegion.xy ) * uTrackRegion.zw;
+		vec2 tin = step( vec2( 0.0 ), tuv ) * step( tuv, vec2( 1.0 ) );
+		vec4 tk = texture2D( uTrackMap, clamp( tuv, 0.0, 1.0 ) ) * ( tin.x * tin.y );
+		trkTrench = saturate( tk.r * tk.a ) * uTrackStrength;
+		trkLip    = saturate( tk.g * tk.a ) * uTrackStrength;
+		trkComp   = saturate( tk.b * tk.a );
+	#endif
+
+	// ---- snow-on-rock: never a razor edge ----
+	// Accumulation is biased by aspect (up-facing ledges hold), by the drift
+	// field (so the boundary is drift-shaped) and by the macro cavity field (so
+	// snow lodges in crevices).  ART_DIRECTION §6.1 / §11.22.
+	float accum = saturate(
+		( 1.0 - rockMask ) * 1.30
+		+ ( tMc.a - 0.35 ) * 0.30
+		+ ( tDr.w - 0.5 ) * 0.34
+		+ ( sohoWN.y - 0.55 ) * 0.75 * uSnowOnRock
+	);
+	float snowAmt = smoothstep( 0.28, 0.62, accum );
+	// Wind moat: rock re-radiates absorbed sun and melts the pack back 10-40 cm,
+	// leaving a narrow shadowed gap right at the boundary.
+	float moat = ( 1.0 - snowAmt ) * smoothstep( 0.06, 0.28, accum );
+	float rockF = 1.0 - snowAmt;
+
+	// ---- detail fades ----
+	float fadeFar = 1.0 - smoothstep( uDetailFade.x, uDetailFade.y, sohoDist );
+	float f1 = ( 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 24.0 / uDetailScale.x ) ) * fadeFar;
+	float f2 = ( 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 24.0 / uDetailScale.y ) ) * fadeFar;
+	float f3 = 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 16.0 / uDetailScale.z );
+	float f4 = 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 14.0 / uDetailScale.w );
+
+	// Sastrugi only exist where the wind works the surface.
+	float sastrugiW = sfWind + 0.55 * sfIce + 0.30 * sfPow + 0.05 * sfGroom;
+
+	// ---- height gradients, summed across scales ----
+	// (chain rule: a lookup at uv = A * p has world gradient A^T * g, which in
+	//  GLSL is written g * A)
+	vec2 grad = vec2( 0.0 );
+	grad += ( tG1.xy * 2.0 - 1.0 ) * ( uDetailAmp.x * f1 * ( 1.0 - 0.70 * sfGroom ) );
+	grad += ( ( tG2.xy * 2.0 - 1.0 ) * SOHO_ROT2 ) * ( uDetailAmp.y * f2 * ( 1.0 - 0.60 * sfGroom ) );
+	grad += ( ( tDr.xy * 2.0 - 1.0 ) * windM ) * ( uDetailAmp.z * f3 * sastrugiW );
+	grad += ( tMc.xy * 2.0 - 1.0 ) * ( uDetailAmp.w * f4 );
+
+	// Corduroy: tiller ribs run across the fall line (game -Z), analytic so it
+	// stays perfectly straight against the noisy hillside.
+	float cordFade = 1.0 - smoothstep( 0.22, 0.85, sohoFootprint / uCorduroySpacing );
+	float cordPhase = sohoWP.z * ( 6.2831853 / uCorduroySpacing );
+	float cordAmp = sfGroom * cordFade * ( 1.0 - rockF );
+	grad.y += sin( cordPhase ) * 0.20 * cordAmp;
+
+	// Refrozen ice is a near-slab: flatten almost everything.
+	grad *= ( 1.0 - 0.85 * sfIce );
+	// Rock reads through its own analytic foliation, not the snow detail.
+	grad *= ( 1.0 - 0.85 * rockF );
+
+	// ---- perturb the normal (Mikkelsen surface gradient) ----
+	vec3 sgX = vec3( 1.0, 0.0, 0.0 ) - sohoWN * sohoWN.x;
+	vec3 sgZ = vec3( 0.0, 0.0, 1.0 ) - sohoWN * sohoWN.z;
+	vec3 nW = normalize( sohoWN + ( grad.x * sgX + grad.y * sgZ ) * uNormalStrength );
+
+	// Schist foliation: one strike and one dip for the whole basin, so every
+	// exposure agrees.  Fine banding plus a coarse platy step.
+	float folC = dot( sohoWP, uFoliationN );
+	float folA = sin( folC * ( 6.2831853 / uFoliationSpacing ) );
+	float folB = sin( folC * ( 6.2831853 / ( uFoliationSpacing * 7.3 ) ) + 1.7 );
+	vec3 folT = uFoliationN - nW * dot( nW, uFoliationN );
+	float folFade = 1.0 - smoothstep( 0.22, 0.85, sohoFootprint / uFoliationSpacing );
+	nW = normalize( nW + folT * ( ( folA * 0.30 * folFade + folB * 0.42 ) * rockF ) );
+
+	#ifdef USE_TRACK_MAP
+		// The trench is a real depression: 16 cm down, with a 6 cm displaced lip.
+		float trkH = trkLip * 0.06 - trkTrench * 0.16;
+		nW = sohoPerturb( nW, dFdx( sohoWP ), dFdy( sohoWP ), dFdx( trkH ), dFdy( trkH ) );
+	#endif
+
+	sohoNormalW = nW;
+	normal = normalize( ( viewMatrix * vec4( nW, 0.0 ) ).xyz );
+
+	vec3 upRef = abs( nW.y ) < 0.9 ? vec3( 0.0, 1.0, 0.0 ) : vec3( 1.0, 0.0, 0.0 );
+	sohoTanW = normalize( cross( upRef, nW ) );
+	sohoBitW = cross( nW, sohoTanW );
+
+	// ---- albedo ----
+	// LAW 1: sunlit snow is a NEUTRAL off-white.  The blue lives in the light
+	// and in the transport term, never in the base colour.
+	vec3 albedo =
+		  vec3( 0.860, 0.862, 0.868 ) * sfPow
+		+ vec3( 0.795, 0.800, 0.811 ) * sfWind
+		+ vec3( 0.772, 0.776, 0.788 ) * sfGroom
+		+ vec3( 0.470, 0.535, 0.615 ) * sfIce;
+	albedo *= uAlbedoScale;
+	albedo *= 1.0 + ( tMc.z - 0.5 ) * 0.10 * f4;                 // broad breakup
+	albedo *= 1.0 - tG1.z * 0.045 * f1;                          // micro cavity
+	albedo *= 1.0 + ( tDr.z - 0.5 ) * 0.07 * sastrugiW * f3;     // scoured crests
+	albedo *= 1.0 + sin( cordPhase ) * 0.038 * cordAmp;          // corduroy +-4%
+	albedo *= 1.0 - tMc.w * 0.06 * f4 * smoothstep( 0.30, 0.70, tDr.w ); // old scars
+	albedo *= 1.0 - trkTrench * 0.15;
+	albedo *= 1.0 + trkLip * 0.05;
+
+	// ---- rock, blended in on the steep and the scoured ----
+	vec2 rockUvA = sohoWP.xz / uRockScale;
+	vec3 hDir = normalize( vec3( sohoWN.x, 1.0e-4, sohoWN.z ) );
+	vec2 rockUvB = vec2( dot( sohoWP.xz, vec2( -hDir.z, hDir.x ) ), sohoWP.y ) / uRockScale;
+	vec3 rockA = texture2D( uRockPack, rockUvA ).rgb;
+	#if SOHO_QUALITY > 1
+		vec3 rockB = texture2D( uRockPack, rockUvB ).rgb;
+		vec3 rockAlb = mix( rockA, rockB, smoothstep( 0.22, 0.72, steep ) );
+	#else
+		vec3 rockAlb = rockA;
+	#endif
+	rockAlb *= uRockTint;
+	rockAlb *= 1.0 + folA * 0.16 * folFade + folB * 0.10;
+	rockAlb = mix( rockAlb, rockAlb * vec3( 1.20, 1.00, 0.76 ), saturate( folB * 0.6 + 0.35 ) * 0.30 );
+	rockAlb *= 1.0 - moat * 0.32;
+
+	diffuseColor.rgb *= mix( albedo, rockAlb, rockF );
+
+	// ---- roughness ----
+	float rough = uSurfRough.x * sfPow + uSurfRough.y * sfWind + uSurfRough.z * sfGroom + uSurfRough.w * sfIce;
+	rough *= 0.90 + 0.18 * tG1.w;
+	rough = mix( rough, rough * 0.80, trkComp );
+	rough = mix( rough, rough * 0.86, tMc.w * 0.6 );
+	rough = mix( rough, uRockRough, rockF );
+	// Sub-pixel normal variance becomes roughness once detail stops resolving.
+	// Without this the far field turns into a shimmering specular fizz.
+	rough += 0.10 * smoothstep( 60.0, 420.0, sohoDist ) * ( 1.0 - rockF );
+	roughnessFactor = clamp( rough, 0.05, 1.0 );
+
+	// ---- shading-model scalars ----
+	sohoWrap = uSurfWrap.x * sfPow + uSurfWrap.y * sfWind + uSurfWrap.z * sfGroom + uSurfWrap.w * sfIce;
+	sohoWrap = mix( sohoWrap, 0.05, rockF );
+
+	// Concavity gates the transport blue: trench interiors, drift undercuts,
+	// cup bottoms and the lee of every pillow.  Everywhere else it must be zero
+	// or the whole frame goes blue and LAW 1 fails.
+	float concav = saturate( tMc.w * 0.45 + ( 1.0 - tDr.w ) * 0.32 + trkTrench * 1.30 + moat * 0.5 );
+	sohoSSSAmount = uSssStrength * concav * ( 1.0 - rockF ) * ( 1.0 - 0.6 * sfIce );
+
+	float glintFade = 1.0 - smoothstep( uGlintRange.x, uGlintRange.y, sohoDist );
+	sohoGlintMul = glintFade * ( 1.0 - rockF )
+		* ( sfPow + 0.75 * sfWind + 0.22 * sfGroom + 0.10 * sfIce )
+		* ( 0.50 + 1.10 * tG1.w )
+		* ( 1.0 - 0.70 * trkComp );
+
+	sohoForwardMul = ( 1.0 - rockF ) * ( sfPow + 0.88 * sfWind + 0.72 * sfGroom + 0.25 * sfIce );
+	/* -------------- end SOHO SNOW SURFACE -------------- */
+`;
+
+/**
+ * The rock surface block — NZ Otago schist, triplanar, with snow on every
+ * up-facing ledge.  Shares the direct-lighting patch with the snow material so
+ * that the snow which settles on a boulder gets the same wrap, forward scatter
+ * and glints as the ground around it.
+ */
+const ROCK_SURFACE = /* glsl */ `
+	/* ---------------- SOHO SCHIST SURFACE ---------------- */
+	vec3 sohoWP = vSnowWorldPos;
+	float sohoDist = length( vViewPosition );
+	sohoFootprint = max( 1.0e-4, length( fwidth( sohoWP ) ) );
+	vec3 sohoWN = normalize( ( vec4( normal, 0.0 ) * viewMatrix ).xyz );
+
+	// Triplanar weights, sharpened so the blend bands stay narrow.
+	vec3 tw = pow( abs( sohoWN ), vec3( 4.0 ) );
+	tw /= max( tw.x + tw.y + tw.z, 1.0e-4 );
+
+	vec2 uvX = sohoWP.zy / uRockScale;
+	vec2 uvY = sohoWP.xz / uRockScale;
+	vec2 uvZ = sohoWP.xy / uRockScale;
+
+	vec4 pX = texture2D( uRockPack, uvX );
+	vec4 pY = texture2D( uRockPack, uvY );
+	vec4 pZ = texture2D( uRockPack, uvZ );
+	vec4 rp = pX * tw.x + pY * tw.y + pZ * tw.z;
+
+	vec4 nX = texture2D( uRockNormal, uvX );
+	vec4 nY = texture2D( uRockNormal, uvY );
+	vec4 nZ = texture2D( uRockNormal, uvZ );
+	vec4 rn = nX * tw.x + nY * tw.y + nZ * tw.z;
+
+	float rockFade = 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 20.0 / uRockScale );
+
+	vec3 axX = vec3( 1.0, 0.0, 0.0 ) - sohoWN * sohoWN.x;
+	vec3 axY = vec3( 0.0, 1.0, 0.0 ) - sohoWN * sohoWN.y;
+	vec3 axZ = vec3( 0.0, 0.0, 1.0 ) - sohoWN * sohoWN.z;
+
+	vec2 gX = ( nX.xy * 2.0 - 1.0 );
+	vec2 gY = ( nY.xy * 2.0 - 1.0 );
+	vec2 gZ = ( nZ.xy * 2.0 - 1.0 );
+	vec3 sg = vec3( 0.0 );
+	sg += tw.x * ( gX.x * axZ + gX.y * axY );
+	sg += tw.y * ( gY.x * axX + gY.y * axZ );
+	sg += tw.z * ( gZ.x * axX + gZ.y * axY );
+	vec3 nW = normalize( sohoWN + sg * ( uNormalStrength * rockFade ) );
+
+	// One foliation plane for the whole basin: strike +38 deg from +X, dip 32.
+	float folC = dot( sohoWP, uFoliationN );
+	float folA = sin( folC * ( 6.2831853 / uFoliationSpacing ) );
+	float folB = sin( folC * ( 6.2831853 / ( uFoliationSpacing * 7.3 ) ) + 1.7 );
+	float folFade = 1.0 - smoothstep( 0.22, 0.85, sohoFootprint / uFoliationSpacing );
+	vec3 folT = uFoliationN - nW * dot( nW, uFoliationN );
+	nW = normalize( nW + folT * ( folA * 0.34 * folFade + folB * 0.46 ) );
+
+	// ---- albedo ----
+	vec3 rockAlb = rp.rgb * uRockTint;
+	rockAlb *= 1.0 + folA * 0.18 * folFade + folB * 0.11;
+	// Quartz segregation veins sit parallel to foliation and are markedly paler.
+	rockAlb = mix( rockAlb, rockAlb * vec3( 1.55, 1.58, 1.52 ), saturate( folA * 0.9 - 0.45 ) * 0.55 * folFade );
+	// Oxidised rind on the weathered bands.
+	rockAlb = mix( rockAlb, rockAlb * vec3( 1.22, 0.98, 0.72 ), saturate( folB * 0.6 + 0.30 ) * 0.30 );
+
+	// Lichen colonises sun-exposed faces.  In the southern hemisphere that is
+	// the northern aspect, so drive it off the actual sun vector.
+	float sunFace = saturate( dot( nW, normalize( uSunDirWorld + vec3( 0.0, 0.35, 0.0 ) ) ) );
+	float lichen = rp.a * smoothstep( 0.15, 0.75, sunFace ) * ( 1.0 - smoothstep( 0.55, 0.95, nW.y ) );
+	vec3 lichenCol = mix( vec3( 0.470, 0.302, 0.028 ), vec3( 0.262, 0.318, 0.202 ), fract( rp.a * 7.31 ) );
+	rockAlb = mix( rockAlb, lichenCol, lichen * 0.55 );
+	// A few near-black crustose patches keep it from reading as one flat hue.
+	rockAlb = mix( rockAlb, vec3( 0.022, 0.022, 0.019 ), saturate( lichen * 1.6 - 1.05 ) * 0.6 );
+
+	// ---- snow on every ledge ----
+	vec4 sG = texture2D( uSnowGrain, sohoWP.xz / uDetailScale.x );
+	vec4 sD = texture2D( uSnowDrift, ( mat2( uWindDir.x, -uWindDir.y, uWindDir.y, uWindDir.x ) * sohoWP.xz ) / uDetailScale.z );
+	float ledge = saturate( ( sohoWN.y - 0.42 ) * 2.1 );
+	float cavity = 1.0 - rn.z;
+	float accum = saturate(
+		ledge * 1.15
+		+ cavity * 0.30
+		+ ( sD.w - 0.5 ) * 0.42
+		+ clamp( vSnowSurface.w, 0.0, 1.0 ) * 0.6
+	) * uSnowOnRock;
+	float snowAmt = smoothstep( 0.30, 0.66, accum );
+	// Rime dusting on the windward side, even where snow cannot lie.
+	float windward = saturate( dot( normalize( vec3( nW.x, 0.0, nW.z ) + 1.0e-4 ).xz, -uWindDir ) );
+	float rime = ( 1.0 - snowAmt ) * windward * 0.30 * smoothstep( 0.10, 0.45, accum );
+	float moat = ( 1.0 - snowAmt ) * smoothstep( 0.08, 0.30, accum );
+	rockAlb *= 1.0 - moat * 0.30;
+
+	vec3 snowAlb = vec3( 0.845, 0.848, 0.856 ) * uAlbedoScale;
+	snowAlb *= 1.0 - sG.z * 0.05;
+	diffuseColor.rgb *= mix( rockAlb, snowAlb, saturate( snowAmt + rime ) );
+
+	// Snow that has settled on rock is soft and drifted: perturb with the snow
+	// detail, weighted by how much of it there is.
+	vec3 sgX = vec3( 1.0, 0.0, 0.0 ) - nW * nW.x;
+	vec3 sgZ = vec3( 0.0, 0.0, 1.0 ) - nW * nW.z;
+	vec2 sgrad = ( sG.xy * 2.0 - 1.0 ) * ( uDetailAmp.x * rockFade );
+	nW = normalize( mix( nW, normalize( sohoWN + ( sgrad.x * sgX + sgrad.y * sgZ ) * uNormalStrength ), snowAmt * 0.85 ) );
+
+	sohoNormalW = nW;
+	normal = normalize( ( viewMatrix * vec4( nW, 0.0 ) ).xyz );
+	vec3 upRef = abs( nW.y ) < 0.9 ? vec3( 0.0, 1.0, 0.0 ) : vec3( 1.0, 0.0, 0.0 );
+	sohoTanW = normalize( cross( upRef, nW ) );
+	sohoBitW = cross( nW, sohoTanW );
+
+	// ---- response ----
+	roughnessFactor = clamp( mix( uRockRough * ( 0.85 + 0.30 * rp.a ), uSurfRough.x, snowAmt ), 0.05, 1.0 );
+	sohoWrap = mix( 0.06, uSurfWrap.x, snowAmt );
+	sohoSSSAmount = uSssStrength * saturate( cavity * 0.5 + ( 1.0 - sD.w ) * 0.3 ) * snowAmt;
+	sohoGlintMul = snowAmt * ( 1.0 - smoothstep( uGlintRange.x, uGlintRange.y, sohoDist ) ) * ( 0.5 + 1.1 * sG.w );
+	sohoForwardMul = snowAmt;
+	/* -------------- end SOHO SCHIST SURFACE -------------- */
+`;
+
+/* ==========================================================================
+ * 4.  MATERIAL CONSTRUCTION
+ * ======================================================================== */
+
+const DEG = Math.PI / 180;
+
+/**
+ * Direction the wind *travels*, in game-space XZ.
+ * `CONFIG.world.windDirection` is meteorological (the bearing it blows FROM),
+ * and game −Z is true bearing 225 (docs/TERRAIN_BRIEF.md §2.1).  At the shipped
+ * 292 deg NW flow this yields (−0.921, +0.391), matching the terrain brief.
+ */
+function windDirectionGame(out = new THREE.Vector2()) {
+  const fromDeg = Number.isFinite(CONFIG.world?.windDirection) ? CONFIG.world.windDirection : 292;
+  const t = (fromDeg + 180 - TRUE_NORTH_BEARING_OF_MINUS_Z) * DEG;
+  return out.set(Math.sin(t), -Math.cos(t)).normalize();
+}
+
+/**
+ * Foliation plane normal for Otago schist: plan strike +38 deg from +X,
+ * dip 32 deg.  n = (−sin38·sin32, cos32, cos38·sin32).
+ */
+function foliationNormal() {
+  const strike = 38 * DEG;
+  const dip = 32 * DEG;
+  return new THREE.Vector3(
+    -Math.sin(strike) * Math.sin(dip),
+    Math.cos(dip),
+    Math.cos(strike) * Math.sin(dip),
+  ).normalize();
+}
+
+/** Pick a quality tier.  Software raster gets one fewer detail octave. */
+function resolveQuality(ctx, requested) {
+  if (requested === 'high') return 2;
+  if (requested === 'medium') return 1;
+  if (requested === 'low') return 0;
+  // auto
+  try {
+    const gl = ctx?.renderer?.getContext?.();
+    if (gl) {
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      const name = String(
+        (ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || '',
+      ).toLowerCase();
+      if (name.includes('swiftshader') || name.includes('llvmpipe') || name.includes('softwarerasterizer')) {
+        return 1;
+      }
+    }
+  } catch (e) { /* capability probing must never break boot */ }
+  return 2;
+}
+
+function buildUniforms(ctx, opts) {
+  const snow = CONFIG.snow || {};
+  const sss = Array.isArray(snow.sssColor) ? snow.sssColor : [0.62, 0.74, 0.95];
+  const sssMax = Math.max(sss[0], sss[1], sss[2]) || 1;
+  const sparkleDensity = clamp(snow.sparkleDensity ?? 1400, 80, 40000);
+  const sparkleStrength = snow.sparkleStrength ?? 0.9;
+  const sastrugi = snow.sastrugiStrength ?? 0.55;
+  const albedo = snow.albedo ?? 0.86;
+  const tex = getTextures(opts);
+
+  return {
+    uSnowGrain: { value: tex.grain },
+    uSnowDrift: { value: tex.drift },
+    uSnowMacro: { value: tex.macro },
+    uRockPack: { value: tex.rock },
+    uRockNormal: { value: tex.rockNormal },
+
+    // Non-harmonic world tile sizes (metres).  ART_DIRECTION §11.14 asks for at
+    // least three octaves at non-harmonic scales plus a low-frequency breakup.
+    uDetailScale: { value: new THREE.Vector4(0.37, 1.9, 11.0, 34.0) },
+    uDetailAmp: {
+      value: new THREE.Vector4(0.22, 0.16, 0.62 * (sastrugi / 0.55), 0.14),
+    },
+    uDetailFade: { value: new THREE.Vector2(40, 250) },
+
+    uRockScale: { value: opts.rockScale ?? 2.4 },
+    uRockTint: { value: new THREE.Color(1, 1, 1) },
+    uRockRough: { value: opts.rockRoughness ?? 0.68 },
+
+    //                              powder windpack groomed  ice
+    uSurfRough: { value: new THREE.Vector4(0.58, 0.42, 0.36, 0.09) },
+    uSurfWrap: { value: new THREE.Vector4(0.50, 0.35, 0.30, 0.10) },
+
+    uSssColor: { value: new THREE.Color(sss[0], sss[1], sss[2]) },
+    uSssTint: { value: new THREE.Color(sss[0] / sssMax, sss[1] / sssMax, sss[2] / sssMax) },
+    uSssStrength: { value: snow.sssStrength ?? 0.62 },
+
+    uWindDir: { value: windDirectionGame() },
+    uSparkleTime: { value: 0 },
+    // density (lattice cells per metre), lobe sharpness, intensity, coverage
+    uGlint: {
+      value: new THREE.Vector4(
+        34 * Math.sqrt(sparkleDensity / 1400),
+        620,
+        7.5 * sparkleStrength,
+        0.30,
+      ),
+    },
+    uGlintRange: { value: new THREE.Vector2(25, 40) },
+    uForwardStrength: { value: opts.forwardScatter ?? 0.55 },
+    uSunDirWorld: { value: new THREE.Vector3(0.02, 0.18, 0.98).normalize() },
+    uNormalStrength: { value: opts.normalStrength ?? 1.0 },
+    uCorduroySpacing: { value: opts.corduroySpacing ?? 0.11 },
+    uFoliationN: { value: foliationNormal() },
+    uFoliationSpacing: { value: opts.foliationSpacing ?? 0.085 },
+    uAlbedoScale: { value: albedo / 0.86 },
+    uSnowOnRock: { value: opts.snowOnRock ?? 1.0 },
+    uTrackStrength: { value: opts.trackStrength ?? 1.0 },
+
+    uTrackMap: { value: null },
+    uTrackRegion: { value: new THREE.Vector4(-1024, -1024, 1 / 2048, 1 / 2048) },
+  };
+}
+
+const DIRECT_NEEDLES = [
+  'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseContribution );',
+  'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );',
+];
+
+let _warnedDirect = false;
+
+/** Splice the snow direct-lighting response into the physical light chunk. */
+function patchLightingChunk(shader) {
+  const chunk = THREE.ShaderChunk.lights_physical_pars_fragment;
+  for (const needle of DIRECT_NEEDLES) {
+    if (chunk.indexOf(needle) !== -1) {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <lights_physical_pars_fragment>',
+        chunk.replace(needle, RE_DIRECT_SNOW),
+      );
+      return true;
+    }
+  }
+  if (!_warnedDirect) {
+    _warnedDirect = true;
+    console.warn(
+      '[snowMaterial] could not locate the Lambert diffuse line in ' +
+      'lights_physical_pars_fragment; falling back to the stock direct BRDF. ' +
+      'Wrapped diffuse, forward scatter and glints are disabled.',
+    );
+  }
+  return false;
+}
+
+function installShader(material, surfaceBlock, cacheKey) {
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, material.userData.snowUniforms);
+
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\n${VERTEX_PARS}`)
+      .replace('#include <project_vertex>', VERTEX_MAIN);
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\n${FRAGMENT_PARS}`)
+      .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>\n${surfaceBlock}`)
+      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${INDIRECT_TINT}`);
+
+    patchLightingChunk(shader);
+    material.userData.shader = shader;
+  };
+  material.customProgramCacheKey = () =>
+    `${cacheKey}|q${material.defines.SOHO_QUALITY}|t${material.defines.USE_TRACK_MAP !== undefined ? 1 : 0}`;
+}
+
+/**
+ * The snow material.  Consumed by `terrain.js` for every LOD ring and by
+ * `props.js` for anything that should shade as ground snow.
+ *
+ * @param {object} ctx    shared engine context (may be partially populated)
+ * @param {object} [opts] snow options plus any MeshPhysicalMaterial parameter
+ * @returns {THREE.MeshPhysicalMaterial}
+ */
 export function createSnowMaterial(ctx, opts = {}) {
-  return new THREE.MeshStandardMaterial({
-    color: new THREE.Color(0.90, 0.93, 0.98),
-    roughness: 0.72,
+  const {
+    quality = 'auto',
+    textureSize,
+    anisotropy,
+    seed,
+    rockScale, rockRoughness, rockTint,
+    normalStrength, forwardScatter, corduroySpacing, foliationSpacing,
+    snowOnRock, trackStrength, trackTexture, trackRegion,
+    ...three
+  } = opts;
+
+  const texOpts = {
+    seed: seed ?? CONFIG.seed,
+    textureSize: textureSize ?? 512,
+    anisotropy: Math.max(1, Math.min(anisotropy ?? 4, ctx?.maxAnisotropy ?? 4)),
+    rockScale, rockRoughness, normalStrength, forwardScatter,
+    corduroySpacing, foliationSpacing, snowOnRock, trackStrength,
+  };
+
+  const material = new THREE.MeshPhysicalMaterial({
+    // `color` is a global tint on top of the shader's per-class albedo; leave
+    // it white unless a shot deliberately wants to push the whole snowfield.
+    color: 0xffffff,
+    roughness: 0.58,
     metalness: 0.0,
-    ...opts,
+    // Ice n = 1.31 gives F0 = 0.018 for a slab; we are shading an aggregate of
+    // facets, so the effective F0 is a little higher.  1.40 -> F0 = 0.028.
+    ior: 1.40,
+    specularIntensity: 1.0,
+    envMapIntensity: opts.envMapIntensity ?? 1.0,
+    dithering: true,
+    ...three,
   });
+
+  material.userData.snowUniforms = buildUniforms(ctx, texOpts);
+  material.userData.isSohoSnow = true;
+  material.defines = { ...(material.defines || {}), SOHO_QUALITY: resolveQuality(ctx, quality) };
+  // The generic vertex-attribute default: deep powder, fully snow covered.
+  material.defaultAttributeValues = { aSurface: SNOW_VERTEX_ATTRIBUTES.surface.default.slice() };
+
+  if (rockTint) material.userData.snowUniforms.uRockTint.value.set(rockTint);
+  installShader(material, SNOW_SURFACE, 'soho-snow');
+  if (trackTexture) setTrackTexture(material, trackTexture, trackRegion);
+  return material;
 }
 
+/**
+ * NZ Otago schist for `props.js` — rock outcrops, tors, bluff bands, boulders.
+ *
+ * Triplanar, with one globally consistent foliation plane (strike +38 deg from
+ * +X, dip 32 deg) driving the banding, the quartz veins and the platy fracture
+ * relief; lichen biased to sun-exposed faces; and snow accumulating on every
+ * up-facing ledge with a wind moat rather than a razor edge at the boundary.
+ *
+ * @param {object} ctx
+ * @param {object} [opts]
+ * @returns {THREE.MeshPhysicalMaterial}
+ */
 export function createRockMaterial(ctx, opts = {}) {
-  return new THREE.MeshStandardMaterial({
-    color: new THREE.Color(0.20, 0.19, 0.20),
-    roughness: 0.92,
+  const {
+    quality = 'auto',
+    textureSize,
+    anisotropy,
+    seed,
+    rockScale, rockRoughness, rockTint,
+    normalStrength, forwardScatter, corduroySpacing, foliationSpacing,
+    snowOnRock, trackStrength, trackTexture, trackRegion,
+    ...three
+  } = opts;
+
+  const texOpts = {
+    seed: seed ?? CONFIG.seed,
+    textureSize: textureSize ?? 512,
+    anisotropy: Math.max(1, Math.min(anisotropy ?? 4, ctx?.maxAnisotropy ?? 4)),
+    rockScale: rockScale ?? 2.4,
+    rockRoughness: rockRoughness ?? 0.68,
+    normalStrength, forwardScatter, corduroySpacing,
+    foliationSpacing: foliationSpacing ?? 0.11,
+    snowOnRock, trackStrength,
+  };
+
+  const material = new THREE.MeshPhysicalMaterial({
+    color: 0xffffff,
+    roughness: 0.68,
     metalness: 0.0,
-    ...opts,
+    ior: 1.5,
+    envMapIntensity: opts.envMapIntensity ?? 1.0,
+    dithering: true,
+    ...three,
   });
+
+  material.userData.snowUniforms = buildUniforms(ctx, texOpts);
+  material.userData.isSohoSnow = true;
+  material.userData.isSohoRock = true;
+  material.defines = { ...(material.defines || {}), SOHO_QUALITY: resolveQuality(ctx, quality) };
+  // Rock geometry that does not tag itself gets no extra snow bias.
+  material.defaultAttributeValues = { aSurface: [0, 0, 0, 0] };
+
+  if (rockTint) material.userData.snowUniforms.uRockTint.value.set(rockTint);
+  installShader(material, ROCK_SURFACE, 'soho-rock');
+  if (trackTexture) setTrackTexture(material, trackTexture, trackRegion);
+  return material;
 }
 
-export function updateSnowMaterial() {}
+/* ==========================================================================
+ * 5.  PER-FRAME UPDATE
+ * ======================================================================== */
+
+const _v2 = new THREE.Vector2();
+
+/**
+ * Attach (or detach) the carve-track splat map.
+ *
+ * @param {THREE.Material} material
+ * @param {THREE.Texture|null} texture
+ * @param {{minX:number,minZ:number,size:number}|{minX,maxX,minZ,maxZ}|null} [region]
+ */
+export function setTrackTexture(material, texture, region) {
+  const u = material?.userData?.snowUniforms;
+  if (!u) return;
+  const had = material.defines.USE_TRACK_MAP !== undefined;
+  const want = !!texture;
+  u.uTrackMap.value = texture || null;
+  if (region) {
+    const minX = region.minX ?? -1024;
+    const minZ = region.minZ ?? -1024;
+    const sizeX = region.size ?? ((region.maxX ?? 1024) - minX) ?? 2048;
+    const sizeZ = region.size ?? ((region.maxZ ?? 1024) - minZ) ?? 2048;
+    u.uTrackRegion.value.set(minX, minZ, 1 / (sizeX || 1), 1 / (sizeZ || 1));
+  }
+  if (had !== want) {
+    if (want) material.defines.USE_TRACK_MAP = '';
+    else delete material.defines.USE_TRACK_MAP;
+    material.needsUpdate = true;
+  }
+}
+
+function updateOne(material, dt, ctx) {
+  const u = material?.userData?.snowUniforms;
+  if (!u) return;
+
+  // Deterministic clock: prefer the engine's accumulated time (the capture
+  // harness steps it in exact increments) and fall back to integrating dt.
+  u.uSparkleTime.value = Number.isFinite(ctx?.elapsed)
+    ? ctx.elapsed
+    : u.uSparkleTime.value + (Number.isFinite(dt) ? dt : 0);
+
+  const sun = ctx?.sky?.sunDirection;
+  if (sun && Number.isFinite(sun.x)) {
+    u.uSunDirWorld.value.copy(sun).normalize();
+    // The forward-scatter lobe is at its most spectacular under a low sun and
+    // is barely visible near the zenith; ramp it with solar elevation so a
+    // time-of-day change does not need a manual re-tune.
+    const elev = Math.max(0, Math.min(1, sun.y));
+    u.uForwardStrength.value = lerp(0.72, 0.30, Math.sqrt(elev));
+  }
+
+  // Cheap, and it lets the harness re-roll wind without a rebuild.
+  windDirectionGame(_v2);
+  u.uWindDir.value.copy(_v2);
+
+  const trails = ctx?.trails;
+  if (trails && typeof trails.getTrackTexture === 'function') {
+    const tex = trails.getTrackTexture();
+    const region =
+      (typeof trails.getTrackRegion === 'function' ? trails.getTrackRegion() : null) ||
+      trails.trackRegion ||
+      ctx?.terrain?.bounds ||
+      null;
+    if (tex !== u.uTrackMap.value || region) setTrackTexture(material, tex, region);
+  }
+}
+
+/**
+ * Per-frame animation for a snow or rock material.  Safe to call before
+ * `ctx.sky`, `ctx.trails` or `ctx.terrain` exist.
+ *
+ * @param {THREE.Material|THREE.Material[]} material
+ * @param {number} dt
+ * @param {object} ctx
+ */
+export function updateSnowMaterial(material, dt, ctx) {
+  if (!material) return;
+  if (Array.isArray(material)) {
+    for (const m of material) updateOne(m, dt, ctx);
+  } else {
+    updateOne(material, dt, ctx);
+  }
+}
