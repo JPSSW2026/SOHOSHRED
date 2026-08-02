@@ -76,6 +76,16 @@ const CREST_R = 640;   // headwall crest arc radius about the focus
 const BASE_R = 460;    // headwall base arc radius
 
 /**
+ * Flank lift: how far "up the profile" an off-centreline sample is pushed.
+ * This is what turns a ramp into a cirque. 560 m of forward offset at the map
+ * edge gives ~145 m of rim relief above the centreline at x = ±800 — a real
+ * bowl wall at ~28°, rather than the ~35° wall a larger value produces (which
+ * dumps a tenth of the map into the "unrideable" slope band).
+ */
+const FLANK_LIFT = 560;
+const FLANK_POW = 1.6;
+
+/**
  * Prevailing wind. CONFIG.world.windDirection = 292 means *from* 292° true,
  * i.e. blowing *toward* 112° true. In game space that is cross-slope toward
  * −X with a slight up-slope bias — a NW gale on a SW-facing basin.
@@ -678,8 +688,8 @@ export class Terrain {
    * curvature out at the rim and a genuinely flat floor down the middle.
    */
   _baseHeight(x, z) {
-    const A = 700 * smoothstep(-600, 500, z) + 60;
-    const curl = A * Math.pow(Math.abs(x) / 1024, 1.6);
+    const A = FLANK_LIFT * smoothstep(-600, 500, z) + 60;
+    const curl = A * Math.pow(Math.abs(x) / 1024, FLANK_POW);
     return this._profile(z + curl);
   }
 

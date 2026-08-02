@@ -577,7 +577,7 @@ function bakeRockPack(size, seed) {
   const P = 8; // 2.4 m tile → 4.7 mm per texel
   _maxLatticePeriod = size * 0.5;
   // Linear-light reference colours from docs/TERRAIN_BRIEF.md §2.13.
-  const baseCol = [0.160, 0.172, 0.150]; // #6E7269 grey-green
+  const baseCol = [0.176, 0.186, 0.158]; // #6E7269 grey-green
   const quartz = [0.322, 0.348, 0.315]; // #9AA096
   const oxide = [0.202, 0.152, 0.090]; // #7A6A52 weathered
   for (let y = 0; y < size; y++) {
@@ -587,21 +587,25 @@ function bakeRockPack(size, seed) {
       const v = (y / size) * P;
 
       const grit = tileFbm(u * 24, v * 24, P * 24, P * 24, 3, seed + 71) * 0.5 + 0.5;
-      const blocky = tileWorley(u * 4, v * 4, P * 4, P * 4, seed + 83);
-      const fracture = clamp01((blocky.f2 - blocky.f1) * 2.6);
+      const blocky = tileWorley(u * 3, v * 3, P * 3, P * 3, seed + 83);
+      // Thin dark seams where plates part, not fat rounded cell walls.
+      const crack = 1 - smoothstep(0.02, 0.16, blocky.f2 - blocky.f1);
       const weather = clamp01(tileFbm(u * 1.5, v * 1.5, Math.round(P * 1.5), Math.round(P * 1.5), 4, seed + 97) * 1.1 + 0.5);
-      const vein = clamp01(tileRidged(u * 3, v * 3, P * 3, P * 3, 3, seed + 103) * 1.6 - 0.55);
+      // Quartz segregation lenses: strongly elongated, because they lie IN the
+      // foliation.  The tile's U axis is the strike direction (the shader
+      // orients the projection), so stretch 9:1 along U.
+      const vein = clamp01(tileRidged(u * 0.9, v * 8, Math.round(P * 0.9) || 1, P * 8, 3, seed + 103) * 1.7 - 0.62);
 
-      let r = lerp(baseCol[0], quartz[0], vein) * (0.78 + 0.44 * grit);
-      let g = lerp(baseCol[1], quartz[1], vein) * (0.78 + 0.44 * grit);
-      let b = lerp(baseCol[2], quartz[2], vein) * (0.78 + 0.44 * grit);
-      // Oxidised, rust-brown weathering rind.
-      const ox = clamp01((weather - 0.62) * 2.4);
-      r = lerp(r, oxide[0], ox * 0.75);
-      g = lerp(g, oxide[1], ox * 0.75);
-      b = lerp(b, oxide[2], ox * 0.75);
-      // Fracture edges catch light; recesses go dark.
-      const edge = 0.72 + 0.55 * fracture;
+      let r = lerp(baseCol[0], quartz[0], vein) * (0.82 + 0.36 * grit);
+      let g = lerp(baseCol[1], quartz[1], vein) * (0.82 + 0.36 * grit);
+      let b = lerp(baseCol[2], quartz[2], vein) * (0.82 + 0.36 * grit);
+      // Oxidised, rust-brown weathering rind on the exposed bands only.
+      const ox = clamp01((weather - 0.68) * 2.6);
+      r = lerp(r, oxide[0], ox * 0.62);
+      g = lerp(g, oxide[1], ox * 0.62);
+      b = lerp(b, oxide[2], ox * 0.62);
+      // Seams go dark; the plate faces stay flat and even.
+      const edge = 1.0 - 0.42 * crack;
       r *= edge; g *= edge; b *= edge;
 
       const o = i * 4;
@@ -1014,7 +1018,7 @@ const SNOW_SURFACE = /* glsl */ `
 	float folB = sin( folC * ( 6.2831853 / ( uFoliationSpacing * 7.3 ) ) + 1.7 );
 	vec3 folT = uFoliationN - nW * dot( nW, uFoliationN );
 	float folFade = 1.0 - smoothstep( 0.22, 0.85, sohoFootprint / uFoliationSpacing );
-	nW = normalize( nW + folT * ( ( folA * 0.30 * folFade + folB * 0.42 ) * rockF ) );
+	nW = normalize( nW + folT * ( ( folA * 0.18 * folFade + folB * 0.24 ) * rockF ) );
 
 	#ifdef USE_TRACK_MAP
 		// The trench is a real depression: 16 cm down, with a 6 cm displaced lip.
@@ -1139,7 +1143,10 @@ const ROCK_SURFACE = /* glsl */ `
 	sg += tw.x * ( gX.x * axZ + gX.y * axY );
 	sg += tw.y * ( gY.x * axX + gY.y * axZ );
 	sg += tw.z * ( gZ.x * axX + gZ.y * axY );
-	vec3 nW = normalize( sohoWN + sg * ( uNormalStrength * rockFade ) );
+	// 0.55 keeps the plate relief believable at a 2.4 m tile; the map itself is
+	// normalised to a 0.88 peak gradient, which is a 41 deg facet and far too
+	// aggressive for a schist face seen from 3 m.
+	vec3 nW = normalize( sohoWN + sg * ( uNormalStrength * rockFade * 0.55 ) );
 
 	// One foliation plane for the whole basin: strike +38 deg from +X, dip 32.
 	float folC = dot( sohoWP, uFoliationN );
@@ -1147,7 +1154,7 @@ const ROCK_SURFACE = /* glsl */ `
 	float folB = sin( folC * ( 6.2831853 / ( uFoliationSpacing * 7.3 ) ) + 1.7 );
 	float folFade = 1.0 - smoothstep( 0.22, 0.85, sohoFootprint / uFoliationSpacing );
 	vec3 folT = uFoliationN - nW * dot( nW, uFoliationN );
-	nW = normalize( nW + folT * ( folA * 0.34 * folFade + folB * 0.46 ) );
+	nW = normalize( nW + folT * ( folA * 0.20 * folFade + folB * 0.26 ) );
 
 	// ---- albedo ----
 	vec3 rockAlb = rp.rgb * uRockTint;
@@ -1169,15 +1176,24 @@ const ROCK_SURFACE = /* glsl */ `
 	// ---- snow on every ledge ----
 	vec4 sG = texture2D( uSnowGrain, sohoWP.xz / uDetailScale.x );
 	vec4 sD = texture2D( uSnowDrift, ( mat2( uWindDir.x, -uWindDir.y, uWindDir.y, uWindDir.x ) * sohoWP.xz ) / uDetailScale.z );
-	float ledge = saturate( ( sohoWN.y - 0.42 ) * 2.1 );
+	// Snow catches on every ledge — note this uses the *perturbed* normal, so the
+	// plate faces of the fracture relief hold it too.  The boundary is pushed
+	// around by the drift field with a wide blend band, because a hard geometric
+	// intersection between a white mesh and a grey one is the single most
+	// damning tell in the document (ART_DIRECTION 6.1, 11.22).
+	float ledge = saturate( ( nW.y - 0.28 ) * 1.30 );
 	float cavity = 1.0 - rn.z;
+	float driftBias = ( sD.w - 0.5 ) * 1.05 + ( sG.z - 0.5 ) * 0.35;
 	float accum = saturate(
-		ledge * 1.15
-		+ cavity * 0.30
-		+ ( sD.w - 0.5 ) * 0.42
-		+ clamp( vSnowSurface.w, 0.0, 1.0 ) * 0.6
+		ledge * 1.05
+		+ cavity * 0.35
+		+ driftBias
+		+ clamp( vSnowSurface.w, 0.0, 1.0 ) * 0.55
+		- 0.16
 	) * uSnowOnRock;
-	float snowAmt = smoothstep( 0.30, 0.66, accum );
+	float snowAmt = smoothstep( 0.24, 0.72, accum );
+	// A brighter, rounded lip of displaced snow just inside the boundary.
+	float driftLip = smoothstep( 0.26, 0.44, accum ) * ( 1.0 - smoothstep( 0.44, 0.64, accum ) );
 	// Rime dusting on the windward side, even where snow cannot lie.
 	float windward = saturate( dot( normalize( vec3( nW.x, 0.0, nW.z ) + 1.0e-4 ).xz, -uWindDir ) );
 	float rime = ( 1.0 - snowAmt ) * windward * 0.30 * smoothstep( 0.10, 0.45, accum );
@@ -1186,6 +1202,7 @@ const ROCK_SURFACE = /* glsl */ `
 
 	vec3 snowAlb = vec3( 0.845, 0.848, 0.856 ) * uAlbedoScale;
 	snowAlb *= 1.0 - sG.z * 0.05;
+	snowAlb *= 1.0 + driftLip * 0.06;
 	diffuseColor.rgb *= mix( rockAlb, snowAlb, saturate( snowAmt + rime ) );
 
 	// Snow that has settled on rock is soft and drifted: perturb with the snow
