@@ -119,11 +119,37 @@ const DEFAULT_TUNE = {
   },
   tussock: {
     limit: 5200,
-    chunk: 160,          // m; one InstancedMesh per chunk
-    maxElevation: 1560,  // TERRAIN_BRIEF §2.13
+    chunk: 240,          // m; one InstancedMesh per chunk
+    maxElevation: 1560,  // TERRAIN_BRIEF §2.13 — the tussock belt proper
     maxDepth: 0.25,
     maxSlopeDeg: 24,
-    near: 55, far: 210, cull: 300, minFrac: 0.18,
+    /**
+     * Wind-scoured shoulders. §6.2 puts tussock on "convex ridge shoulders"
+     * and the terrain brief on the "lower spur shoulders"; the primary gate
+     * (depth < 0.25 m AND slope < 24°) confines it to ground so flat that only
+     * the run-out margins qualify, and no shot preset frames those. Windpack
+     * with under 18 cm on it is scoured ground by definition, and it holds up
+     * to 30°.
+     */
+    shoulderDepth: 0.18,
+    shoulderSlopeDeg: 30,
+    /**
+     * Above the tussock belt the vegetation is *Raoulia* cushionfield and
+     * *Aciphylla* speargrass (TERRAIN_BRIEF §2.13 item 6), not *Chionochloa* —
+     * so this tier exists, but only on scoured windpack, only a third as
+     * dense, and only 0.2–0.4 m of it clears the snow. It is what puts a gold
+     * accent on the spur crests the wide shots actually point at.
+     */
+    fellfieldMaxElevation: 1830,
+    fellfieldFrac: 0.34,
+    /**
+     * The old 300 m cull was the whole reason the measured high-chroma budget
+     * came back at 0.00% on five of nine frames: every wide preset stands more
+     * than 300 m from any ground that passes the gate, so the accent was
+     * culled before it could be graded. A clump is sub-pixel at 700 m but a
+     * *patch* of them is not, and the patch is the accent.
+     */
+    near: 90, far: 400, cull: 780, minFrac: 0.08,
   },
   debris: { limit: 620 },
   lift: { towers: 14, chairSpacing: 42, chairSpeed: 5.0 },
@@ -725,24 +751,47 @@ function pushTube(B, cx, cz, y0, y1, r0, r1, radial, col) {
   B.fan(b, true, col);
 }
 
-const STEEL = [0.415, 0.432, 0.452];
-const STEEL_DARK = [0.085, 0.090, 0.098];
+/**
+ * Lift steel. These are deliberately dark.
+ *
+ * A galvanised tower is a mid grey in the hand, but §9.4 and checklist 32/34
+ * ask the lift line to be *the* unambiguous scale cue in a wide frame, and the
+ * frame it has to survive is 215-level snow seen through 600 m of in-scatter.
+ * At the old 0.415 linear albedo a tower landed at sRGB ~200 — a 15-level
+ * separation, i.e. invisible — and the single most valuable object in the shot
+ * was aerial-perspectived out of existence. 0.075 linear lands it near sRGB 90
+ * before in-scatter and holds it under 110 at 600 m once `steelMat` has its
+ * in-scatter weight cut (see `dampenAerialPerspective`).
+ */
+const STEEL = [0.078, 0.083, 0.092];
+const STEEL_DARK = [0.030, 0.032, 0.037];
 const CHAIR_RED = [0.470, 0.021, 0.024];
 
-/** Lift tower: tubular shaft, base flange, crossarm and two sheave trains. */
+/**
+ * Lift tower: tubular shaft, base flange, crossarm and two sheave trains.
+ *
+ * Member thicknesses are set by the 960×540 capture, not by engineering: at
+ * ~0.001 rad per pixel a 0.34 m crossarm is half a pixel at 600 m and
+ * antialiases to nothing, taking the lattice with it. Everything structural is
+ * therefore at least 0.55 m through, which is one pixel at the far tower.
+ */
 function buildLiftTower(height, detail = 1) {
   const B = new TriBuilder();
   const radial = detail ? 8 : 4;
-  pushTube(B, 0, 0, -1.2, height, 0.56, 0.36, radial, STEEL);
+  pushTube(B, 0, 0, -1.2, height, 0.62, 0.44, radial, STEEL);
   if (detail) {
-    pushBox(B, 0, -0.9, 0, 0.95, 0.32, 0.95, STEEL_DARK);
-    pushBox(B, 0, height + 0.22, 0, 2.95, 0.17, 0.17, STEEL);
+    pushBox(B, 0, -0.9, 0, 1.05, 0.36, 1.05, STEEL_DARK);
+    pushBox(B, 0, height + 0.24, 0, 3.05, 0.28, 0.28, STEEL);
     for (const s of [-1, 1]) {
-      pushBox(B, s * 2.6, height - 0.18, 0, 0.85, 0.24, 0.16, STEEL_DARK);
-      pushBox(B, s * 2.6, height + 0.05, 0, 0.20, 0.30, 0.14, STEEL);
+      pushBox(B, s * 2.6, height - 0.18, 0, 0.92, 0.30, 0.24, STEEL_DARK);
+      pushBox(B, s * 2.6, height + 0.10, 0, 0.30, 0.36, 0.22, STEEL);
+      // Diagonal-ish knee brace: two stubby boxes, but they double the ink the
+      // head of the tower puts on screen, which is what keeps the silhouette
+      // legible once the crossarm itself is down to a pixel.
+      pushBox(B, s * 1.5, height - 0.55, 0, 0.85, 0.16, 0.16, STEEL_DARK);
     }
   } else {
-    pushBox(B, 0, height + 0.22, 0, 2.95, 0.17, 0.17, STEEL);
+    pushBox(B, 0, height + 0.24, 0, 3.05, 0.30, 0.30, STEEL);
   }
   return B.build('soho-tower');
 }
@@ -783,27 +832,53 @@ function pushTerminal(B, x, y, z, yaw, len) {
  * 4.  RIBBON BUILDERS (cornices, ropes, netting)
  * ======================================================================== */
 
+/** How far windward of the crest the ribbon's buried rails run, in metres. */
+const CORNICE_ROOT = 3.0;
+const CORNICE_MID = 1.2;
+
 /**
  * A cornice / drift lip. Heightfields cannot overhang, so the terrain caps the
  * crest bulge at 0° and this ribbon supplies the silhouette: a rounded crest,
  * an overhanging lip, and — the valuable part — a shadowed undercut, which is
  * the one place in the frame where the transport-blue of §3.2 really shows.
  *
- * `stations` is [{x, z, lee:{x,z}, lip, over, ground}] walked along the crest.
+ * **Every rail carries its own ground height**, sampled by `_corniceStation`
+ * at that rail's own plan position. The first version of this builder derived
+ * all four rails from the crest station's single `ground` sample and offset
+ * them vertically — which is only correct on flat ground. The buried root rail
+ * sat `CORNICE_ROOT` = 3 m up-slope but only 0.55 m down, so on anything
+ * steeper than `atan(0.55 / 3) = 10.4°` the root came out *above* the surface;
+ * on a 30° spur crest it floated `3·tan30 − 0.55 = 1.18 m` clear. That is
+ * FINDINGS_R1 defect 1: a free hard edge with a dark gap under it and no
+ * contact anywhere, on every cornice on the map. It was unconditional
+ * arithmetic, not an LOD streaming race, which is why it survived three rounds
+ * of shrinking and thinning.
+ *
+ * `stations` is [{x, z, lx, lz, lip, over, ground, hRoot, hMid, hToe}] walked
+ * along the crest, with `null` separating independent runs.
  */
 function buildCorniceRibbon(stations) {
   const B = new TriBuilder();
   for (let i = 0; i < stations.length - 1; i++) {
     const a = stations[i], b = stations[i + 1];
     if (!a || !b) continue;
-    const pt = (s, back, up) => [
-      s.x + s.lx * back, s.ground + up, s.z + s.lz * back,
-    ];
-    // Four rails: buried root uphill, crest, overhanging lip, undercut return.
-    const a0 = pt(a, -3.0, -0.55), b0 = pt(b, -3.0, -0.55);
-    const a1 = pt(a, 0.35 * a.over, a.lip), b1 = pt(b, 0.35 * b.over, b.lip);
-    const a2 = pt(a, a.over, a.lip * 0.72), b2 = pt(b, b.over, b.lip * 0.72);
-    const a3 = pt(a, a.over * 0.55, -0.35), b3 = pt(b, b.over * 0.55, -0.35);
+    const pt = (s, back, y) => [s.x + s.lx * back, y, s.z + s.lz * back];
+    // Five rails. 0 and 1 are buried in the windward flank, 2 is the built-up
+    // crown, 3 is the free lip tip, 4 returns under the lip and back into the
+    // snow. Rails 0, 1 and 4 are clamped below both their own local ground and
+    // the crest ground, so no rail can ever be left standing in air.
+    const y0 = (s) => Math.min(s.hRoot, s.ground) - 0.45;
+    const y1 = (s) => Math.min(s.hMid, s.ground) - 0.14;
+    const y2 = (s) => s.ground + s.lip;
+    const y3 = (s) => s.ground + s.lip * 0.72;
+    const y4 = (s) => Math.min(s.hToe, s.ground) - 0.30;
+
+    const a0 = pt(a, -CORNICE_ROOT, y0(a)), b0 = pt(b, -CORNICE_ROOT, y0(b));
+    const a1 = pt(a, -CORNICE_MID, y1(a)), b1 = pt(b, -CORNICE_MID, y1(b));
+    const a2 = pt(a, 0.35 * a.over, y2(a)), b2 = pt(b, 0.35 * b.over, y2(b));
+    const a3 = pt(a, a.over, y3(a)), b3 = pt(b, b.over, y3(b));
+    const a4 = pt(a, a.over * 0.55, y4(a)), b4 = pt(b, b.over * 0.55, y4(b));
+
     // Handedness: the (along-crest, lee) frame flips sign depending on which
     // way the polyline runs, and a flipped ribbon renders inside-out. The 2D
     // cross product tells us which winding puts the top surface facing up.
@@ -811,9 +886,10 @@ function buildCorniceRibbon(stations) {
     const q = hand <= 0
       ? (p0, p1, p2, p3) => B.quad(p0, p1, p2, p3)
       : (p0, p1, p2, p3) => B.quad(p3, p2, p1, p0);
-    q(a0, b0, b1, a1);   // windward back, rising to the crest
-    q(a1, b1, b2, a2);   // the lip itself
-    q(a2, b2, b3, a3);   // the undercut, facing down and into shadow
+    q(a0, b0, b1, a1);   // buried windward root — never visible, never floats
+    q(a1, b1, b2, a2);   // the windward back emerging into the crown
+    q(a2, b2, b3, a3);   // the lip itself
+    q(a3, b3, b4, a4);   // the undercut, facing down and into shadow
   }
   return B.build('soho-cornice');
 }
@@ -1019,6 +1095,53 @@ const FOLIAGE_NORMAL = /* glsl */ `
 	nonPerturbedNormal = normal;
 #endif
 `;
+
+/**
+ * The exact line `sky.js` splices into `opaque_fragment` when it installs the
+ * physically-based aerial-perspective term. Matched, not reconstructed, so if
+ * that module ever rewrites the line this simply becomes a no-op rather than
+ * silently corrupting a shader.
+ */
+const AP_LINE =
+  'gl_FragColor.rgb = sohoAerialPerspective( gl_FragColor.rgb, vSohoWorldPos, cameraPosition );';
+
+/**
+ * Cut a material's share of the aerial-perspective in-scatter.
+ *
+ * §5 of the art direction is about *snow* — a 600 m snowfield genuinely is
+ * washed toward the sky colour, and the term is right for it. It is wrong for
+ * the handful of small, dark, high-frequency objects that carry the frame's
+ * scale and its colour accents: a 0.6 m tower member, a 2 cm marker pole, a
+ * tussock seed head. Those occupy a fraction of a pixel of the column the
+ * in-scatter is integrated over, so applying the full path radiance to them
+ * lifts them into the snow value and deletes them (checklist 32, 33, 34).
+ * Physically this is the sub-pixel coverage term we do not have; practically
+ * it is the difference between a lift line and a smudge.
+ *
+ * Implemented by rewriting the chunk rather than the resolved source, because
+ * `onBeforeCompile` runs before three resolves `#include` directives.
+ */
+function dampenAerialPerspective(material, weight, cacheKey) {
+  const prev = material.onBeforeCompile;
+  const w = Math.max(0, Math.min(1, weight)).toFixed(3);
+  material.onBeforeCompile = function (shader, renderer) {
+    if (prev) prev.call(this, shader, renderer);
+    const chunk = THREE.ShaderChunk.opaque_fragment;
+    if (!chunk || chunk.indexOf(AP_LINE) === -1) return;   // sky.js not installed
+    const patched = chunk.replace(
+      AP_LINE,
+      'gl_FragColor.rgb = mix( gl_FragColor.rgb,'
+      + ' sohoAerialPerspective( gl_FragColor.rgb, vSohoWorldPos, cameraPosition ),'
+      + ` ${w} );`,
+    );
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <opaque_fragment>', patched);
+  };
+  const prevKey = material.customProgramCacheKey;
+  material.customProgramCacheKey = function () {
+    return `${prevKey ? prevKey.call(this) : material.type}|ap${w}|${cacheKey}`;
+  };
+}
 
 function installWind(material, uniforms, cacheKey, backlit, foliage) {
   material.onBeforeCompile = (shader) => {
@@ -1387,7 +1510,14 @@ export class Props {
     const ctx = this.ctx;
 
     // Otago schist — triplanar, one global foliation, snow on every ledge.
-    this.rockMat = createRockMaterial(ctx, {});
+    // `snowOnRock` is pulled back from 1.0: the accumulation term is driven by
+    // the *perturbed* normal, and once the plate relief has faded out with
+    // distance every marginally-up-facing facet snaps to full cover at once,
+    // so a 60 m outcrop turns into an untextured white lozenge that is
+    // brighter than the shadowed snow around it (§6.1, checklist 23/31). At
+    // 0.84 the near-horizontal ledges still load — which the brief requires —
+    // but the 45–65° faces stay schist all the way out.
+    this.rockMat = createRockMaterial(ctx, { snowOnRock: 0.84, rockRoughness: 0.72 });
     this.rockMat.name = 'props-schist';
 
     // Ground-snow shading for drifts, cornice lips and avalanche blocks, so a
@@ -1449,6 +1579,16 @@ export class Props {
       uSwayFreq: { value: 1.25 },
       uBacklitColor: { value: new THREE.Color(0.72, 0.47, 0.15) },
     }, 'soho-tussock', true, true);
+
+    // Small dark silhouettes and the two colour accents are exempted from most
+    // of the in-scatter — see `dampenAerialPerspective`. Applied last, because
+    // it wraps whatever `onBeforeCompile` / cache key the material already has.
+    dampenAerialPerspective(this.steelMat, 0.35, 'steel');
+    dampenAerialPerspective(this.poleMat, 0.55, 'bamboo');
+    dampenAerialPerspective(this.ropeMat, 0.45, 'rope');
+    dampenAerialPerspective(this.netMat, 0.55, 'net');
+    dampenAerialPerspective(this.flagMat, 0.50, 'flag');
+    dampenAerialPerspective(this.tussockMat, 0.50, 'tussock');
 
     this.materials.push(
       this.rockMat, this.snowMat, this.poleMat, this.steelMat,
@@ -1580,19 +1720,25 @@ export class Props {
     const { x, z, length, height, width, strike, rng } = opt;
     const y = opt.y ?? this.probe.height(x, z);
     // Rocks are *in* the snow, not on it: sink by a fraction of their height
-    // plus whatever the local pack is, so nothing reads as a decal.
-    const sink = opt.sink ?? (0.16 * height + Math.min(0.5, opt.depth ?? 0.3));
+    // plus whatever the local pack is, so nothing reads as a decal. The old
+    // 0.16 h + 0.5 m cap left the small plates sitting on the surface with a
+    // razor snow/rock intersection all round — checklist 31, and named in
+    // §11.23 as one of the most damning tells in the document.
+    const sink = opt.sink ?? (0.26 * height + Math.min(0.70, (opt.depth ?? 0.3) * 1.15));
     _e.set(rng.range(-0.10, 0.10), -strike, rng.range(-0.10, 0.10), 'YXZ');
     _q.setFromEuler(_e);
     _v3.set(x, y - sink, z);
     _v3b.set(length, height + sink, width);
     _m4.compose(_v3, _q, _v3b);
-    // Base tint: schist varies from grey-green to a rusty weathered rind.
+    // Base tint: schist varies from grey-green to a rusty weathered rind. The
+    // band is centred just under 1.0 rather than just over it — the previous
+    // 0.94–1.25 range brightened the whole population, and a schist outcrop
+    // that out-values the snow it sits in fails §12 outright.
     const rust = clamp01(rng() * 0.9 - 0.35);
     _col.setRGB(
-      lerp(0.94, 1.16, rust) * rng.range(0.92, 1.08),
-      lerp(0.97, 1.02, rust) * rng.range(0.93, 1.06),
-      lerp(1.02, 0.86, rust) * rng.range(0.92, 1.06),
+      lerp(0.84, 1.04, rust) * rng.range(0.93, 1.05),
+      lerp(0.87, 0.92, rust) * rng.range(0.94, 1.04),
+      lerp(0.92, 0.78, rust) * rng.range(0.93, 1.04),
     );
     const radius = Math.max(length, width, height + sink) * 0.62;
     field.add(_m4, radius, _col);
@@ -1609,7 +1755,14 @@ export class Props {
 
     // Lee drift collar. Snow loads downwind of anything standing proud, and
     // the collar is what removes the hard rock/snow intersection at the base.
-    if (this.driftField && this.tune.rock.driftCollars && height > 0.9) {
+    //
+    // The gate used to be `height > 0.9`, which excluded almost the whole
+    // population: an outcrop at the small end of the range is 0.35–0.9 m tall
+    // and every blockfield plate and talus block is under 0.5 m, so the frame
+    // was full of rock meeting snow at a geometric edge with no collar in
+    // sight. 0.34 m is roughly where a drift stops being a lump and starts
+    // being a tail, so that is where the gate belongs.
+    if (this.driftField && this.tune.rock.driftCollars && height > 0.34) {
       const scale = Math.max(length, width);
       const dx = this.wind.x, dz = this.wind.z;
       // Offset the mound so its steep face hugs the rock and the tail runs off.
@@ -1617,9 +1770,15 @@ export class Props {
       const gy = this.probe.height(ox, oz);
       _e.set(0, this.windYaw, 0, 'YXZ');
       _q.setFromEuler(_e);
-      _v3.set(ox, gy - 0.28, oz);
-      const rr = scale * rng.range(0.70, 1.05);
-      _v3b.set(rr, Math.min(height * 0.55, 1.5) * rng.range(0.6, 1.0) + 0.25, rr * 0.85);
+      // Sunk far enough that the mound's own base ring is under the surface;
+      // a collar resting on the snow is the same decal problem one level up.
+      _v3.set(ox, gy - 0.30 - 0.10 * scale, oz);
+      const rr = scale * rng.range(0.80, 1.20);
+      _v3b.set(
+        rr,
+        Math.min(height * 0.62, 1.6) * rng.range(0.65, 1.05) + 0.34 + 0.10 * scale,
+        rr * 0.85,
+      );
       _m4.compose(_v3, _q, _v3b);
       this.driftField.add(_m4, rr * 1.6, null);
     }
@@ -1639,8 +1798,11 @@ export class Props {
     this.blockField = this._field('block', this.rockMat, this.geo.block, {
       useColor: true, shadowLevels: 1, cullAngular: 0.0040,
     });
+    // The collar casts: a 1 m mound under a 10.6° sun lays down a 5 m shadow
+    // bar, and that bar is most of what tells the viewer the rock is *in* the
+    // snow rather than pasted on it. Only the near LOD writes to the map.
     this.driftField = this._field('rock-drift', this.snowMat, this.geo.drift, {
-      castShadow: false, receiveShadow: true, cullAngular: 0.0060,
+      castShadow: true, receiveShadow: true, shadowLevels: 1, cullAngular: 0.0050,
     });
 
     const rng = makeRng(this._seed('rock'));
@@ -1712,7 +1874,13 @@ export class Props {
       this._addRock(this.outcropField, {
         x, z, y: s.height,
         length: len,
-        height: len * rng.range(0.20, 0.55) * (big ? 1.0 : 0.8),
+        // Taller than it was. A slab stack with a height/length ratio near 0.2
+        // presents almost nothing but its up-facing caps, every one of which
+        // loads snow — which is exactly why the outcrops came back as pale
+        // rounded lozenges with no rock visible in them at all. The literature
+        // has Otago tor faces "mostly exceeding 75°"; 0.34–0.85 puts the flank
+        // angle where it belongs and gives the schist somewhere to show.
+        height: len * rng.range(0.34, 0.85) * (big ? 1.0 : 0.85),
         width: len * rng.range(0.35, 0.70),
         strike: FOLIATION_STRIKE + rng.range(-0.12, 0.12),
         rng, depth: s.depth,
@@ -1924,13 +2092,89 @@ export class Props {
    * are two of the highest-value things on the whole crest — this is what the
    * hero shot is looking at from the `broadway-gate` spawn.
    */
+  /**
+   * Slide a station sideways onto the crest the finished heightfield actually
+   * has, searching ±`reach` along (ax, az).
+   *
+   * The spur polylines in the feature register are the *generators* of the
+   * landform, not its crest: `terrain._phaseLandforms` lays a Gaussian ridge
+   * over them and then five more bands — ridged multifractal, ribs, rollovers,
+   * scour — move the local high point by tens of metres. A ribbon left on the
+   * generator line runs across the flank instead of capping the ridge, which
+   * is the "ridge resolving into stacked horizontal shelves" read in
+   * `shots/r3/west-spur.png`.
+   */
+  _snapToCrest(x, z, ax, az, reach, steps, prevOff, maxDelta) {
+    const P = this.probe;
+    const lo = Number.isFinite(prevOff) ? prevOff - maxDelta : -reach;
+    const hi = Number.isFinite(prevOff) ? prevOff + maxDelta : reach;
+    let bestOff = clamp(Number.isFinite(prevOff) ? prevOff : 0, lo, hi);
+    let best = P.height(x + ax * bestOff, z + az * bestOff);
+    for (let i = -steps; i <= steps; i++) {
+      // The offset is clamped to a window around the previous station's, so
+      // the ribbon walks the crest continuously instead of teleporting to
+      // whichever local bump happens to win a ±26 m search.
+      const off = clamp((i / steps) * reach, lo, hi);
+      const h = P.height(x + ax * off, z + az * off);
+      if (h > best) { best = h; bestOff = off; }
+    }
+    return { x: x + ax * bestOff, z: z + az * bestOff, h: best, off: bestOff };
+  }
+
+  /**
+   * Build one cornice station, sampling the terrain separately under every
+   * rail the ribbon will emit, and rejecting ground that cannot carry a
+   * cornice at all.
+   *
+   * The acceptance test is a **convexity test over a 10 m baseline**, not a
+   * gradient test over the overhang length. A cornice crown sits a couple of
+   * metres lee of the topographic maximum, and the ground immediately either
+   * side of a broad spur crest is close to level — measuring the drop across
+   * 1–3 m rejects every real crest on the map (measured: 244 of 313 stations)
+   * while still accepting a bench on a planar face, which is the shape we
+   * actually need to keep out.
+   */
+  _corniceStation(x, z, lx, lz, lip, over) {
+    const P = this.probe;
+    // Sit the crown just into the lee, where snow genuinely accumulates.
+    const cx = x + lx * 1.5, cz = z + lz * 1.5;
+    const ground = P.height(cx, cz);
+    // Lee must fall away, windward must not tower over us. The windward
+    // tolerance is generous because the headwall cornice has the crest plateau
+    // behind it, which genuinely does keep rising for a while.
+    if (ground - P.height(cx + lx * 10, cz + lz * 10) < 0.55) return null;
+    if (ground - P.height(cx - lx * 10, cz - lz * 10) < -1.6) return null;
+    return {
+      x: cx, z: cz, lx, lz, lip, over, ground,
+      hRoot: P.height(cx - lx * CORNICE_ROOT, cz - lz * CORNICE_ROOT),
+      hMid: P.height(cx - lx * CORNICE_MID, cz - lz * CORNICE_MID),
+      hToe: P.height(cx + lx * over * 0.55, cz + lz * over * 0.55),
+    };
+  }
+
   _buildCornices() {
     const rng = makeRng(this._seed('cornice'));
     const P = this.probe;
     const stations = [];
 
+    /**
+     * Close a run. Both ends fade their lip and overhang to almost nothing,
+     * because a run that simply stops leaves a full-height cross-section
+     * hanging in the air — a hard-edged wedge plate with a dark gap under it,
+     * which is precisely the residue the round-3 critique still measured on
+     * the spur crest at x 690–820.
+     */
     const pushRun = (run) => {
-      if (run.length > 2) { stations.push(...run, null); }
+      const n = run.length;
+      if (n < 4) { run.length = 0; return; }
+      const fade = Math.min(3, (n - 1) / 2);
+      for (let i = 0; i < n; i++) {
+        const k = smoothstep(0, fade, Math.min(i, n - 1 - i));
+        run[i].lip *= 0.10 + 0.90 * k;
+        run[i].over *= 0.08 + 0.92 * k;
+      }
+      stations.push(...run, null);
+      run.length = 0;
     };
 
     /* -- Crest arc (headwall lip) ----------------------------------------- */
@@ -1939,22 +2183,30 @@ export class Props {
       if (arcLen < 12) continue;
       const steps = Math.max(4, Math.round(arcLen / 5));
       const run = [];
+      let off = NaN;
+      // A single rejected station is bridged rather than ending the run: at
+      // 5 m spacing one bad sample on an otherwise good crest would otherwise
+      // shatter a 200 m cornice into stubs, and stubs are what read as
+      // detached plates.
+      let miss = 0;
       for (let i = 0; i <= steps; i++) {
         const u = i / steps;
         const phi = lerp(seg.phi0, seg.phi1, u);
-        const x = FOCUS_X + Math.sin(phi) * CREST_R;
-        const z = FOCUS_Z + Math.cos(phi) * CREST_R;
-        if (Math.abs(x) > 1010 || Math.abs(z) > 1010) continue;
+        const cx = FOCUS_X + Math.sin(phi) * CREST_R;
+        const cz = FOCUS_Z + Math.cos(phi) * CREST_R;
+        if (Math.abs(cx) > 1010 || Math.abs(cz) > 1010) { pushRun(run); off = NaN; miss = 0; continue; }
         // Downhill on the headwall is radially inward, toward the focus.
         const lx = -Math.sin(phi), lz = -Math.cos(phi);
+        // The rim sits within a few metres of the nominal arc; find it.
+        const c = this._snapToCrest(cx, cz, lx, lz, 14, 8, off, 2.5);
+        off = c.off;
         // Taper both ends to nothing so a segment never terminates in a wall.
         const taper = Math.sin(Math.PI * clamp01(u)) ** 0.55;
         const lip = (seg.lip ?? 2.4) * taper * rng.range(0.88, 1.12);
-        run.push({
-          x, z, lx, lz, lip,
-          over: lip * rng.range(1.15, 1.75),
-          ground: P.height(x, z),
-        });
+        const st = lip < 0.15
+          ? null
+          : this._corniceStation(c.x, c.z, lx, lz, lip, lip * rng.range(1.15, 1.75));
+        if (st) { run.push(st); miss = 0; } else if (++miss >= 2) { pushRun(run); off = NaN; }
       }
       pushRun(run);
     }
@@ -1964,19 +2216,24 @@ export class Props {
     // is smaller than the crest cornice but there is a lot of it, and it is
     // what makes the same slope read differently 40 m apart.
     for (const spur of this.features.spurs || []) {
-      let run = [];
-      let carry = rng.range(0, 60);
+      const run = [];
+      const carry = rng.range(0, 60);
+      let off = NaN;
+      let miss = 0;
       walkPolyline(spur.pts, 6, (x, z, tx, tz, s) => {
         // Present over ~55% of the crest in 40–110 m segments.
-        const on = ((s + carry) % 150) < 82;
-        if (!on) { pushRun(run); run = []; return; }
-        if (Math.abs(x) > 1000 || Math.abs(z) > 1000) { pushRun(run); run = []; return; }
+        if (((s + carry) % 150) >= 82) { pushRun(run); off = NaN; miss = 0; return; }
+        if (Math.abs(x) > 1000 || Math.abs(z) > 1000) { pushRun(run); off = NaN; miss = 0; return; }
+        // Search across the run for the real crest before anything else. 3 m
+        // of lateral movement per 6 m of travel keeps the ribbon smooth.
+        const c = this._snapToCrest(x, z, -tz, tx, 26, 13, off, 3.0);
+        off = c.off;
         // Lee side = whichever perpendicular runs downwind.
         let lx = -tz, lz = tx;
         if (lx * this.wind.x + lz * this.wind.z < 0) { lx = -lx; lz = -lz; }
-        const ground = P.height(x, z);
         const lip = rng.range(0.45, 1.35);
-        run.push({ x, z, lx, lz, lip, over: lip * rng.range(1.3, 2.1), ground });
+        const st = this._corniceStation(c.x, c.z, lx, lz, lip, lip * rng.range(1.3, 2.1));
+        if (st) { run.push(st); miss = 0; } else if (++miss >= 2) { pushRun(run); off = NaN; }
       });
       pushRun(run);
     }
@@ -2007,8 +2264,13 @@ export class Props {
     this.poleField = this._field('marker-pole', this.poleMat, this.geo.pole, {
       castShadow: true, receiveShadow: true, shadowLevels: 2, cullAngular: 0.0038,
     });
+    // The flags are one of the three sanctioned high-chroma accents (§9.2) and
+    // they were being culled at ~210 m, which is inside every wide preset's
+    // near field. A 0.34 m flag is sub-pixel by 400 m, but a poled corridor
+    // running away from camera is a dotted orange line, and that line is worth
+    // more to the frame than the individual quads are.
     this.flagField = this._field('marker-flag', this.flagMat, this.geo.flag, {
-      castShadow: false, receiveShadow: true, cullAngular: 0.0016,
+      castShadow: false, receiveShadow: true, cullAngular: 0.0008,
     });
 
     let budget = Math.round(T.poles.limit * clamp(T.density ?? 1, 0.05, 4));
@@ -2392,21 +2654,38 @@ export class Props {
     // passes also take deeply wind-scoured convex ground, which is where
     // ART_DIRECTION §6.2 puts tussock anyway.
     let relax = 1;
-    const suitable = (x, z) => {
+    /**
+     * Returns 0 (nothing grows here), 1 (tussock belt) or 2 (scoured
+     * fellfield: shorter, sparser, greyer). The caller needs the class, not
+     * just a boolean, because the two are different plants at different sizes.
+     */
+    const classify = (x, z) => {
       const s = P.sample(x, z);
-      if (s.slope / DEG > T.maxSlopeDeg) return false;
-      if (s.surface === 'groomed' || s.surface === 'rock') return false;
-      if (s.height <= T.maxElevation && s.depth <= T.maxDepth) return true;
-      if (relax < 2) return false;
-      // Tier 2 — scoured, convex, wind-blasted shoulders. §6.2 puts tussock
-      // exactly here: "wind-scoured patches on convex ridge shoulders".
-      if (s.height <= T.maxElevation && s.depth <= T.maxDepth * 2.2
-        && (s.exposure > 0.55 || s.curvature > 0.12)) return true;
-      if (relax < 3) return false;
-      // Tier 3 — the run-out margins below ~1,470 m, where the pack is thin
+      if (s.surface === 'groomed' || s.surface === 'rock') return 0;
+      const slopeDeg = s.slope / DEG;
+      // Tier 1 — the belt proper: TERRAIN_BRIEF §2.13, verbatim.
+      if (slopeDeg <= T.maxSlopeDeg && s.height <= T.maxElevation && s.depth <= T.maxDepth) return 1;
+      // Tier 1b — wind-scoured shoulders inside the belt. Still Chionochloa,
+      // just on ground the flat-and-shallow rule was too tight to reach.
+      if (s.height <= T.maxElevation && slopeDeg <= T.shoulderSlopeDeg
+        && s.depth <= T.shoulderDepth
+        && (s.surface === 'windpack' || s.surface === 'ice' || s.exposure > 0.5)) return 1;
+      // Tier 2 — cushionfield / speargrass above the belt, scoured ground only.
+      if (s.height <= T.fellfieldMaxElevation && slopeDeg <= T.shoulderSlopeDeg
+        && s.depth <= T.shoulderDepth
+        && (s.surface === 'windpack' || s.exposure > 0.6 || s.curvature > 0.12)) return 2;
+      if (relax < 2) return 0;
+      // Tier 3 — a lean scour year on this seed left the belt almost empty;
+      // widen the depth window rather than ship a frame with no accent at all.
+      if (slopeDeg <= T.maxSlopeDeg && s.height <= T.maxElevation
+        && s.depth <= T.maxDepth * 2.2
+        && (s.exposure > 0.55 || s.curvature > 0.12)) return 1;
+      if (relax < 3) return 0;
+      // Tier 4 — the run-out margins below ~1,470 m, where the pack is thin
       // and patchy and only the heads and seed stalks clear it.
-      return s.height < 1470 && s.depth <= 0.9;
+      return (slopeDeg <= T.maxSlopeDeg && s.height < 1470 && s.depth <= 0.9) ? 1 : 0;
     };
+    const suitable = (x, z) => classify(x, z) !== 0;
 
     const scatterPatches = () => poissonScatter(makeRng(this._seed('tussock.patches') + relax), {
       minX: b.minX + 20, maxX: b.maxX - 20, minZ: b.minZ + 20, maxZ: b.maxZ - 20,
@@ -2445,26 +2724,43 @@ export class Props {
           if (rr > radius) continue;
           // Feather the patch edge, otherwise every clump field is a disc.
           if (rng() > 1 - smoothstep(radius * 0.45, radius * 1.02, rr)) continue;
-          if (!suitable(gx, gz)) continue;
+          const cls = classify(gx, gz);
+          if (cls === 0) continue;
+          // Cushionfield is genuinely sparse; thinning it here rather than at
+          // the patch level keeps the belt at full density where it belongs.
+          if (cls === 2 && rng() > T.fellfieldFrac) continue;
           const s = P.sample(gx, gz);
           // The plant is buried to whatever depth the pack has: a clump is
           // 0.45–0.85 m tall, and the deeper the snow the less of it clears —
           // down to heads and seed stalks only (§1.4: 0.1–0.4 m showing).
           const sink = clamp(s.depth * 0.9, 0.0, 0.55);
-          const showing = clamp(0.86 - s.depth * 0.62, 0.14, 0.86) * rng.range(0.82, 1.12);
+          const showing = clamp(0.86 - s.depth * 0.62, 0.14, 0.86) * rng.range(0.82, 1.12)
+            * (cls === 2 ? 0.45 : 1.0);
           const h = showing + sink;
+          const spread = cls === 2 ? rng.range(0.55, 0.85) : rng.range(0.80, 1.25);
           _e.set(rng.range(-0.10, 0.10), rng() * TAU, rng.range(-0.10, 0.10), 'YXZ');
           _q.setFromEuler(_e);
           _v3.set(gx, s.height - sink, gz);
-          _v3b.set(rng.range(0.80, 1.25), h, rng.range(0.80, 1.25));
+          _v3b.set(spread, h, cls === 2 ? spread * rng.range(0.9, 1.1) : rng.range(0.80, 1.25));
           _m4.compose(_v3, _q, _v3b);
-          // Bronze → straw → gold, plus the odd silvered seed head.
+          // Bronze → straw → gold, plus the odd silvered seed head. The mesh's
+          // baked vertex colour already runs #6A5738 → #B99A5E, so this is the
+          // per-clump multiplier around it; cushionfield is pulled toward a
+          // greyer olive because *Raoulia* is not gold.
           const k = rng();
-          baseCol.setRGB(
-            lerp(0.86, 1.28, k) * rng.range(0.94, 1.06),
-            lerp(0.88, 1.16, k) * rng.range(0.95, 1.05),
-            lerp(0.82, 1.05, k) * rng.range(0.92, 1.08),
-          );
+          if (cls === 2) {
+            baseCol.setRGB(
+              lerp(0.74, 1.00, k) * rng.range(0.94, 1.06),
+              lerp(0.80, 1.02, k) * rng.range(0.95, 1.05),
+              lerp(0.80, 0.96, k) * rng.range(0.93, 1.07),
+            );
+          } else {
+            baseCol.setRGB(
+              lerp(0.86, 1.28, k) * rng.range(0.94, 1.06),
+              lerp(0.88, 1.16, k) * rng.range(0.95, 1.05),
+              lerp(0.82, 1.05, k) * rng.range(0.92, 1.08),
+            );
+          }
           this.tussockField.add(_m4, gx, gz, baseCol);
           budget--;
         }

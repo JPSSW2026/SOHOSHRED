@@ -793,6 +793,9 @@ float sohoSSSAmount;
 float sohoGlintMul;
 float sohoForwardMul;
 float sohoFootprint;
+// How much of this fragment is snow rather than schist.  The shadowed-fill
+// transport tint is a *snow* phenomenon, so it must not bleed onto bare rock.
+float sohoSnowness;
 vec3  sohoNormalW;
 vec3  sohoTanW;
 vec3  sohoBitW;
@@ -828,13 +831,22 @@ float sohoGlintLayer( vec3 wp, vec3 wN, vec3 Hw, float density, float sharp, flo
 	// Slow per-facet breathing: real twinkle comes from motion, but a little
 	// life keeps a static frame from looking printed.  Never fast enough to read
 	// as noise.
-	// ~40 deg cone.  Too tight a cone and the half vector never lands inside it
-	// under a 17 deg sun with the camera looking down the slope, so the field
-	// goes completely dark; too wide and the glints stop clustering around the
-	// specular direction.
-	float spread = 0.58 + 0.22 * sin( uSparkleTime * 0.85 + r.z * 6.2831853 );
+	// The facet distribution has to be able to REACH the half vector or the term
+	// is arithmetically dead.  Our sun sits at 10.6 deg elevation and the camera
+	// looks down at the snow, so Hw lands ~45 deg off the surface normal.  At the
+	// old 0.58 spread the steepest facet in the lattice was ~30 deg, the best
+	// achievable dot( facet, Hw ) was cos(15 deg) = 0.966, and with sharp = 620
+	// that is exp2(-21) = 5e-7: zero glints in every frame, ever.  1.35 is a
+	// ~54 deg peak tilt, which is also the honest number for faceted surface hoar
+	// and fresh stellar crystals lying at random attitudes on the pack.
+	float spread = 1.35 + 0.22 * sin( uSparkleTime * 0.85 + r.z * 6.2831853 );
 	vec3 facet = normalize( wN + ( r.x * 2.0 - 1.0 ) * spread * sohoTanW + ( r.y * 2.0 - 1.0 ) * spread * sohoBitW );
 	float lobe = exp2( - ( 1.0 - saturate( dot( facet, Hw ) ) ) * sharp );
+	// Projected-area weight.  A facet tipped hard away from the surface normal
+	// exists, but presents proportionally less area to the camera, so the fired
+	// set still clusters about the specular direction instead of spraying evenly
+	// over the slope (checklist 25 wants sparse and intense, not a uniform field).
+	lobe *= saturate( dot( facet, wN ) );
 	// Kill a lattice once its cells drop below a pixel, or it becomes shimmer.
 	float sizeFade = 1.0 - smoothstep( 0.30, 0.95, sohoFootprint * density );
 	return lobe * alive * sizeFade;
@@ -904,10 +916,56 @@ const RE_DIRECT_SNOW = /* glsl */ `
  * transport tint is applied to the sky/bounce term only — which is also where
  * it physically belongs: an occluded pocket sees less sky and proportionally
  * more of the pack's own red-depleted multiply-scattered light.
+ *
+ * The concavity gate (`sohoSSSAmount`) is correct for the *direct* transport
+ * term but is approximately zero on an open planar slope, which is most of every
+ * frame — so gating the indirect tint on it too made the whole thing a no-op
+ * exactly where LAW 2 is measured.  Shadowed snow therefore came out grey
+ * (B/R 1.01–1.12 against a ≥ 1.20 requirement) on seven of nine frames.
+ *
+ * So the indirect tint gets a floor driven by *being in shadow*, which is the
+ * physical condition the blue actually depends on: a shadowed patch is by
+ * definition lit by a 12–18 kK sky and by red-depleted snow-bounce rather than
+ * by the beam.  Two independent shadow signals, because either alone misses
+ * half the cases:
+ *
+ *   `sunAway`  — the surface is turned away from the sun (self-shadowed).
+ *                Zero the instant N·L rises past 0.125 — which under a 10.6 deg
+ *                sun is already below flat ground — so every sun-facing surface
+ *                keeps its neutral off-white and LAW 1 is untouched.
+ *   `sunOccl`  — the surface faces the sun but something is between it and the
+ *                sun.  Recovered from the ratio of accumulated direct to
+ *                indirect diffuse, both of which are live at this point in the
+ *                shader: in the beam that ratio is ~1–4 (LAW 3 puts the fill at
+ *                0.22–0.55 of sunlit), inside a cast shadow it is ~0.  No extra
+ *                shadow-map fetch, no dependency on another module's chunk
+ *                patch, and it tracks the PCF kernel exactly.
+ *
+ * The 0.55 ceiling is chosen against the measured table: `uSssTint` is
+ * `sssColor` max-normalised, ≈ (0.653, 0.779, 1.0), and `mix(1, tint, 0.55)` is
+ * (0.809, 0.878, 1.0) — which is the researched snow-on-snow bounce tint — for
+ * a B/R multiplier of 1.24 on the fill.  Against the ≈1.05 the ambient arrives
+ * at, that lands shadowed snow at B/R ≈ 1.30, mid-band for LAW 2, while costing
+ * the fill 13% of its luminance (hero-basin currently sits at 0.656, above the
+ * 0.22–0.55 band, so shedding a little there is the right direction too).
  */
 const INDIRECT_TINT = /* glsl */ `
 #ifdef SOHO_SNOW
-	reflectedLight.indirectDiffuse *= mix( vec3( 1.0 ), uSssTint, saturate( sohoSSSAmount ) );
+	{
+		// 8.0, not 4.0: the sun is only 10.6 deg up, so flat ground sits at
+		// N·L = 0.184 and a gentler ramp would call the whole sunlit basin floor
+		// "turned away" and tint its fill.  This zeroes past N·L = 0.125.
+		float sunAway = 1.0 - saturate( dot( sohoNormalW, uSunDirWorld ) * 8.0 );
+		float beamLum = dot( reflectedLight.directDiffuse, vec3( 0.2126, 0.7152, 0.0722 ) );
+		float fillLum = dot( reflectedLight.indirectDiffuse, vec3( 0.2126, 0.7152, 0.0722 ) );
+		// Beam-to-fill ratio: >= 0.32 anywhere the beam actually lands (LAW 3
+		// caps the fill at 0.55 of sunlit, i.e. a ratio of 0.8), ~0 inside a cast
+		// shadow.  The knee sits low so penumbra ramps rather than steps.
+		float sunOccl = 1.0 - smoothstep( 0.04, 0.32, beamLum / max( fillLum, 1.0e-5 ) );
+		float shadowTint = max( saturate( sohoSSSAmount ),
+			0.55 * max( sunAway, sunOccl ) * sohoSnowness );
+		reflectedLight.indirectDiffuse *= mix( vec3( 1.0 ), uSssTint, shadowTint );
+	}
 #endif
 `;
 
@@ -959,7 +1017,12 @@ const SNOW_SURFACE = /* glsl */ `
 
 	// ---- detail fades ----
 	float fadeFar = 1.0 - smoothstep( uDetailFade.x, uDetailFade.y, sohoDist );
-	float f1 = ( 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 24.0 / uDetailScale.x ) ) * fadeFar;
+	// The grain layer's guard used a 24x multiplier, which drove f1 to zero once
+	// the pixel footprint passed ~1.7 cm — i.e. at 3-10 m, exactly the range the
+	// near-field grain is supposed to be carrying.  A 0.37 m tile is only
+	// genuinely sub-pixel around 7 cm/px, so 6.0 is the Nyquist-honest number and
+	// 24.0 was simply deleting the near field (checklist 4 / 27).
+	float f1 = ( 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 6.0 / uDetailScale.x ) ) * fadeFar;
 	float f2 = ( 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 24.0 / uDetailScale.y ) ) * fadeFar;
 	float f3 = 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 16.0 / uDetailScale.z );
 	float f4 = 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 14.0 / uDetailScale.w );
@@ -973,10 +1036,22 @@ const SNOW_SURFACE = /* glsl */ `
 	// drift lobes so it is scalloped, and grain-scale grit so the last centimetre
 	// is ragged.  A one-quad-wide ramp straight off the vertex attribute is the
 	// razor edge the art direction calls the most damning tell in the document.
+	//
+	// Both noise biases are gated on rockMask and faded with their own
+	// footprint.  Ungated they summed to a +-0.535 swing applied to *every*
+	// fragment, so an 11 m drift lobe alone could push a fully snow-covered
+	// 25 deg rollover under the 0.18 floor and scour a whole near slope back to
+	// bare schist in wind-aligned smears (the "brown mud" near field).  A face
+	// with rockMask = 0 has no rock within reach of the surface, so noise must
+	// not be able to invent any; where rock genuinely is near the surface the
+	// boundary is still drift-shaped, which is the only place the art direction
+	// asks for it.  f3/f4 stop the same terms manufacturing an 11 m-period snow
+	// line at 800 m, which is far-field contrast physics already deleted
+	// (checklist 27).
 	float accum = saturate(
 		( 1.0 - rockMask ) * 1.25
-		+ ( tMc.z - 0.5 ) * 0.45
-		+ ( tDr.w - 0.5 ) * 0.62
+		+ ( tMc.z - 0.5 ) * 0.45 * f4 * rockMask
+		+ ( tDr.w - 0.5 ) * 0.62 * f3 * rockMask
 		+ ( tG1.z - 0.5 ) * 0.18 * f1
 		+ ( sohoWN.y - 0.55 ) * 0.70 * uSnowOnRock
 	);
@@ -1124,6 +1199,7 @@ const SNOW_SURFACE = /* glsl */ `
 		* ( 1.0 - 0.70 * trkComp );
 
 	sohoForwardMul = ( 1.0 - rockF ) * ( sfPow + 0.88 * sfWind + 0.72 * sfGroom + 0.25 * sfIce );
+	sohoSnowness = ( 1.0 - rockF ) * ( 1.0 - 0.5 * sfIce );
 	/* -------------- end SOHO SNOW SURFACE -------------- */
 `;
 
@@ -1263,6 +1339,7 @@ const ROCK_SURFACE = /* glsl */ `
 	sohoSSSAmount = uSssStrength * saturate( cavity * 0.5 + ( 1.0 - sD.w ) * 0.3 ) * snowAmt;
 	sohoGlintMul = snowAmt * ( 1.0 - smoothstep( uGlintRange.x, uGlintRange.y, sohoDist ) ) * ( 0.5 + 1.1 * sG.w );
 	sohoForwardMul = snowAmt;
+	sohoSnowness = saturate( snowAmt + rime * 0.6 );
 	/* -------------- end SOHO SCHIST SURFACE -------------- */
 `;
 
@@ -1364,7 +1441,11 @@ function buildUniforms(ctx, opts) {
     uGlint: {
       value: new THREE.Vector4(
         34 * Math.sqrt(sparkleDensity / 1400),
-        620,
+        // Lobe sharpness.  620 is a 2.4 deg half-power cone — far tighter than
+        // the facet lattice can ever satisfy under a 10.6 deg sun, so the term
+        // never fired.  190 is a ~5.9 deg cone: still a hard, star-like point,
+        // but reachable.  See sohoGlintLayer().
+        190,
         9.0 * sparkleStrength,
         0.34,
       ),

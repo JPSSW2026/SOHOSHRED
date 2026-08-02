@@ -65,7 +65,13 @@
  *
  * ## Compass conventions (please read before "fixing" the sun)
  *
- * Two binding documents disagree about which true bearing game −Z points along.
+ * Two binding documents disagree about which true bearing game −Z points along,
+ * and the codebase therefore carries two compass constants: this module's
+ * `DEFAULT_SUN_BEARING_OF_MINUS_Z` (135) and `terrain.js`'s exported
+ * `TRUE_NORTH_BEARING_OF_MINUS_Z` (225).  **That split is real and it is not
+ * fixed here**, because adopting 225 in this module is not a neutral change —
+ * it is a whiteout.  See the arithmetic below before touching it.
+ *
  * `ART_DIRECTION.md` §2.1 — the visual contract, and the higher-precedence
  * document — states the fall line runs on bearing 135° (matching
  * `LOCATION.aspectDegrees`) and that at the shipped `timeOfDay` the sun is "91°
@@ -74,6 +80,24 @@
  * `TERRAIN_BRIEF.md` §2.1 adopts 225° instead, which places its §1.6 skyline
  * beautifully but puts the 09:40 sun directly behind the headwall, leaving the
  * entire basin unlit (its §2.12 says so, and recommends `timeOfDay: 15.0`).
+ *
+ * Concretely, at `timeOfDay 9.67` the solved sun is azimuth 44.0°, altitude
+ * 10.5°.  Mapping that through 225 gives a game-space sun direction of
+ * (−0.017, +0.183, +0.983) — i.e. almost exactly +Z.  `terrain.js` builds the
+ * main face falling toward −Z (its own `WIND_TOWARD` comment calls +Z the
+ * up-slope direction), so the face normal has a negative z component and
+ * N·L < 0 across the entire basin: every rideable surface would render
+ * unlit, and no amount of sky work recovers a frame from that.  Mapping the
+ * same sun through 135 gives (−0.983, +0.183, +0.016) — abeam to the rider's
+ * left at 10.5°, exactly the cross-light §2.1 specifies and the shipped look.
+ *
+ * So the resolution cannot live in this file alone: either `terrain.js` adopts
+ * 135 for its wind/scour/skyline model, or the constant moves to
+ * `src/core/config.js` and both modules read it from there.  Until one of those
+ * happens, the sun stays on the document that outranks — and the
+ * consequence to be aware of is `ART_DIRECTION.md` checklist 35: the wind-scour
+ * and lee-loading geology is sculpted on a 225 frame while the light that
+ * reveals it is placed on a 135 frame, 90° out of register.
  *
  * Both documents also make explicit *game-space* statements, and those do not
  * conflict, so we honour both:
@@ -144,7 +168,50 @@ const SOLAR_IRRADIANCE_UNITS = 41.0;
  * `#0F4C8E`–`#2A64A6` through AgX at `CONFIG.render.exposure`: too little and
  * the sky is a black-blue void, too much and it greys out and fails §12.
  */
-const MS_STRENGTH = 0.27;
+const MS_STRENGTH = 0.30;
+
+/**
+ * Spectral shape of the snowpack's albedo, normalised at 680 nm.
+ *
+ * Snow is *not* spectrally flat.  Ice's absorption coefficient rises steeply
+ * through the visible — k(700 nm) is roughly thirty times k(450 nm) — so a
+ * photon that enters the pack and random-walks through a few grain diameters
+ * comes back out blue-shifted.  For the fine dry grains this basin holds, the
+ * measured hemispherical albedo runs ~0.94 at 450 nm, ~0.90 at 550 nm and
+ * ~0.86 at 700 nm.  The `CONFIG.snow.albedo` scalar is the 700 nm anchor.
+ *
+ * This matters twice, and both times it is the difference between a slate-grey
+ * frame and an alpine one:
+ *
+ *  1. inside the multiple-scattering pass, where a *flat white* ground bounce
+ *     injected isotropically into every sky direction desaturates a sky whose
+ *     Rayleigh coefficients have β_B/β_R = 5.7 (§1.4 wants B/R ≥ 4.7 at the
+ *     top of frame, and a neutral additive term destroys that faster than any
+ *     other single term in the model);
+ *  2. inside the snowfield bounce that fills every shadow, where LAW 2 asks for
+ *     B/R 1.25–1.40 and a neutral bounce at 2× the sky fill cannot get there.
+ */
+const SNOW_ALBEDO_SPECTRUM = [1.0, 1.0465, 1.0930];
+
+/** `CONFIG.snow.albedo` (a 700 nm scalar) → the per-channel albedo vector. */
+function snowAlbedoRGB(scalar) {
+  const a = clamp(scalar, 0, 0.99 / SNOW_ALBEDO_SPECTRUM[2]);
+  return [a * SNOW_ALBEDO_SPECTRUM[0], a * SNOW_ALBEDO_SPECTRUM[1], a * SNOW_ALBEDO_SPECTRUM[2]];
+}
+
+/**
+ * Fraction of the snowfield visible from a scattering point (or from a shadowed
+ * patch) that is itself in direct sun.
+ *
+ * At a 10.6° sun a snowfield is not a uniformly lit Lambertian plate: every
+ * ridge, roll and wind lip shadows a long tongue of the surface downwind of it,
+ * and the same terrain that shadows a patch also hides much of the sunlit snow
+ * that patch could otherwise see.  Treating the whole visible snowfield as
+ * directly lit is what makes the bounce neutral-to-warm and drives shadowed
+ * snow to B/R ≈ 1.05.  The remainder of the field is sky-lit, and re-radiates
+ * a *second*, blue bounce.
+ */
+const GROUND_LIT_FRACTION = 0.46;
 
 /**
  * The camera, in three constants.  These are the only numbers in this file that
@@ -188,8 +255,35 @@ const SKY_CALIBRATION = 0.65;
  * magnitude are computed from the actual horizontal irradiance every time the
  * sky is rebuilt — so it tracks time of day and weather instead of being a
  * fixed grey lift.
+ *
+ * This is the *total* view factor for a point in the bowl.  Only
+ * `1 − BOUNCE_OCCLUDED_FRACTION` of it survives as an unconditional ambient
+ * light; the rest is gated on sun visibility (see below), which is why the
+ * total can now carry §4.1's full magnitude without flooding every shadow with
+ * neutral light.
  */
-const BOUNCE_VIEW_FACTOR = 0.085;
+const BOUNCE_VIEW_FACTOR = 0.24;
+
+/**
+ * How much of that bounce is *occluded by the same geometry that occludes the
+ * sun*, and therefore must not be delivered as an unconditional ambient term.
+ *
+ * A three.js `AmbientLight` reaches every fragment at full strength, which is
+ * physically wrong for a bounce term: the ridge that puts a slope in shadow
+ * also hides most of the sunlit snowfield that slope would otherwise see.
+ * Delivering the whole bounce unoccluded pours a neutral, direct-beam-derived
+ * fill into exactly the pixels LAW 2 requires to be blue, and lands shadowed
+ * snow at B/R ≈ 1.05 against a 1.25–1.40 requirement.
+ *
+ * So the bounce is split.  `1 − BOUNCE_OCCLUDED_FRACTION` stays as the
+ * `AmbientLight` — light arriving from beyond the shadowing feature, which no
+ * local geometry can block.  The rest is uploaded as `sohoBounceOccluded` and
+ * multiplied, inside the light loop, by the sun's own shadow-map visibility
+ * (see `installAerialPerspective`).  A shadowed pixel therefore keeps all of
+ * the blue sky fill and loses most of the neutral snow bounce, which is what
+ * actually happens on a mountain.
+ */
+const BOUNCE_OCCLUDED_FRACTION = 0.72;
 
 /** Resolution of the sky radiance tables (bins in zenith cosine). */
 const LUT_N = 20;
@@ -482,6 +576,7 @@ export function buildAtmosphereTables(opts) {
   const sunMu = clamp(opts.sunMu, -1, 1);
   const w = opts.weather;
   const groundAlbedo = opts.groundAlbedo ?? 0.82;
+  const albedoRGB = snowAlbedoRGB(groundAlbedo);
   const mieG = opts.mieG ?? 0.76;
 
   const betaMieScat = BETA_MIE * w.turbidity;
@@ -612,10 +707,19 @@ export function buildAtmosphereTables(opts) {
   // fills the lower hemisphere (attenuated, and shrinking with altitude), the
   // sky fills the upper.  J_ms = beta_scatter * meanRadiance, so this is the
   // quantity the isotropic source needs — not the sum of the two.
-  const GROUND_VIEW = 0.55;
+  // `GROUND_VIEW` is the *effective* solid-angle share of the snowfield seen
+  // from a typical scattering point, not the geometric half-sphere: the column
+  // that matters for the sky's colour reaches tens of kilometres up, and from
+  // there the ground subtends progressively less and is seen through more and
+  // more air.  At 0.55 (the geometric value) the bounce term dominated the
+  // isotropic source and, being spectrally flat, bleached the Rayleigh blue out
+  // of the whole dome — measured B/R at the top of frame fell to 1.2–1.8
+  // against §1.4's 4.7 floor.  The albedo is now spectral as well, so what is
+  // left of the bounce is itself blue-biased rather than neutral white.
+  const GROUND_VIEW = 0.30;
   for (let c = 0; c < 3; c++) {
     const horizontal = sunT[c] * sunUp + E[c];
-    const groundRadiance = (groundAlbedo * horizontal) / Math.PI;
+    const groundRadiance = (albedoRGB[c] * horizontal) / Math.PI;
     const skyRadiance = E[c] / Math.PI;
     src[c] = 0.5 * groundRadiance * GROUND_VIEW + 0.5 * skyRadiance;
   }
@@ -864,7 +968,28 @@ vec3 sohoAerialPerspective( vec3 color, vec3 worldPos, vec3 camPos ) {
 	float t = 1.0 - T.g;
 	vec3 inscatter = mix( local, sky, t * t );
 
-	return color * T + inscatter * sohoAtmo[ 3 ].z;
+	vec3 result = color * T + inscatter * sohoAtmo[ 3 ].z;
+
+	// --- The §5.2 / checklist-19 guarantee, enforced arithmetically.
+	//
+	// Everything above converges on the sky *asymptotically*, and at the shipped
+	// 42 km meteorological range a 26 km sunlit snow ridge still keeps ~67% of
+	// its green, so it renders brighter than the sky at its own elevation angle.
+	// That is the "peaks paler than the sky behind them" artefact: an impossible
+	// image the eye rejects instantly, and the single thing §5.2 says everyone
+	// gets wrong.  The missing physics is real — out-scattering of the multiply
+	// scattered field, blowing snow off the crests, and the fact that a range
+	// that far away is never uniformly sunlit — and none of it is affordable
+	// here, so it is asserted instead: past a few tenths of an optical depth in
+	// the blue, a surface may not out-radiate the sky along the same ray.
+	//
+	// The gate is on **blue** extinction, which is 5.7x the red, so it stays at
+	// exactly zero inside ~10 km.  The near and mid field are therefore
+	// completely untouched — this cannot flatten the near-field contrast that
+	// checklist 17 measures, and it only ever removes radiance the atmosphere
+	// should already have removed.
+	float veil = smoothstep( 0.22, 0.62, 1.0 - T.b );
+	return mix( result, min( result, sky * 0.98 ), veil );
 }
 #endif
 `;
@@ -875,11 +1000,87 @@ vec3 sohoAerialPerspective( vec3 color, vec3 worldPos, vec3 camPos ) {
 
 let _apInstalled = false;
 
+/**
+ * Gate the occluded half of the snowfield bounce on the sun's own shadow-map
+ * visibility.
+ *
+ * `ART_DIRECTION.md` LAW 2 wants shadowed snow at B/R 1.25–1.40, and §4.1
+ * simultaneously wants a bounce that is roughly twice the sky fill.  Those two
+ * are only compatible if the bounce is *occluded*: the ridge that shadows a
+ * slope also hides most of the sunlit snow that slope could see.  Delivered as
+ * a plain `AmbientLight`, the bounce reaches every fragment at full strength,
+ * so a shadowed pixel receives two parts neutral (direct-beam-derived) fill to
+ * one part blue sky and lands at B/R ≈ 1.05 — measurably what happens.
+ *
+ * Three properties make this safe to do at chunk level:
+ *
+ *  1. **Zero extra texture fetches.** The shadow factor is recovered from the
+ *     ratio the light loop has *already* applied to `directLight.color`, so
+ *     nothing new is sampled — which matters on SwiftShader.
+ *  2. **Index 0 only.** This module creates the scene's only directional light,
+ *     so light 0 is the sun by construction.  `#if ( UNROLLED_LOOP_INDEX == 0 )`
+ *     survives three's loop unroller, which substitutes the literal index.
+ *  3. **Fails to a no-op.** A material that does not carry the uniform reads
+ *     zero and behaves exactly as before; a material with no shadow map leaves
+ *     `sohoSunVis` at 1 and gets the full bounce, which is the correct answer
+ *     for something that cannot be shadowed.
+ */
+function installOccludedBounce(C) {
+  C.lights_pars_begin += /* glsl */ `
+uniform vec3 sohoBounceOccluded;
+`;
+
+  const needleDecl = 'IncidentLight directLight;';
+  const needleShadow = 'directLight.color *= ( directLight.visible && receiveShadow ) ? '
+    + 'getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, '
+    + 'directionalLightShadow.shadowIntensity, directionalLightShadow.shadowBias, '
+    + 'directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;';
+  const needleAmbient = 'vec3 irradiance = getAmbientLightIrradiance( ambientLightColor );';
+
+  let src = C.lights_fragment_begin;
+  const ok = src.indexOf(needleDecl) !== -1
+    && src.indexOf(needleShadow) !== -1
+    && src.indexOf(needleAmbient) !== -1;
+  if (!ok) {
+    console.warn(
+      '[sky] could not locate the light-loop anchors in lights_fragment_begin; '
+      + 'the snowfield bounce stays unoccluded (shadows will read greyer than '
+      + 'ART_DIRECTION LAW 2 asks for).',
+    );
+    return;
+  }
+
+  src = src.replace(needleDecl, `${needleDecl}\nfloat sohoSunVis = 1.0;`);
+  src = src.replace(needleShadow, `${needleShadow}
+		#if ( UNROLLED_LOOP_INDEX == 0 )
+			// Recover the shadow factor the line above just applied.  No second
+			// shadow lookup, and it tracks the PCF kernel exactly.
+			sohoSunVis = dot( directLight.color, vec3( 1.0 ) )
+				/ max( dot( directionalLight.color, vec3( 1.0 ) ), 1e-6 );
+		#endif`);
+  src = src.replace(needleAmbient,
+    'vec3 irradiance = getAmbientLightIrradiance( ambientLightColor )'
+    + ' + sohoBounceOccluded * sohoSunVis;');
+  C.lights_fragment_begin = src;
+}
+
 /** The one shared uniform payload every material in the scene points at. */
 const AP_UNIFORMS = {
   sohoAtmo: { value: new Float32Array(8 * 4) },
   sohoSkyR: { value: new Float32Array(LUT_N * 4) },
   sohoSkyM: { value: new Float32Array(LUT_N * 4) },
+};
+
+/**
+ * The shadow-gated half of the snowfield bounce, in the same units three uses
+ * for `ambientLightColor` (irradiance, i.e. π · radiance · view factor).
+ *
+ * Lives in `UniformsLib.lights` rather than `UniformsLib.fog` because it is
+ * consumed inside `lights_fragment_begin`, and a material that does no lighting
+ * has no use for it.
+ */
+const BOUNCE_UNIFORMS = {
+  sohoBounceOccluded: { value: new THREE.Color(0, 0, 0) },
 };
 
 /**
@@ -913,12 +1114,15 @@ function installAerialPerspective() {
   _apInstalled = true;
 
   Object.assign(THREE.UniformsLib.fog, AP_UNIFORMS);
+  Object.assign(THREE.UniformsLib.lights, BOUNCE_UNIFORMS);
   for (const key of Object.keys(THREE.ShaderLib)) {
     const lib = THREE.ShaderLib[key];
-    if (lib && lib.uniforms) Object.assign(lib.uniforms, AP_UNIFORMS);
+    if (lib && lib.uniforms) Object.assign(lib.uniforms, AP_UNIFORMS, BOUNCE_UNIFORMS);
   }
 
   const C = THREE.ShaderChunk;
+
+  installOccludedBounce(C);
 
   C.fog_pars_vertex = /* glsl */ `
 #ifdef USE_FOG
@@ -1094,23 +1298,53 @@ void main() {
 
 	#ifndef SOHO_ENV
 	// ---- High cirrus -----------------------------------------------------
-	// Thin ice cloud, streaked hard along the NW flow.
+	// Thin ice cloud, streaked along the NW flow.
+	//
+	// Evaluated in an **azimuthal-equidistant angular frame about the zenith**,
+	// not in the flat-plane projection the deck uses.  That distinction is the
+	// whole defect this block used to have: a plane intersection's UV magnitude
+	// is |dir.xz| / dir.y, which diverges without bound as the ray flattens, and
+	// applying a strong anisotropic stretch *inside* that diverging space turns
+	// the divergence into a radial comb — streaks converging on a focus point in
+	// the upper sky, i.e. an anime speed-line warp rather than cloud.  (Parallel
+	// lines on a real cloud plane converge on the horizon, never above it.)
+	//
+	// auv = normalize( dir.xz ) * zenithAngle is bounded by PI/2, is smooth
+	// through the zenith (it tends to dir.xz there), and gives every feature a
+	// constant *angular* size — which is what a deck 9 km up actually presents,
+	// since at that range the parallax across a frame is negligible anyway.  The
+	// stretch is then applied in a frame that cannot diverge, so the streaks run
+	// mutually parallel along the wind bearing with no common focus.
 	if ( uCloud.x > 0.001 ) {
-		vec2 cuv; float fade;
-		if ( sohoPlane( dir, uCloudGeom.x, uCloudGeom.z, 1.0 / 9000.0, cuv, fade ) ) {
-			vec2 flow = cuv + wind * ( time * uCloudWind.z );
-			// A 4:1 stretch along the flow is what makes cirrus read as cirrus
-			// rather than as generic noise.
+		float zen = acos( clamp( dir.y, -1.0, 1.0 ) );
+		vec2 auv = normalize( dir.xz + vec2( 1e-6, 0.0 ) ) * zen;
+		// Kill the layer well before the horizon: below ~6 deg it is edge-on,
+		// unresolvable, and only ever a source of aliasing along the skyline.
+		float fade = smoothstep( 0.10, 0.32, dir.y );
+		if ( fade > 0.001 ) {
+			vec2 flow = ( auv + wind * ( time * uCloudWind.z ) ) * 2.6;
+			// A ~2:1 stretch along the flow reads as cirrus; the 4:1 this used to
+			// carry (compounded by a 10.5:1 second octave, so 40:1 in total) is
+			// what made it read as motion blur.
 			vec2 al = vec2( dot( flow, wind ), dot( flow, vec2( -wind.y, wind.x ) ) );
-			al.x *= 0.26;
+			al.x *= 0.55;
 			float n = sohoFbm( al * 0.5 );
-			float streak = sohoFbm( al * vec2( 0.18, 1.9 ) + 3.1 );
-			float d = smoothstep( 0.62 - 0.30 * uCloud.x, 0.86, n * 0.65 + streak * 0.45 );
+			float streak = sohoFbm( al * vec2( 0.55, 1.45 ) + 3.1 );
+			// Sparser than it was.  A bluebird morning carries *some* high cirrus
+			// (§1.4's "bluebird with high cloud" row), but the top of frame still
+			// has to measure S >= 0.45, and cloud that covers most of the upper
+			// sky cannot deliver that whatever colour it is.
+			float d = smoothstep( 0.72 - 0.30 * uCloud.x, 0.90, n * 0.65 + streak * 0.45 );
 			d *= fade * uCloud.x;
 			// Ice cloud forward-scatters hard: a bright silver edge toward the sun.
 			float silver = 1.0 + 2.6 * pow( max( cosSun, 0.0 ), 14.0 );
-			vec3 cirrusCol = zenithRad * 1.35 + sohoAtmo[ 7 ].xyz * 0.24 * silver;
-			col = mix( col, cirrusCol, clamp( d, 0.0, 0.94 ) );
+			// Radiance of a *thin* ice cloud: optical depth ~0.08 against the
+			// normal beam, so away from the sun it sits at roughly the radiance
+			// of sunlit snow rather than eight times it.  The old 0.24 coefficient
+			// rendered every streak as clipped white and was, on its own, a large
+			// part of why the top of frame measured desaturated.
+			vec3 cirrusCol = zenithRad * 1.35 + sohoAtmo[ 7 ].xyz * 0.075 * silver;
+			col = mix( col, cirrusCol, clamp( d, 0.0, 0.80 ) );
 		}
 	}
 
@@ -1130,20 +1364,33 @@ void main() {
 		float ti = uLensShape[ i ].y;
 		vec2 qr = vec2( q.x * cos( ti ) - q.y * sin( ti ), q.x * sin( ti ) + q.y * cos( ti ) );
 		vec2 e = vec2( qr.x / halfW, qr.y / ( halfW * uLensShape[ i ].x ) );
-		float body = 1.0 - smoothstep( 0.45, 1.0, length( e ) );
+		float body = 1.0 - smoothstep( 0.30, 1.0, length( e ) );
 		if ( body <= 0.0 ) continue;
 		// Break the perfect ellipse so it does not read as a decal.
-		float wob = sohoFbm( qr * 6.0 + uLensShape[ i ].w + wind * time * 0.004 );
-		body = smoothstep( 0.10, 0.55, body * ( 0.60 + 0.60 * wob ) );
+		//
+		// The remap window matters more than the noise does.  A narrow window
+		// (this was 0.10 -> 0.55) turns a soft radial falloff into a near-binary
+		// edge: the whole transition collapses into ~4% of the lobe radius and
+		// the result reads as a UFO decal with a razor boundary (tell #36).
+		// Widening it to 0.02 -> 0.95 spreads the same falloff over ~15% of the
+		// radius, and a second, higher-frequency wobble octave breaks the
+		// remaining contour so no part of the rim is ever a clean arc.
+		float wob = sohoFbm( qr * 13.0 + uLensShape[ i ].w + wind * time * 0.004 ) * 0.62
+			+ sohoFbm( qr * 31.0 + uLensShape[ i ].w * 1.7 ) * 0.38;
+		body = smoothstep( 0.02, 0.95, body * ( 0.55 + 0.80 * wob ) );
 		if ( body <= 0.0 ) continue;
 		// Shading: hot rim on the sun side, underside filled by snow bounce.
 		vec2 sunQ = normalize( vec2( dot( sunDir, tX ), dot( sunDir, tY ) ) + vec2( 1e-4 ) );
 		float rim = smoothstep( -0.2, 0.85, dot( normalize( qr + vec2( 1e-4 ) ), sunQ ) );
 		float updown = clamp( 0.5 - qr.y * 1.4 / max( halfW, 1e-3 ) * 0.35, 0.0, 1.0 );
-		vec3 lit = sohoAtmo[ 7 ].xyz * 0.33 * ( 0.35 + 0.85 * rim );
+		// Radiance of a lit cloud face is albedo · E_normal · cos(i) / π, which at
+		// this sun angle is about 0.05 of the normal beam — not 0.33 of it.  The
+		// old value put every lens four stops into the AgX shoulder, where the
+		// gradient the shading computes cannot survive.
+		vec3 lit = sohoAtmo[ 7 ].xyz * 0.11 * ( 0.35 + 0.85 * rim );
 		vec3 shade = mix( uGroundColor * 0.55, zenithRad * 1.15, 0.55 );
 		vec3 lensCol = mix( lit + shade * 0.55, shade * 0.72, updown );
-		col = mix( col, lensCol, clamp( body * amt, 0.0, 0.96 ) );
+		col = mix( col, lensCol, clamp( body * amt, 0.0, 0.88 ) );
 	}
 	#endif
 
@@ -1162,7 +1409,10 @@ void main() {
 			// still gives bright tops, grey-blue cores and a soft base.
 			float above = sohoFbm( flow * 0.42 + wind * 0.055 );
 			float thick = clamp( ( dens - above ) * 3.0 + 0.5, 0.0, 1.0 );
-			vec3 top = sohoAtmo[ 7 ].xyz * 0.50 * ( 0.55 + 0.75 * max( cosSun, 0.0 ) );
+			// Cloud-top radiance = albedo · E_normal · cos(i) / π.  At a 10.6 deg
+			// sun that is ~0.05 of the normal beam; 0.50 was ten times too hot and
+			// rendered the deck as a clipped white mesa with a hard top edge.
+			vec3 top = sohoAtmo[ 7 ].xyz * 0.085 * ( 0.55 + 0.75 * max( cosSun, 0.0 ) );
 			vec3 core = mix( uGroundColor * 0.62, zenithRad, 0.45 );
 			vec3 deckCol = mix( core * ( 0.42 + 0.5 * uCloudGeom.w ), top + core, thick );
 			col = mix( col, deckCol, clamp( d, 0.0, 0.985 ) );
@@ -1198,6 +1448,7 @@ attribute vec3 aCentre;
 attribute vec4 aSize;      // halfWidth, halfHeight, phase, seed
 varying vec2 vBankUv;
 varying vec3 vWorld;
+varying vec3 vRight;
 varying float vSeed;
 uniform float uTime;
 uniform vec2 uDrift;
@@ -1209,6 +1460,7 @@ void main() {
 	c.y += sin( uTime * 0.06 + aSize.z ) * 3.5;
 	vec3 toCam = cameraPosition - c;
 	vec3 right = normalize( vec3( - toCam.z, 0.0, toCam.x ) + vec3( 1e-5, 0.0, 0.0 ) );
+	vRight = right;
 	vec3 world = c + right * ( position.x * aSize.x ) + vec3( 0.0, position.y * aSize.y, 0.0 );
 	vWorld = world;
 	gl_Position = projectionMatrix * viewMatrix * vec4( world, 1.0 );
@@ -1219,6 +1471,7 @@ const BANK_FRAG = /* glsl */ `
 
 varying vec2 vBankUv;
 varying vec3 vWorld;
+varying vec3 vRight;
 varying float vSeed;
 uniform sampler2D uNoise;
 uniform float uTime;
@@ -1227,28 +1480,58 @@ uniform vec3 uGroundColor;
 
 ${ATMO_GLSL}
 
+/** Density of the bank at a point in card space, 0..1. */
+float sohoBankDensity( vec2 uv, float seed, float time ) {
+	vec2 p = uv * 1.35 + vec2( seed, seed * 1.7 ) + vec2( time * 0.0035, time * -0.0018 );
+	vec4 a = texture2D( uNoise, p );
+	vec2 q = uv * 2.0 - 1.0;
+	// Radial falloff, with the base feathered far harder than the top so the
+	// card dissolves before it can show an edge against a slope, and the top
+	// feathered too so a bank never presents a flat horizontal lid.
+	float radial = 1.0 - smoothstep( 0.15, 1.0, length( q * vec2( 0.85, 1.15 ) ) );
+	float base = smoothstep( -1.0, -0.05, q.y );
+	float lid = 1.0 - smoothstep( 0.25, 1.0, q.y );
+	return clamp( ( a.r * 1.5 - 0.52 ) * 2.2, 0.0, 1.0 ) * radial * base * lid;
+}
+
 void main() {
 	vec2 p = vBankUv * 1.35 + vec2( vSeed, vSeed * 1.7 ) + vec2( uTime * 0.0035, uTime * -0.0018 );
 	vec4 a = texture2D( uNoise, p );
 	vec4 b = texture2D( uNoise, p * 2.63 + 0.41 );
 	float n = a.r * 0.46 + a.g * 0.22 + b.b * 0.19 + b.a * 0.13;
 
-	// Radial falloff, with the base feathered far harder than the top so the
-	// card dissolves before it can show an edge against a slope.
 	vec2 q = vBankUv * 2.0 - 1.0;
 	float radial = 1.0 - smoothstep( 0.15, 1.0, length( q * vec2( 0.85, 1.15 ) ) );
 	float base = smoothstep( -1.0, -0.05, q.y );
-	float alpha = clamp( ( n * 1.5 - 0.52 ) * 2.2, 0.0, 1.0 ) * radial * base * uOpacity;
+	float lid = 1.0 - smoothstep( 0.25, 1.0, q.y );
+	float alpha = clamp( ( n * 1.5 - 0.52 ) * 2.2, 0.0, 1.0 ) * radial * base * lid * uOpacity;
 	if ( alpha < 0.004 ) discard;
+
+	// ---- three-tap light march ------------------------------------------
+	// What separates a cloud *bank* from a cloud *card* is that the light
+	// reaching a point depends on how much cloud sits between it and the sun.
+	// Three taps up the slab toward the sun, accumulated through Beer's law,
+	// buy exactly that: a bright rim where the column toward the light is thin
+	// and a grey-blue core where it is deep (§5.4, REFERENCE_ANALYSIS ref_19).
+	// Three fetches, no loop-dependent branching — affordable on SwiftShader.
+	vec2 sunUv = normalize( vec2( dot( sohoAtmo[ 0 ].xyz, vRight ), sohoAtmo[ 0 ].y ) + vec2( 1e-4 ) );
+	float tau = sohoBankDensity( vBankUv + sunUv * 0.13, vSeed, uTime )
+		+ sohoBankDensity( vBankUv + sunUv * 0.28, vSeed, uTime )
+		+ sohoBankDensity( vBankUv + sunUv * 0.46, vSeed, uTime );
+	float lightPath = exp( - tau * 1.15 );
 
 	vec3 V = normalize( vWorld - cameraPosition );
 	float c = dot( V, sohoAtmo[ 0 ].xyz );
 	// Beer–Powder: silver lining looking through the cloud toward the sun,
-	// grey-blue core away from it, snow bounce lifting the underside.
-	float forward = sohoPhaseM( c, 0.62 ) * 5.5;
-	vec3 sunTint = sohoAtmo[ 7 ].xyz * 0.37;
+	// grey-blue core away from it, snow bounce lifting the underside.  The
+	// forward lobe is capped: uncapped it peaks near 6 and, against a beam
+	// coefficient that used to be 0.37, put the sunward face forty times above
+	// sunlit snow — a clipped white slab with no internal gradient at all.
+	float forward = min( sohoPhaseM( c, 0.62 ) * 5.5, 3.0 );
+	vec3 sunTint = sohoAtmo[ 7 ].xyz * 0.055;
 	vec3 core = mix( uGroundColor * 0.7, sohoSkyRadiance( vec3( 0.0, 1.0, 0.0 ) ) * 1.1, 0.5 );
-	vec3 col = core * ( 0.55 + 0.45 * n ) + sunTint * ( 0.35 + forward );
+	vec3 col = core * ( 0.45 + 0.35 * n + 0.45 * lightPath )
+		+ sunTint * lightPath * ( 0.35 + forward );
 
 	col = sohoAerialPerspective( col, vWorld, cameraPosition );
 
@@ -1537,10 +1820,16 @@ export class Sky {
   /** Soft cards banded across the upper basin and the far ridges. */
   _buildRidgeBanks() {
     const rng = makeRng(`${CONFIG.seed}:ridge-bank`);
+    // Altitudes straddle the 1865 m crest rather than floating above it:
+    // `ART_DIRECTION.md` §5.4 asks for 1600–1900 m so the banks are *cut into*
+    // by ridgelines instead of forming a mesa behind them, and
+    // `REFERENCE_ANALYSIS.md` calls cloud dissolving into the slope one of the
+    // largest believability contributors there is.  The cards are taller than
+    // they were, so the feathered lower half sits inside the terrain.
     const banks = [
-      { r: 2400, theta: 165, spread: 55, y: 1980, n: 14, w: 420, h: 200 },
-      { r: 5200, theta: -110, spread: 40, y: 2060, n: 10, w: 700, h: 260 },
-      { r: 9000, theta: 55, spread: 46, y: 2140, n: 10, w: 1100, h: 320 },
+      { r: 2400, theta: 165, spread: 55, y: 1770, n: 14, w: 420, h: 260 },
+      { r: 5200, theta: -110, spread: 40, y: 1840, n: 10, w: 700, h: 330 },
+      { r: 9000, theta: 55, spread: 46, y: 1910, n: 10, w: 1100, h: 400 },
     ];
     let total = 0;
     for (const b of banks) total += b.n;
@@ -1732,26 +2021,48 @@ export class Sky {
     // --- Snowfield bounce --------------------------------------------------
     // Lambertian: L = albedo · E_horizontal / π.  §4.1 puts this at roughly
     // twice the sky fill, and it is why nothing in an open snow frame is dark.
+    // Two corrections against a naive `albedo · E_h / π`, and between them they
+    // are the whole of LAW 2:
+    //
+    //  - the albedo is spectral (`SNOW_ALBEDO_SPECTRUM`), so the pack's own
+    //    transport blue is in the bounce rather than being bolted on later as
+    //    a tint;
+    //  - only `GROUND_LIT_FRACTION` of the snowfield a given point can see is
+    //    in direct sun.  The rest is sky-lit, and bounces a *second* time — the
+    //    `(1 − lit)·albedo` term below — so the composite fill is far bluer than
+    //    the direct beam that seeds it.
+    const lit = clamp01(cfg.groundLitFraction ?? GROUND_LIT_FRACTION);
+    const albRGB = snowAlbedoRGB(groundAlbedo);
     const kDir = (E * Math.max(0, sunMu)) / beamLuma;
-    this.groundColor.setRGB(
-      groundAlbedo * (kDir * beam[0] + sky[0]) / Math.PI,
-      groundAlbedo * (kDir * beam[1] + sky[1]) / Math.PI,
-      groundAlbedo * (kDir * beam[2] + sky[2]) / Math.PI,
-    );
+    const gc = [0, 0, 0];
+    for (let c = 0; c < 3; c++) {
+      const direct = lit * kDir * beam[c];
+      const skyLit = (1 + (1 - lit) * albRGB[c]) * sky[c];
+      gc[c] = albRGB[c] * (direct + skyLit) / Math.PI;
+    }
+    this.groundColor.setRGB(gc[0], gc[1], gc[2]);
     this._cloudUniforms.uGroundColor.value.copy(this.groundColor);
 
     // Delivered as an explicit ambient term: the probe's lower hemisphere only
     // reaches surfaces that face down, but on an open snowfield every surface
     // sees a slab of lit snow.  `vf` is the share of the hemisphere it fills.
+    // ...but only the share of it that arrives from beyond whatever is casting
+    // the shadow.  The rest is handed to the light loop, which multiplies it by
+    // the sun's shadow-map visibility (`installOccludedBounce`), so a shadowed
+    // pixel keeps all of the blue sky fill and loses most of the neutral snow
+    // bounce.  Without that split LAW 2 is unreachable at any albedo.
+    const vf = cfg.bounceViewFactor ?? BOUNCE_VIEW_FACTOR;
+    const occ = clamp01(cfg.bounceOccludedFraction ?? BOUNCE_OCCLUDED_FRACTION);
+    const bE = [
+      vf * Math.PI * this.groundColor.r,
+      vf * Math.PI * this.groundColor.g,
+      vf * Math.PI * this.groundColor.b,
+    ];
     if (this.bounce) {
-      const vf = cfg.bounceViewFactor ?? BOUNCE_VIEW_FACTOR;
-      this.bounce.color.setRGB(
-        vf * Math.PI * this.groundColor.r,
-        vf * Math.PI * this.groundColor.g,
-        vf * Math.PI * this.groundColor.b,
-      );
+      this.bounce.color.setRGB(bE[0] * (1 - occ), bE[1] * (1 - occ), bE[2] * (1 - occ));
       this.bounce.intensity = 1;
     }
+    BOUNCE_UNIFORMS.sohoBounceOccluded.value.setRGB(bE[0] * occ, bE[1] * occ, bE[2] * occ);
 
     // --- Pack the shared uniform block -------------------------------------
     const a = AP_UNIFORMS.sohoAtmo.value;

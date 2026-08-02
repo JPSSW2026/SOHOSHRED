@@ -17,9 +17,20 @@
  *   +Z is the crest / headwall (~1860 m), −Z is the run-out (~1420 m), so the
  *   fall line runs toward −Z as ARCHITECTURE.md specifies. The bowl floor is
  *   roughly x ∈ [−400, +400], z ∈ [−200, +700]; both spurs rise to ~1700 m at
- *   |x| ≈ 650. The sun sits low (10.5°) almost due −X, i.e. abeam the fall
- *   line, so a camera looking along ±Z gets cross-light and a camera looking
- *   toward −X is shooting into it.
+ *   |x| ≈ 650. Terrain features worth pointing a lens at: the rib-and-couloir
+ *   headwall on the crest arc around z ≈ +700…+900, the three bluff bands at
+ *   z ≈ −140…−220 (x ∈ [−560,−300], [−140,−20], [+300,+520]), the soho-spur
+ *   down the −X rim and captains-shoulder down the +X rim.
+ *
+ * Where the sun is, on the other hand, is *not* a geometry note and must never
+ * be written down here. The solar vector is a function of
+ * CONFIG.world.timeOfDay *and* of the compass mapping sky.js applies, and an
+ * earlier revision of these presets was composed around a "low sun almost due
+ * −X" that the sky has never actually produced (TERRAIN_BRIEF §2.12 puts the
+ * 09:40 sun at (+0.02, 0.18, +0.98) — behind the headwall — and the
+ * recommended 15:00 sun at (+0.93, 0.29, +0.22)). Any preset whose whole point
+ * is a light-to-lens relationship therefore reads `ctx.sky.sunDirection` in
+ * apply() and solves for its own camera azimuth — see `sunComposedLook()`.
  *
  * All camera heights are expressed relative to the ground under them, because
  * the basin spans 450 m of elevation and an absolute Y is meaningless here.
@@ -52,6 +63,15 @@ function gameCam(ctx, mode) {
   c.snapToTarget?.();
 }
 
+/** Pose the camera between two absolute world points. */
+function lookAbs(ctx, from, to, fov) {
+  const cam = ctx.camera;
+  cam.fov = fov;
+  cam.position.copy(from);
+  cam.lookAt(to.x, to.y, to.z);
+  cam.updateProjectionMatrix();
+}
+
 /**
  * Point the camera from one ground-relative station to another.
  * @param {object} ctx
@@ -60,11 +80,140 @@ function gameCam(ctx, mode) {
  * @param {number} fov
  */
 function look(ctx, from, to, fov) {
-  const cam = ctx.camera;
-  cam.fov = fov;
-  cam.position.set(from[0], gh(ctx, from[0], from[1]) + from[2], from[1]);
-  cam.lookAt(to[0], gh(ctx, to[0], to[1]) + to[2], to[1]);
-  cam.updateProjectionMatrix();
+  lookAbs(
+    ctx,
+    v(from[0], gh(ctx, from[0], from[1]) + from[2], from[1]),
+    v(to[0], gh(ctx, to[0], to[1]) + to[2], to[1]),
+    fov,
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Sun-relative composition
+ * ------------------------------------------------------------------ */
+
+const DEG = Math.PI / 180;
+/** Half-width of the playable box, less a margin: past this the camera is off-map. */
+const STATION_LIMIT = 980;
+
+/** Horizontal unit vector for a plan azimuth in degrees, measured from +Z toward +X. */
+const dirFromAzimuth = (deg) => v(Math.sin(deg * DEG), 0, Math.cos(deg * DEG));
+
+/** Plan azimuth in degrees of a horizontal vector, same convention. */
+const azimuthOf = (x, z) => Math.atan2(x, z) / DEG;
+
+/**
+ * The sun as the sky is *actually* solving it right now, or null before the
+ * sky exists. Presets must never substitute a hardcoded vector for this: a
+ * wrong assumption is exactly the defect this indirection exists to prevent.
+ */
+function sunVector(ctx) {
+  const s = ctx.sky?.sunDirection;
+  if (!s || !Number.isFinite(s.x) || !Number.isFinite(s.y) || !Number.isFinite(s.z)) return null;
+  if (s.lengthSq() < 1e-6) return null;
+  return s.clone().normalize();
+}
+
+/**
+ * Build the camera/aim pair for one candidate look azimuth.
+ *
+ * The composition is anchored on `pivot` and rotates about it: the camera sits
+ * `back` metres behind the pivot along the look direction, and the aim point
+ * sits `fwd` metres in front of it. `fwd = 0` therefore means "orbit the
+ * subject", and `back = 0` means "stand still and pan", which is what the
+ * into-the-sun frame wants.
+ */
+function station(ctx, o, azDeg) {
+  const d = dirFromAzimuth(azDeg);
+  const cx = o.pivot[0] - d.x * (o.back || 0);
+  const cz = o.pivot[1] - d.z * (o.back || 0);
+  const from = v(cx, gh(ctx, cx, cz) + o.camHeight, cz);
+  let to;
+  if (o.pitchDeg != null) {
+    // Aim by pitch, not by ground: the backlight frame is composed on the
+    // horizon and the far skyline, which is beyond the heightfield entirely.
+    const c = Math.cos(o.pitchDeg * DEG);
+    to = v(cx + d.x * o.fwd * c, from.y + o.fwd * Math.sin(o.pitchDeg * DEG), cz + d.z * o.fwd * c);
+  } else {
+    const ax = o.pivot[0] + d.x * (o.fwd || 0);
+    const az = o.pivot[1] + d.z * (o.fwd || 0);
+    to = v(ax, gh(ctx, ax, az) + (o.aimHeight || 0), az);
+  }
+  return { from, to };
+}
+
+/** Fraction of the sight line that the ground pokes through, 0…1. */
+function blockedFraction(ctx, from, to) {
+  const N = 14;
+  let blocked = 0;
+  for (let i = 1; i <= N; i++) {
+    const t = i / (N + 1);
+    const x = from.x + (to.x - from.x) * t;
+    const z = from.z + (to.z - from.z) * t;
+    const y = from.y + (to.y - from.y) * t;
+    if (gh(ctx, x, z) > y + 2) blocked++;
+  }
+  return blocked / N;
+}
+
+/**
+ * Pose a wide shot against the sun the sky is running, rather than against a
+ * sun someone wrote into a comment.
+ *
+ * `wantDot` is the target for `dot(normalize(aim − camera), sunDirection)`:
+ *   −0.3  → the sun is ~107° off the lens axis, over one shoulder. This is the
+ *           raking cross-light that turns ribs, spines, gullies and sastrugi
+ *           into modelled form instead of a flat white field.
+ *   +0.85 → the sun is ~32° off axis, in frame and above the skyline: aureole,
+ *           veiling glare, and the full depth of the aerial perspective.
+ *
+ * The solve is a scan over look azimuth, because the camera height, the aim
+ * height and the sight line all depend on the terrain under the candidate and
+ * there is no closed form. It is deterministic (fixed step, deterministic
+ * tie-break) and costs a few hundred `getHeight()` taps, once, in `apply()`.
+ *
+ * `spanDeg` bounds the swing and `tolerance` bounds the ambition: at 09:40 the
+ * sun is behind the headwall and *no* station in this basin gets cross-light,
+ * so rather than saturate at the edge of the arc — an arbitrary vantage picked
+ * for a light angle it never reaches — the scan gives up and returns the
+ * authored composition. The frame is then honestly backlit, which is a
+ * `CONFIG.world.timeOfDay` problem and not something a camera can solve.
+ */
+function sunComposedLook(ctx, o) {
+  const sun = sunVector(ctx);
+  // `azimuthDeg` is both the authored composition and the no-sky fallback, so
+  // every caller must supply one even when it composes off the sun.
+  const centre = (o.sunOffsetDeg != null && sun)
+    ? azimuthOf(sun.x, sun.z) + o.sunOffsetDeg
+    : (o.azimuthDeg ?? 0);
+
+  let bestAz = centre;
+  if (sun) {
+    const span = o.spanDeg ?? 40;
+    let bestScore = Infinity;
+    let bestErr = Infinity;
+    for (let k = -span * 2; k <= span * 2; k++) {
+      const az = centre + k * 0.5;
+      const { from, to } = station(ctx, o, az);
+      const view = to.clone().sub(from).normalize();
+      const err = Math.abs(view.dot(sun) - o.wantDot);
+      let score = err;
+      // Stations off the playable box see the backdrop shell edge-on.
+      const off = Math.max(0, Math.abs(from.x) - STATION_LIMIT)
+                + Math.max(0, Math.abs(from.z) - STATION_LIMIT);
+      score += off * 0.01;
+      // Do not solve the light by hiding the subject behind a rollover.
+      if (o.clearView) score += 0.8 * blockedFraction(ctx, from, to);
+      // Deterministic tie-break: nearest to the authored composition wins.
+      score += Math.abs(k) * 5e-5;
+      if (score < bestScore) { bestScore = score; bestAz = az; bestErr = err; }
+    }
+    if (bestErr > (o.tolerance ?? 0.2)) bestAz = centre;
+  }
+
+  const { from, to } = station(ctx, o, bestAz);
+  lookAbs(ctx, from, to, o.fov);
+  return bestAz;
 }
 
 /**
@@ -95,10 +244,17 @@ export const SHOTS = [
     settle: 1.0,
     prepare(ctx) { freeCam(ctx); },
     apply(ctx) {
-      // Stand out on the east flank of the bowl, mid-height, and look up-basin
-      // at the headwall. The low −X sun rakes across the ribs and couloirs from
-      // camera-left, which is what separates them from a flat white field.
-      look(ctx, [480, -180, 100], [-60, 700, 10], 42);
+      // Orbit the headwall foot at ~1 km and pick the station where the sun
+      // rakes across the ribs and couloirs instead of sitting behind them.
+      // Under the 15:00 sun that lands within a few degrees of the flank
+      // station this shot has always used (≈ +480, −180); under any other sun
+      // it moves, because the ribs only exist in the frame as shadow.
+      sunComposedLook(ctx, {
+        pivot: [-60, 700], back: 1030, fwd: 0,
+        camHeight: 100, aimHeight: 10,
+        fov: 42, wantDot: -0.3,
+        azimuthDeg: -31.5, spanDeg: 40, clearView: true,
+      });
     },
   },
   {
@@ -170,10 +326,18 @@ export const SHOTS = [
     settle: 1.0,
     prepare(ctx) { freeCam(ctx); },
     apply(ctx) {
-      // The sun is low and nearly due −X, so shooting west across the bowl at
-      // the west rim puts it just above the skyline: aureole, veiling glare and
-      // the full depth of the aerial perspective in one frame.
-      look(ctx, [520, 240, 25], [-900, 300, 60], 52);
+      // Stand low on the −X flank and pan until the sun is ~32° off axis: it
+      // clears the skyline (which is 4–7° up from here across the whole width
+      // of the bowl) and sits high in frame with 1.5 km of terrain stacking up
+      // underneath it. `back: 0` keeps the station put and pans in place —
+      // there is exactly one low, unobstructed vantage here and orbiting it
+      // would only walk the camera into the spur.
+      sunComposedLook(ctx, {
+        pivot: [-560, 20], back: 0, fwd: 1400,
+        camHeight: 14, pitchDeg: 4.5,
+        fov: 50, wantDot: 0.85,
+        sunOffsetDeg: 30, azimuthDeg: 95, spanDeg: 40, clearView: false,
+      });
     },
   },
   {
@@ -211,13 +375,24 @@ export const SHOTS = [
   },
   {
     name: 'west-spur',
-    description: 'Across the bowl from the west spur — schist bluff bands against snow.',
+    description: 'Up at the west bluff band under the Soho spur — schist against snow.',
     settle: 1.0,
     prepare(ctx) { freeCam(ctx); },
     apply(ctx) {
-      // Sun behind the camera shoulder: this is the frame where the rock reads
-      // as Otago schist rather than as a grey hole in the snow.
-      look(ctx, [-640, 380, 60], [200, 180, -40], 48);
+      // The schist is in the bluff band at x ∈ [−560, −300], z ≈ −200, at the
+      // foot of the soho-spur — not on the spur crest, which is snow. The old
+      // station stood *on* the spur and aimed 400 m up-slope of the rock, so
+      // the frame contained no bluff at all. Orbit the band at 320 m (a 9–22 m
+      // face reads at that distance; at 620 m it is a dark line) and take the
+      // station where the light rakes along it: the wobble in the band's plan
+      // line means roughly half the faces catch a cross-sun, which is the
+      // difference between Otago schist and a grey hole in the snow.
+      sunComposedLook(ctx, {
+        pivot: [-470, -190], back: 320, fwd: 0,
+        camHeight: 12, aimHeight: 12,
+        fov: 40, wantDot: -0.3,
+        azimuthDeg: -34, spanDeg: 40, clearView: true,
+      });
     },
   },
 ];

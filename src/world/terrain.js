@@ -372,8 +372,12 @@ export class Terrain {
       { pts: [[180, 150], [90, 40], [-30, -60], [-150, -130]], depth0: 1.5, depth1: 7, width0: 8, width1: 26 },
       { pts: [[-480, -60], [-400, -120], [-320, -180], [-235, -260]], depth0: 1.5, depth1: 6, width0: 8, width1: 22 },
     ].map((t) => ({ ...t, ...polyMeta(t.pts) }));
+    // Braided creek depression (§2.5): 1–3 m deep, 15–40 m wide. Carried as a
+    // depth0/1 + width0/1 channel so the drainage rasteriser can treat it as
+    // the downstream continuation of the main gully.
     f.creek = {
       pts: [[-260, -520], [-330, -640], [-390, -760], [-470, -890], [-540, -1024]],
+      depth0: 1.2, depth1: 3.0, width0: 17, width1: 38,
       depth: 2.2, width: 26,
     };
     Object.assign(f.creek, polyMeta(f.creek.pts));
@@ -475,28 +479,37 @@ export class Terrain {
    */
   _skyline() {
     const EYE = 1800, RMAX = 24000;
+    // `serration` is how sawtoothed the massif's own skyline is. The Otago
+    // block ranges (Pisa, Criffel) genuinely are flat-topped warped peneplain
+    // remnants and must stay lozenge-like; the schist arêtes across the lake
+    // (Remarkables, Richardson, Harris) are sheer serrated walls, and from a
+    // 1755 m camera the Remarkables subtend only ~1.4°, so silhouette shape
+    // is the *only* thing that peak can contribute.
     const raw = [
-      // name,             summit, θ(deg from −Z toward +X), dist,  width, elongation, strike
-      ['mt-cardrona', 1936, -160, 2400, 1500, 1.8, 30],
-      ['pisa', 1963, -149, 15000, 5200, 2.6, 40],
-      ['criffel', 1626, 171, 14000, 4200, 2.8, 15],
-      ['mt-soho', 1752, 18, 6500, 1900, 1.5, -25],
-      ['coronet', 1649, 26, 16000, 2600, 1.2, 0],
-      ['remarkables', 2319, -17, 22000, 5000, 2.2, -10],
-      ['hector', 1900, -34, 42000, 6000, 3.0, -10],
-      ['richardson', 2100, 47, 32000, 5200, 2.2, 25],
-      ['harris', 2400, 112, 42000, 6500, 2.0, 45],
-      ['treble-cone', 2339, 127, 28000, 4000, 1.6, 20],
-      ['aspiring', 3033, 119, 57000, 3000, 1.0, 0],
+      // name,             summit, θ(deg from −Z toward +X), dist,  width, elongation, strike, serration
+      ['mt-cardrona', 1936, -160, 2400, 1500, 1.8, 30, 0.45],
+      ['pisa', 1963, -149, 15000, 5200, 2.6, 40, 0.15],
+      ['criffel', 1626, 171, 14000, 4200, 2.8, 15, 0.15],
+      ['mt-soho', 1752, 18, 6500, 1900, 1.5, -25, 0.50],
+      ['coronet', 1649, 26, 16000, 2600, 1.2, 0, 0.70],
+      ['remarkables', 2319, -17, 22000, 5000, 2.2, -10, 1.00],
+      ['hector', 1900, -34, 42000, 6000, 3.0, -10, 0.85],
+      ['richardson', 2100, 47, 32000, 5200, 2.2, 25, 1.00],
+      ['harris', 2400, 112, 42000, 6500, 2.0, 45, 1.00],
+      ['treble-cone', 2339, 127, 28000, 4000, 1.6, 20, 0.85],
+      ['aspiring', 3033, 119, 57000, 3000, 1.0, 0, 0.80],
     ];
-    return raw.map(([name, h, theta, dist, w, elong, strike]) => {
+    return raw.map(([name, h, theta, dist, w, elong, strike, serr]) => {
       let d = dist, hh = h, ww = w;
       if (dist > RMAX) { const k = RMAX / dist; d = RMAX; hh = EYE + (h - EYE) / k; ww = w * k; }
       const t = theta * DEG;
       return {
         name,
         x: Math.sin(t) * d, z: -Math.cos(t) * d,
-        h: Math.min(hh, 3200), w: ww, elong,
+        h: Math.min(hh, 3200), w: ww, elong, serr,
+        // Serration wavelength scales with the massif, but never below the
+        // 180 m angular post spacing the backdrop can actually carry.
+        sw: Math.max(650, ww * 0.19),
         cs: Math.cos(strike * DEG), sn: Math.sin(strike * DEG),
       };
     });
@@ -561,6 +574,12 @@ export class Terrain {
     h += fbm2(this.simFar, x / 1500, z / 1500, { octaves: 3 }) * 40 * smoothstep(1100, 2600, r);
 
     // Named skyline elements. max(), not sum() — mountains do not add.
+    //
+    // A Gaussian cannot be serrated, and a rounded white lozenge on the
+    // horizon is the one thing a distant massif must never read as. Each peak
+    // therefore carries ridged detail *inside its own mask*: sub-summits,
+    // notches and a broken crest line, faded out with the same g that raises
+    // the peak so it never leaks onto the surrounding plain.
     for (const p of this._sky) {
       const dx = x - p.x, dz = z - p.z;
       const u = (dx * p.cs + dz * p.sn) / p.elong;
@@ -568,7 +587,11 @@ export class Terrain {
       const d = Math.hypot(u, v) / p.w;
       if (d > 2.6) continue;
       const g = Math.exp(-Math.pow(d, 2.4));
-      const ph = lerp(h, p.h, g);
+      let ph = lerp(h, p.h, g);
+      if (p.serr > 0 && g > 0.015) {
+        const rd = ridged2(this.simFar, dx / p.sw, dz / p.sw, { octaves: 3, sharpness: 1.6 });
+        ph += p.h * 0.10 * g * p.serr * (rd - 0.45);
+      }
       if (ph > h) h = ph;
     }
 
@@ -766,6 +789,7 @@ export class Terrain {
     const H = this.height = new Float32Array(N);
     const yieldToHost = () => new Promise((r) => setTimeout(r, 0));
 
+    this._buildDrainNetwork();                mark('drain-net');
     this._phaseBase(H);                       mark('base+noise');
     this._phaseLandforms(H);                  mark('landforms');
     await yieldToHost();
@@ -773,6 +797,7 @@ export class Terrain {
     await yieldToHost();
     this._thermalErosion(H);                  mark('thermal');
     await yieldToHost();
+    this._phaseDrainage(H);                   mark('drainage');
     this._phaseSurfaceFeatures(H);            mark('features');
     this._phaseDepth(H);                      mark('depth');
     this._phaseDrift(H);                      mark('drift');
@@ -804,6 +829,76 @@ export class Terrain {
   }
 
   /* ---------------------------------------------------------------- *
+   * DRAINAGE NETWORK (§2.5) — rasterised once, consumed three times.
+   *
+   * `drainCut[k]` is the trench the network wants at that post: the deepest
+   * `depth(t) * exp(-(d / (0.6 w(t)))^2)` any channel asks for, evaluated as
+   * a signed distance against the polylines (max(), not sum(), so a
+   * confluence is one channel rather than two stacked ones).
+   *
+   * `drainMask[k]` is the corridor influence, and it is the half of this that
+   * actually matters. The old ordering cut the gully *before* the ±5 m
+   * domain-warped band and the ±4.6 m run-out billow, so a 2 m headwater
+   * trench was simply overwritten and even the 14 m lower gorge was reduced
+   * to a texture. Now the noise bands stand aside inside the corridor
+   * (`1 − 0.75 · mask`) and the trench is subtracted *after* erosion, which
+   * is what makes the drainage read from the valley-vista camera.
+   * ---------------------------------------------------------------- */
+
+  _buildDrainNetwork() {
+    const N = this.n * this.n;
+    const cut = this.drainCut = new Float32Array(N);
+    const mask = this.drainMask = new Float32Array(N);
+    const P = this._poly;
+    const F = this.features;
+
+    const rasterise = (ch, maskScale = 1) => {
+      const wMax = Math.max(ch.width0, ch.width1);
+      this._forBox(ch.minX, ch.maxX, ch.minZ, ch.maxZ, wMax * 2.4 + 40, (k, x, z) => {
+        polyClosest(ch.pts, ch.cum, x, z, P);
+        const u = clamp01(P.s / ch.length);
+        const w = lerp(ch.width0, ch.width1, u);
+        const dep = lerp(ch.depth0, ch.depth1, u);
+        // Gaussian trench: at d = w the wall is down to 6% of the depth, and
+        // the steepest wall lands at 24–26°, which is §2.5's 25–35° band.
+        const q = P.d / (w * 0.6);
+        const c = dep * Math.exp(-q * q);
+        if (c > cut[k]) cut[k] = c;
+        const m = smoothstep(w * 1.4, w * 0.5, P.d) * maskScale;
+        if (m > mask[k]) mask[k] = m;
+      });
+    };
+
+    rasterise(F.mainGully);
+    for (const t of F.tributaries) rasterise(t);
+    rasterise(F.creek);
+
+    // Braid threads: the creek is anastomosing across its own outwash, so lay
+    // two shallower offset channels either side of the main thread.
+    const braidRng = makeRng(this._seed('creek.braid'));
+    for (const sgn of [-1, 1]) {
+      const pts = F.creek.pts.map(([x, z], i, a) => {
+        const j = Math.min(i, a.length - 2);
+        const dx = a[j + 1][0] - a[j][0], dz = a[j + 1][1] - a[j][1];
+        const L = Math.hypot(dx, dz) || 1;
+        const off = sgn * (10 + braidRng.range(0, 9)) * (0.4 + 0.6 * (i / (a.length - 1)));
+        return [x + (-dz / L) * off, z + (dx / L) * off];
+      });
+      const ch = { pts, depth0: 0.5, depth1: 1.2, width0: 8, width1: 15, ...polyMeta(pts) };
+      rasterise(ch, 0.6);
+    }
+
+    this.features.drainage = { main: F.mainGully, tributaries: F.tributaries, creek: F.creek };
+  }
+
+  /** Subtract the drainage trench. Runs after erosion so nothing refills it. */
+  _phaseDrainage(H) {
+    const cut = this.drainCut;
+    if (!cut) return;
+    for (let k = 0; k < H.length; k++) H[k] -= cut[k];
+  }
+
+  /* ---------------------------------------------------------------- *
    * PHASE A+B: analytic base + structural noise bands
    * ---------------------------------------------------------------- */
 
@@ -815,6 +910,7 @@ export class Terrain {
     for (let i = 0; i < n; i++) powX[i] = Math.pow(Math.abs(minX + i * cell) / 1024, 1.6);
 
     const simR = this.simRidge, simM = this.simMid;
+    const dmask = this.drainMask;
 
     for (let j = 0; j < n; j++) {
       const z = minZ + j * cell;
@@ -826,6 +922,9 @@ export class Terrain {
 
       for (let i = 0; i < n; i++) {
         const x = minX + i * cell;
+        // Inside a drainage corridor the structural bands stand aside, or
+        // they simply refill the trench that gets cut after erosion.
+        const nSup = 1 - 0.75 * (dmask ? dmask[row + i] : 0);
 
         // --- Band 0: analytic cirque -----------------------------------
         let h = this._profile(z + A * powX[i]);
@@ -842,14 +941,21 @@ export class Terrain {
         // The warp is what kills the grid signature of raw fBm.
         h += warpedFbm2(simM, x / 96, z / 96, {
           octaves: 4, warp: 0.4, warpFrequency: 0.6, frequency: 1,
-        }) * 5.0;
+        }) * 5.0 * nSup;
 
         // --- Run-out roll: the basin floor is 1.7° in section, which would
         // leave a third of the map dead flat. Real cirque floors are
         // hummocky — moraine, debris fans and braided outwash — so add a
         // broad low roll there and nowhere else.
+        //
+        // billow2 is strictly positive with a mean near 0.44, so the raw form
+        // was a +2 m *blanket* that faded in exactly across the mid-face /
+        // floor break and turned the concave scoop the profile describes into
+        // a convex shoulder. Centring it keeps the hummocks and gives the
+        // break back its concavity.
         if (runout > 0) {
-          h += billow2(simM, x / 130 + 31.7, z / 130 - 12.3, { octaves: 2 }) * 4.6 * runout;
+          h += (billow2(simM, x / 130 + 31.7, z / 130 - 12.3, { octaves: 2 }) - 0.44)
+            * 4.6 * runout * (0.35 + 0.65 * nSup);
         }
 
         H[row + i] = h;
@@ -928,23 +1034,9 @@ export class Terrain {
       });
     }
 
-    /* -- Main gully (head of Soho Creek) and tributaries ------------------ */
-    const cutGully = (gy) => {
-      const maxW = Math.max(gy.width0, gy.width1) * 2.6;
-      this._forBox(gy.minX, gy.maxX, gy.minZ, gy.maxZ, maxW + 40, (k, x, z) => {
-        polyClosest(gy.pts, gy.cum, x, z, P);
-        const u = clamp01(P.s / gy.length);
-        const w = lerp(gy.width0, gy.width1, u);
-        const dep = lerp(gy.depth0, gy.depth1, u);
-        const t = clamp01(P.d / w);
-        // Parabolic floor, walls easing out over another half-width.
-        const prof = t < 1 ? (1 - t * t) : 0;
-        const shoulder = (1 - smoothstep(1, 2.1, P.d / w)) * 0.22;
-        H[k] -= dep * (prof + shoulder * (1 - prof));
-      });
-    };
-    cutGully(F.mainGully);
-    for (const t of F.tributaries) cutGully(t);
+    /* -- Main gully and tributaries: see _phaseDrainage(). The trench is cut
+     * after erosion, not here — a pre-erosion carve is refilled by the noise
+     * bands, by droplet deposition and by the talus pass. -------------------- */
 
     /* -- Spine field: convex ribs down the fall line, rider's right ------- */
     for (const s of F.spines) {
@@ -1080,17 +1172,24 @@ export class Terrain {
 
     // Fold the delta back in: clamped, and faded out at the box edge so the
     // containment rim and the far-field seam stay clean.
+    //
+    // Cut and fill are clamped asymmetrically. Droplets arriving on the basin
+    // floor dump everything they are carrying, and an 11 m aggradation
+    // blanket is precisely what turns the cirque's concave run-out into the
+    // smooth convex plane the art critique flagged. Incision still gets its
+    // full 11 m — it is the half of erosion that makes drainage readable.
     const cell = this.cell;
     for (let j = 0; j < n; j++) {
       const z = this.minZ + j * cell;
       const edgeZ = Math.min(z - this.minZ, this.maxZ - z);
       const row = j * n;
+      const fillCap = lerp(11, 2.5, smoothstep(-250, -620, z));
       for (let i = 0; i < n; i++) {
         const x = this.minX + i * cell;
         const edge = Math.min(edgeZ, x - this.minX, this.maxX - x);
         const fade = smoothstep(0, 110, edge);
         const k = row + i;
-        H[k] += clamp(W[k] - H[k], -11, 11) * fade;
+        H[k] += clamp(W[k] - H[k], -11, fillCap) * fade;
       }
     }
   }
@@ -1245,22 +1344,39 @@ export class Terrain {
       });
     }
 
-    /* -- Avalanche debris fans below each couloir mouth -------------------- */
+    /* -- Avalanche debris fans below each couloir mouth and bluff gap ------- */
+    // §2.5: hummocky lumps 0.5–2.0 m over fans 60–140 m long. This runs after
+    // the erosion passes on purpose — a ±1 m hummock field laid before the
+    // ±5 m band-2 octave and then dragged through 165 000 droplets simply
+    // does not survive.
     {
       const sim = this.simDrift;
+      const mouths = [];
       for (const g of F.gullies) {
-        const mx = FOCUS_X + Math.sin(g.phi) * BASE_R;
-        const mz = FOCUS_Z + Math.cos(g.phi) * BASE_R;
-        const len = 130, spread = 70;
-        this._forBox(mx - spread * 2.2, mx + spread * 2.2, mz - len * 1.3, mz + 30, 0, (k, x, z) => {
+        mouths.push({
+          x: FOCUS_X + Math.sin(g.phi) * BASE_R,
+          z: FOCUS_Z + Math.cos(g.phi) * BASE_R,
+          len: 140, spread: 78, amp: 1.0,
+        });
+      }
+      // Debris also piles at the basin floor below the two bluff through-gaps
+      // (x −300…−140 and −20…+300), which is where the slide paths converge.
+      mouths.push({ x: -220, z: -232, len: 120, spread: 64, amp: 0.82 });
+      mouths.push({ x: 140, z: -238, len: 130, spread: 82, amp: 0.9 });
+
+      for (const m of mouths) {
+        const { x: mx, z: mz, len, spread } = m;
+        this._forBox(mx - spread * 2.4, mx + spread * 2.4, mz - len * 1.3, mz + 30, 0, (k, x, z) => {
           const dz = mz - z;                       // positive downhill
           if (dz < 0 || dz > len) return;
           const u = dz / len;
-          const w = lerp(20, spread, u);
-          const cone = Math.exp(-Math.pow((x - mx) / w, 2)) * (1 - smoothstep(0.55, 1, u));
+          const w = lerp(22, spread, u);
+          const cone = Math.exp(-Math.pow((x - mx) / w, 2)) * (1 - smoothstep(0.6, 1, u));
           if (cone < 0.01) return;
-          const lump = billow2(sim, x / 22, z / 22, { octaves: 3 });
-          H[k] += (lump - 0.42) * 2.6 * cone;
+          // Two lump scales: 40 m lobes and 10 m blocks, together ±1.9 m.
+          const lobe = billow2(sim, x / 26, z / 26, { octaves: 3 }) - 0.44;
+          const block = billow2(sim, x / 9.5 + 7.1, z / 9.5 - 3.3, { octaves: 2 }) - 0.45;
+          H[k] += (lobe * 3.3 + block * 1.15) * cone * m.amp;
         });
       }
     }
@@ -1275,24 +1391,19 @@ export class Terrain {
           const h = H[k];
           if (h > 1452) continue;
           const x = this.minX + i * cell;
-          const mask = (1 - smoothstep(1436, 1452, h));
+          const mask = (1 - smoothstep(1436, 1456, h));
           const tread = 13 + 6 * fbm2(sim, x / 220, z / 220, { octaves: 2 });
           const s = (h / tread) % 1;
-          H[k] += 0.55 * mask * (smoothstep(0.62, 0.95, s < 0 ? s + 1 : s) - 0.5);
+          // 0.75 m risers (§2.5 asks for 0.3–0.8 m) with the break held tight
+          // against the tread, so the floor carries readable contour steps
+          // rather than a sinusoidal ripple.
+          H[k] += 0.75 * mask * (smoothstep(0.68, 0.96, s < 0 ? s + 1 : s) - 0.5);
         }
       }
     }
 
-    /* -- Braided creek line ------------------------------------------------ */
-    {
-      const c = F.creek;
-      this._forBox(c.minX, c.maxX, c.minZ, c.maxZ, c.width * 3, (k, x, z) => {
-        polyClosest(c.pts, c.cum, x, z, P);
-        const w = c.width * (0.6 + 0.7 * (P.s / c.length));
-        const t = clamp01(P.d / w);
-        H[k] -= c.depth * (1 - t * t);
-      });
-    }
+    /* -- Braided creek line: cut in _phaseDrainage() with the rest of the
+     * network, so the same corridor mask keeps noise out of its floor. ------ */
 
     /* -- Crest blockfield: flat-lying schist plates, displacement only ----- */
     {
@@ -1565,7 +1676,7 @@ export class Terrain {
   _phaseDrift(H) {
     const n = this.n, cell = this.cell;
     const simD = this.simDrift, simF = this.simFine;
-    const depth = this.depth, groom = this.groom;
+    const depth = this.depth, groom = this.groom, drain = this.drainMask;
 
     // Drift is laid on the pre-drift surface, so read the slope from a copy.
     const src = new Float32Array(H);
@@ -1591,7 +1702,9 @@ export class Terrain {
         const sDeg = Math.atan(Math.hypot(gx, gz)) / DEG;
         const shed = 1 - smoothstep(24, 42, sDeg);
         if (shed < 0.02) continue;
-        const amp = dScale * shed;
+        // Gully floors are lee, smooth and wind-loaded, not mogulled — and a
+        // ±1 m drift band across a 12 m headwater trench erases it.
+        const amp = dScale * shed * (1 - 0.6 * (drain ? drain[k] : 0));
 
         // Band 3 — mogul-scale drift, λ 8–30 m.
         const b3 = (billow2(simD, x / 17, z / 17, { octaves: 3 }) - 0.45) * 0.95 * amp;
@@ -1900,6 +2013,22 @@ export class Terrain {
    * ring inside it, its vertices are *tucked* below the finer surface, which
    * guarantees the finer mesh wins the depth test without any z-fighting and
    * without needing seam-matched indices.
+   *
+   * Neither of those hides the *step*. Each ring samples the same surface at
+   * a different quantisation, so where ring L ends and ring L+1 begins the
+   * two surfaces disagree by up to the coarser ring's sampling error — which
+   * renders as a stack of horizontal terraces marching across every slope
+   * face, one per ring boundary, and as an aliased staircase on the ridge
+   * silhouette. The cure is geomorphing: over the outer quarter of every
+   * ring, blend the vertex height toward the height the *next coarser* post
+   * spacing would give, reaching it exactly at the boundary. The rings then
+   * agree at the join to the last centimetre and the terrace disappears.
+   *
+   * Because the rings only rebuild when their snapped centre moves, and the
+   * morph weight is a function of position within the ring rather than of
+   * camera distance, the blend is done on the CPU here rather than in the
+   * vertex shader — same result, no extra attribute, and snowMaterial.js
+   * (owned elsewhere) needs no change.
    */
   _rebuildLevel(lv) {
     const { N, s, vpr, gridV, perim, attrs } = lv;
@@ -1914,7 +2043,16 @@ export class Terrain {
     const h0 = li > 0 ? (N >> 2) + 2 : -1;
     const h1 = li > 0 ? N - (N >> 2) - 2 : -1;
     const micro = li < MICRO_LEVELS;
+    // Sub-post detail is faded out before every ring boundary. It is the one
+    // band the coarser ring cannot reproduce (its posts are wider than the
+    // sastrugi wavelength), so it has to be gone by the join; what is left is
+    // a residual of a few centimetres, well under MICRO_CAP.
     const microFade = half * 0.82;
+    // Geomorph target spacing = the next coarser ring's posts. Below the 2 m
+    // heightfield the coarse sample reproduces the fine one exactly (both are
+    // bilinear taps of the same field), so levels 0 and 1 need no blend.
+    const coarseS = s * 2;
+    const morphs = coarseS > this.cell && li < this._levels.length - 1;
 
     let minY = Infinity, maxY = -Infinity;
     // Untucked heights, kept so the normal pass is not poisoned by the tuck
@@ -1930,12 +2068,19 @@ export class Terrain {
         const vi = j * vpr + i;
 
         let y = this._heightAt(x, z);
+        const cheb = Math.max(Math.abs(x - cx), Math.abs(z - cz));
 
         // Sub-post detail, capped so getHeight() still matches the mesh.
         if (micro) {
-          const cheb = Math.max(Math.abs(x - cx), Math.abs(z - cz));
           const fade = 1 - smoothstep(microFade * 0.55, microFade, cheb);
           if (fade > 0) y += this._micro(x, z) * fade;
+        }
+
+        // Geomorph toward the next coarser post spacing over the outer
+        // quarter of the ring, so the ring boundary carries no step.
+        if (morphs) {
+          const t = smoothstep(0.75, 1.0, cheb / half);
+          if (t > 0) y = lerp(y, this._coarseHeightAt(x, z, coarseS), t);
         }
         raw[vi] = y;
 
@@ -2012,6 +2157,41 @@ export class Terrain {
     bs.center.set(cx, (minY + maxY) * 0.5, cz);
     bs.radius = Math.hypot(half, half) + (maxY - minY) * 0.5 + tuckDepth + drop + 4;
     lv.dirty = false;
+  }
+
+  /**
+   * The height a clipmap ring of post spacing `cs` renders at (x, z): a
+   * bilinear tap on the lattice of multiples of `cs`. Every clipmap centre is
+   * snapped to a multiple of 2·s, so a ring of spacing `cs` always has its
+   * posts on exactly that lattice regardless of where the camera is — which
+   * is what lets the finer ring morph onto the coarser ring's surface without
+   * needing to know where the coarser ring currently sits.
+   */
+  _coarseHeightAt(x, z, cs) {
+    const inv = 1 / cs;
+    const x0 = Math.floor(x * inv) * cs, z0 = Math.floor(z * inv) * cs;
+    const tx = (x - x0) * inv, tz = (z - z0) * inv;
+    const ax = tx > 1e-6, az = tz > 1e-6;
+    if (!ax && !az) return this._heightAt(x, z);      // already a coarse post
+    if (!az) {
+      const a = this._heightAt(x0, z), b = this._heightAt(x0 + cs, z);
+      return a + (b - a) * tx;
+    }
+    if (!ax) {
+      const a = this._heightAt(x, z0), b = this._heightAt(x, z0 + cs);
+      return a + (b - a) * tz;
+    }
+    // Not bilinear: the coarse ring rasterises triangles, and every quad in
+    // _makeLevel is split (a, c, b) / (b, c, d) — i.e. along the b–c
+    // anti-diagonal. Matching the split exactly is what makes the morphed
+    // boundary agree to the centimetre instead of to the sag of the quad.
+    const h10 = this._heightAt(x0 + cs, z0), h01 = this._heightAt(x0, z0 + cs);
+    if (tx + tz <= 1) {
+      const h00 = this._heightAt(x0, z0);
+      return h00 + (h10 - h00) * tx + (h01 - h00) * tz;
+    }
+    const h11 = this._heightAt(x0 + cs, z0 + cs);
+    return h11 + (h01 - h11) * (1 - tx) + (h10 - h11) * (1 - tz);
   }
 
   /**
@@ -2127,9 +2307,26 @@ export class Terrain {
    */
   _makeBackdrop() {
     const R0 = BACKDROP_INNER, R1 = CONFIG.terrain.backdropRadius;
-    const AN = 192, RN = 40;
+    const RN = 40;
+    // Angular resolution is the silhouette's resolution. At 192 segments the
+    // post spacing at r = 22 km is 720 m — about seven posts across the whole
+    // Remarkables massif, which cannot carry a serrated crest no matter what
+    // the height function does. The outer half of the shell therefore runs at
+    // 768 segments (180 m at 22 km); the inner rings do not need it and the
+    // two resolutions are stitched with a 1:4 triangle fan.
+    const AN_NEAR = 192, AN_FAR = 768, FAR_R = 12000;
     const rings = RN + 2;                       // +1 outer, +1 skirt
-    const total = rings * (AN + 1);
+
+    const growth = Math.pow(R1 / R0, 1 / RN);
+    const radii = [];
+    for (let k = 0; k <= RN; k++) radii.push(R0 * Math.pow(growth, k));
+    radii.push(R1);                              // duplicated for the skirt
+
+    const ans = radii.map((r) => (r >= FAR_R ? AN_FAR : AN_NEAR));
+    ans[rings - 1] = ans[rings - 2];             // the skirt matches its ring
+    const offs = new Int32Array(rings);
+    let total = 0;
+    for (let k = 0; k < rings; k++) { offs[k] = total; total += ans[k] + 1; }
 
     const pos = new Float32Array(total * 3);
     const nor = new Float32Array(total * 3);
@@ -2143,19 +2340,15 @@ export class Terrain {
     const aRock = new Float32Array(total);
     const attrs = { pos, nor, uv, col, aSurface, aDepth, aRoughness, aExposure, aCurvature, aRock };
 
-    const growth = Math.pow(R1 / R0, 1 / RN);
-    const radii = [];
-    for (let k = 0; k <= RN; k++) radii.push(R0 * Math.pow(growth, k));
-    radii.push(R1);                              // duplicated for the skirt
-
     const invSize = 1 / this.size;
     for (let k = 0; k < rings; k++) {
       const r = radii[k];
       const skirt = k === rings - 1;
+      const AN = ans[k];
       for (let a = 0; a <= AN; a++) {
         const t = (a / AN) * Math.PI * 2;
         const x = Math.cos(t) * r, z = Math.sin(t) * r;
-        const vi = k * (AN + 1) + a;
+        const vi = offs[k] + a;
         let y = this._heightAt(x, z) - BACKDROP_SINK;
         if (skirt) y -= 1500;                    // drop the rim below the horizon
         const eps = Math.max(60, r * 0.01);
@@ -2173,10 +2366,24 @@ export class Terrain {
 
     const idx = [];
     for (let k = 0; k < rings - 1; k++) {
-      for (let a = 0; a < AN; a++) {
-        const A = k * (AN + 1) + a, B = A + 1;
-        const C = A + (AN + 1), D = C + 1;
-        idx.push(A, C, B, B, C, D);
+      const a0 = ans[k], a1 = ans[k + 1];
+      const o0 = offs[k], o1 = offs[k + 1];
+      if (a1 === a0) {
+        for (let a = 0; a < a0; a++) {
+          const A = o0 + a, B = A + 1;
+          const C = o1 + a, D = C + 1;
+          idx.push(A, C, B, B, C, D);
+        }
+      } else {
+        // 1 : rep resolution step — fan the coarse inner edge onto the fine
+        // outer one. Same winding as the uniform case (outward, then CCW).
+        const rep = a1 / a0;
+        for (let a = 0; a < a0; a++) {
+          const A = o0 + a, B = A + 1;
+          const c = o1 + a * rep;
+          for (let q = 0; q < rep; q++) idx.push(A, c + q, c + q + 1);
+          idx.push(A, c + rep, B);
+        }
       }
     }
 
@@ -2204,23 +2411,80 @@ export class Terrain {
   }
 
   /**
-   * Bluff faces as explicit rock geometry. The heightfield already carries the
-   * step, but a 55–80° face smoothed across 2 m posts reads as a white ramp;
-   * a thin proud strip in the rock material reads as a schist bluff.
+   * Signed foliation displacement for a point on a rock face.
+   *
+   * Every schist surface in the basin shares one foliation plane (§2.13:
+   * strike +38° from +X, dip 32°), so the fracture relief must be *banded
+   * against that plane*, not isotropic noise. Three wavelengths are stacked;
+   * the phase of each is jittered along strike so the result is irregular
+   * layering rather than a mechanical comb, exactly as the rock material's
+   * own normal banding does at texture scale.
+   *
+   * `lam` is metres between plates, `amp` is the peak-to-peak displacement.
+   */
+  _foliationRelief(x, y, z) {
+    const f = this._folBasis;
+    const sim = this.simFine;
+    const c0 = x * f.nx + y * f.ny + z * f.nz;      // distance along the normal
+    const a0 = x * f.sx + z * f.sz;                 // distance along strike
+    let d = 0;
+    for (let i = 0; i < f.bands.length; i++) {
+      const [lam, amp, ph] = f.bands[i];
+      const jit = sim.noise2D(a0 / (lam * 7) + ph, c0 / (lam * 11));
+      const s = c0 / lam + jit * 0.5;
+      const fr = s - Math.floor(s);
+      // Sharp lip, sloping back: plates break, they do not undulate.
+      const tri = fr < 0.28 ? fr / 0.28 : 1 - (fr - 0.28) / 0.72;
+      d += (tri - 0.5) * amp;
+    }
+    return d;
+  }
+
+  /**
+   * Bluff faces as explicit rock geometry (§2.5 mid bluff band: 6–22 m step,
+   * 55–80° face, the map's "air it or go around" feature).
+   *
+   * The heightfield already carries the step, but a 55–80° face smoothed
+   * across 2 m posts reads as a white ramp. The previous strip built one quad
+   * every 3 m with a single hand-written normal, which is why the frame shows
+   * flat straight-sided plates with a stair-stepped upper break, no thickness
+   * and no lit face: four vertices of vertical resolution and one constant
+   * normal cannot be anything else.
+   *
+   * So: subdivide to 0.5 m vertically, displace along the face normal with the
+   * shared foliation model, derive the normals from the displaced surface, and
+   * tag every up-facing micro-facet as snow-holding through `aSurface.w` —
+   * which is what produces the "every ledge holds snow" read and breaks the
+   * flat-plate silhouette.
    */
   _makeBluffFaces() {
-    const verts = [], norms = [], uvs = [], idx = [];
     const rng = makeRng(this._seed('bluff.faces'));
-    let base = 0;
+
+    // Shared foliation basis (§2.13). Plane normal = strike × dip.
+    const STRIKE = 38 * DEG, DIP = 32 * DEG;
+    const sx = Math.cos(STRIKE), sz = Math.sin(STRIKE);
+    this._folBasis = {
+      sx, sz,
+      nx: -sz * Math.sin(DIP), ny: Math.cos(DIP), nz: sx * Math.sin(DIP),
+      // λ (m), peak-to-peak displacement (m), phase
+      bands: [[2.4, 0.42, 0], [0.6, 0.20, 13.7], [0.15, 0.07, 31.1]],
+    };
+
+    const COL_STEP = 2.0;     // metres along the bluff frontage
+    const ROW_STEP = 0.5;     // metres down the face — the whole point
+
+    const verts = [], uvs = [], idx = [];
 
     for (const b of this.features.bluffs) {
       const faceW = b.height / Math.tan(b.faceAngle);
-      const step = 3;
-      const cols = Math.max(2, Math.round(b.length / step));
-      const strip = [];
+      const cols = Math.max(2, Math.round(b.length / COL_STEP));
+      // One row count for the whole segment keeps the grid rectangular; the
+      // face length is the true down-dip run, not the vertical drop.
+      const rows = clamp(Math.round(Math.hypot(faceW + 2.0, b.height + 0.6) / ROW_STEP), 6, 72);
+      const colFirst = new Int32Array(cols + 1).fill(-1);
+
       for (let c = 0; c <= cols; c++) {
         const sArc = (c / cols) * b.length;
-        // Walk the polyline to the arc position.
         let seg = 0;
         while (seg < b.cum.length - 2 && b.cum[seg + 1] < sArc) seg++;
         const t = (sArc - b.cum[seg]) / Math.max(1e-6, b.cum[seg + 1] - b.cum[seg]);
@@ -2231,35 +2495,78 @@ export class Terrain {
         const tx = dx / L, tz = dz / L;
         const perpX = -tz, perpZ = tx;          // points uphill for these segments
         const along = smoothstep(0, 55, sArc) * (1 - smoothstep(b.length - 55, b.length, sArc));
-        if (along < 0.12) { strip.push(null); continue; }
+        if (along < 0.12) continue;
 
-        const wob = rng.range(-0.6, 0.9);
-        const topX = px + perpX * (faceW * 0.5 + 0.6), topZ = pz + perpZ * (faceW * 0.5 + 0.6);
-        const botX = px - perpX * (faceW * 0.5 + 1.4 + wob), botZ = pz - perpZ * (faceW * 0.5 + 1.4 + wob);
-        strip.push({
-          tx: topX, tz: topZ, ty: this.getHeight(topX, topZ) + 0.25,
-          bx: botX, bz: botZ, by: this.getHeight(botX, botZ) - 0.35,
-          nx: -perpX, nz: -perpZ,
-        });
+        // The break line meanders and the buttresses vary in stand-off: a
+        // dead-straight top edge sampled on 2 m posts is what stair-steps.
+        const wobT = this.simFine.noise2D(px / 21 + 4.3, pz / 21 - 8.1) * 1.7
+          + this.simFine.noise2D(px / 5.5, pz / 5.5) * 0.5;
+        const wobB = rng.range(-0.6, 0.9) + this.simFine.noise2D(px / 17 - 2.7, pz / 17 + 5.9) * 2.2;
+
+        const topX = px + perpX * (faceW * 0.5 + 0.6 + wobT);
+        const topZ = pz + perpZ * (faceW * 0.5 + 0.6 + wobT);
+        const botX = px - perpX * (faceW * 0.5 + 1.4 + wobB);
+        const botZ = pz - perpZ * (faceW * 0.5 + 1.4 + wobB);
+        const topY = this.getHeight(topX, topZ) + 0.25;
+        const botY = this.getHeight(botX, botZ) - 0.35;
+
+        // Outward (downhill) face normal, used as the displacement direction.
+        let ox = -perpX, oy = 0.22, oz = -perpZ;
+        const oL = Math.hypot(ox, oy, oz) || 1;
+        ox /= oL; oy /= oL; oz /= oL;
+
+        colFirst[c] = verts.length / 3;
+        for (let r = 0; r <= rows; r++) {
+          const v = r / rows;
+          const x = lerp(topX, botX, v);
+          const y = lerp(topY, botY, v);
+          const z = lerp(topZ, botZ, v);
+          // Ease the relief off at the very top and bottom so the face still
+          // meets the heightfield, and taper it out at the segment ends.
+          const edge = Math.min(1, Math.min(v, 1 - v) * rows * 0.25 + 0.35);
+          const k = this._foliationRelief(x, y, z) * edge * (0.45 + 0.55 * along);
+          verts.push(x + ox * k, y + oy * k, z + oz * k);
+          uvs.push(sArc * 0.25, 1 - v);
+        }
       }
-      for (let c = 0; c < strip.length - 1; c++) {
-        const a = strip[c], d = strip[c + 1];
-        if (!a || !d) continue;
-        const i0 = base + verts.length / 3;
-        verts.push(a.tx, a.ty, a.tz, a.bx, a.by, a.bz, d.tx, d.ty, d.tz, d.bx, d.by, d.bz);
-        for (let q = 0; q < 4; q++) norms.push(a.nx, 0.16, a.nz);
-        uvs.push(0, 1, 0, 0, 1, 1, 1, 0);
-        idx.push(i0, i0 + 1, i0 + 2, i0 + 2, i0 + 1, i0 + 3);
+
+      for (let c = 0; c < cols; c++) {
+        const A = colFirst[c], B = colFirst[c + 1];
+        if (A < 0 || B < 0) continue;
+        for (let r = 0; r < rows; r++) {
+          const a = A + r, d = B + r;
+          // Wound so the geometric normal points *downhill*, out of the face.
+          // The old strip wound the other way, which put the front face into
+          // the hillside — back-face culled from every camera that can see the
+          // bluff, and lit by a normal aimed away from the sun on top of that.
+          idx.push(a, d, a + 1, d, d + 1, a + 1);
+        }
       }
     }
     if (!idx.length) return null;
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
-    geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(norms), 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvs), 2));
-    geo.setIndex(idx);
-    geo.normalizeNormals?.();
+    geo.setIndex(idx.length > 65535
+      ? new THREE.BufferAttribute(new Uint32Array(idx), 1)
+      : new THREE.BufferAttribute(new Uint16Array(idx), 1));
+    // Normals from the *displaced* surface, not from the heightfield: this is
+    // what gives a 70° face its faceting and its lit/unlit sides.
+    geo.computeVertexNormals();
+
+    // Ledge-snow mask. The rock shader already holds snow on any facet with a
+    // high enough perturbed normal; aSurface.w biases its accumulation, so
+    // every up-facing plate ends up capped and the face stops reading as one
+    // uniform dark plane.
+    const nAttr = geo.getAttribute('normal');
+    const vCount = nAttr.count;
+    const aSurface = new Float32Array(vCount * 4);
+    for (let i = 0; i < vCount; i++) {
+      aSurface[i * 4 + 3] = smoothstep(0.30, 0.52, nAttr.getY(i));
+    }
+    geo.setAttribute('aSurface', new THREE.BufferAttribute(aSurface, 4));
+
     geo.computeBoundingSphere();
     const mesh = new THREE.Mesh(geo, this.rockMaterial);
     mesh.name = 'terrain-bluffs';

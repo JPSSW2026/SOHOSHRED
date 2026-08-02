@@ -86,11 +86,49 @@ const TUNE = {
     /** Firefly clamp on the bright pass, in linear post-exposure units. */
     clampMax: 60.0,
     /**
-     * §7.1 wants two tiers: a tight core at ~1.2 linear and a wide veil at
-     * ~0.75. `CONFIG.post.bloom.threshold` (0.86) is the combined budget, so
-     * the pyramid is fed at 0.86 * 0.87 = 0.75 (the veil threshold) and the
-     * tier separation is then done by kernel width and weight, which is what
-     * a real lens PSF actually is: one narrow core plus one wide halo.
+     * WHERE THE BRIGHT-PASS KNEE SITS — the single most consequential number
+     * in this file.
+     *
+     * It cannot be a constant. `CONFIG.post.bloom.threshold` (0.86) is a
+     * *relative* figure written as if diffuse white were 1.0, but this scene is
+     * scene-referred: `sky.js` drives the sun off a real solar constant
+     * (`SOLAR_IRRADIANCE_UNITS`), so sunlit snow lands at ~4 linear, not ~1.
+     * A fixed 0.86-ish threshold therefore sits *below* the entire snowfield;
+     * every snow pixel then feeds the pyramid and gets the blurred result added
+     * back, which is failure mode #38 ("everything is bloom") and destroys
+     * near-field local contrast — the whole frame converges on one value and
+     * checklist item 17 (near σ ÷ far σ ≥ 4) collapses.
+     *
+     * So the knee is anchored to the physical radiance of sunlit snow instead
+     * (see `_diffuseWhite`), and `whiteScale` places it that far above:
+     *
+     *     threshold = whiteScale · albedo · ( E_beam·N·L + E_sky ) / π
+     *
+     * The irradiances come from `ctx.sky.irradiance`, so the knee tracks sun
+     * elevation and weather automatically and always sits the same distance
+     * *above* the snowfield. At 1.8 only the sun disc, the aureole and genuine
+     * specular glints cross it — which is what tiers 1 and 2 of §7.1 are
+     * actually made of once the snowfield itself is excluded.
+     */
+    whiteScale: 1.8,
+    /**
+     * The tilt, toward the sun, of the slope that `_diffuseWhite` calls
+     * "sunlit". It must not be zero: at Soho Basin's 10.5° winter sun a plane
+     * tilted 25° into the beam collects sin(35.5°)/sin(10.5°) ≈ 3.2× the
+     * irradiance of a horizontal one, so a horizontal-plane white reference
+     * under-reads the actual sunlit snow by 3× and would leave the knee sitting
+     * *below* the sunlit snowfield — i.e. would not fix #38 at all. Measured
+     * against the shipped frames: horizontal white is 1.41 linear, while the
+     * 93rd-percentile snow pixel inverts back to ~4.4 linear, and a 25° slope
+     * predicts 4.0. 25° is also the pitch of the bowl-entry face the gameplay
+     * presets ride.
+     */
+    sunlitSlopeDeg: 25,
+    /** The `CONFIG.post.bloom.threshold` value that means "no relative trim". */
+    whiteReference: 0.86,
+    /**
+     * Legacy absolute knee (post-exposure units), used only as a floor and as
+     * the fallback when the sky system has not published an irradiance yet.
      */
     veilThresholdScale: 0.87,
     /** Split of CONFIG.post.bloom.strength across the two tiers (sums to it). */
@@ -156,6 +194,25 @@ const TUNE = {
     /** Auto-focus ray budget. */
     focusRaySteps: 48,
     focusRayMax: 420,
+    /**
+     * Hyperfocal gate (§7.2, checklist items 17 and 51). Focus racked out past
+     * `hyperfocalNear` metres is, on any lens this game uses, past its own
+     * hyperfocal distance: a landscape framed on a ridge 300 m away is sharp
+     * from a few metres to infinity, and every reference wide is. Without this
+     * the thin-lens CoC keeps softening the *near* ground of a wide shot, which
+     * inverts the depth cue — a reverse tilt-shift that reads as a miniature.
+     * Fades out over [near, far] so a chase that drifts off the rider onto the
+     * far slope does not pop.
+     */
+    hyperfocalNear: 40,
+    hyperfocalFar: 120,
+    /**
+     * Focus distance used when the centre ray finds no ground at all (looking
+     * out over a basin, or at the sky). "Infinity" is the correct answer for a
+     * landscape; the old fallback to `CONFIG.post.dof.focusDistance` (9 m) put
+     * the whole mountain behind the focal plane.
+     */
+    infinityFocus: 4000,
   },
 
   motionBlur: {
@@ -182,9 +239,23 @@ const TUNE = {
     power: [1.020, 1.000, 0.980],
     saturation: 1.08,
     shadowSaturation: 1.14,
-    /** Highlight rolloff: guarantees p99.9 luma <= 252 (checklist item 2). */
-    rolloffKnee: 0.86,
-    rolloffCeiling: 0.988,
+    /**
+     * Highlight rolloff — an exponential shoulder that asymptotes to
+     * `rolloffCeiling` and so can never produce a clipped plateau
+     * (checklist item 2, p99.9 ≤ 252).
+     *
+     * The knee has to stay *above* sunlit snow. AgX already delivers sunlit
+     * snow around 0.90 and the sun's core at the top of its range, so a knee at
+     * 0.86 caught the snow as well and squashed a 27-level sun-over-snow lead
+     * into 6: the sun read as a bright patch of cloud rather than as a source.
+     * At 0.94 the shoulder only touches the top ~15 levels, snow passes through
+     * untouched with all of its modulation, and the core keeps a ~20-level lead
+     * over the snowfield. The ceiling is 1.0 because the tone mapper's gamut
+     * clamp already bounds its input there — a higher ceiling would buy nothing
+     * except the risk of clipping glints on the sun-out frames.
+     */
+    rolloffKnee: 0.94,
+    rolloffCeiling: 1.0,
   },
 
   vignette: {
@@ -1547,7 +1618,7 @@ export class PostProcessing {
       || ctx.player?.camera?.mode === 'cinematic'
       || ctx.player?.camera?.mode === 'orbit';
 
-    const target = this._autoFocusDistance(ctx, cam) ?? pick(cfg, 'focusDistance', 9);
+    const target = this._autoFocusDistance(ctx, cam);
     this._focus = (cut || wasOff)
       ? target
       : damp(this._focus, target, TUNE.dof.focusLambda, dt);
@@ -1559,7 +1630,16 @@ export class PostProcessing {
     const A = f / N;
     const S = Math.max(this._focus, f * 1.6);
 
-    fx.uCocGain.value = (A * f) / (sensorH * (S - f));
+    // Hyperfocal gate. Beyond ~40 m of focus these lenses are, for all
+    // practical purposes, focused at infinity and the near field is *sharp*;
+    // letting the thin-lens term keep running softens the foreground of every
+    // wide shot and inverts the depth cue (items 17, 51). Landscape framing
+    // therefore renders hyperfocal, and the shallow behaviour survives exactly
+    // where §7.2 wants it — the close/rider/cinematic presets, which focus a
+    // few metres out and never reach the gate.
+    const hyper = 1 - smoothstep(TUNE.dof.hyperfocalNear, TUNE.dof.hyperfocalFar, S);
+
+    fx.uCocGain.value = ((A * f) / (sensorH * (S - f))) * hyper;
     fx.uFocus.value = S;
     fx.uMaxCoc.value = cine
       ? pick(cfg, 'cinematicMaxBlur', TUNE.dof.cinematicMaxBlur)
@@ -1591,7 +1671,11 @@ export class PostProcessing {
       if (groundDist !== null && groundDist < riderDist * 0.45) return groundDist;
       return riderDist;
     }
-    return groundDist;
+    // No rider and no ground within the ray budget: the frame is a landscape or
+    // a sky shot, and a landscape focuses at infinity. Falling back to
+    // `CONFIG.post.dof.focusDistance` (9 m, the chase-camera default) would put
+    // the entire mountain behind the focal plane.
+    return groundDist ?? TUNE.dof.infinityFocus;
   }
 
   /** March the terrain heightfield; returns distance to the hit or null. */
@@ -1634,6 +1718,39 @@ export class PostProcessing {
     return null;
   }
 
+  /**
+   * Radiance of sunlit, Lambertian snow, in the same linear scene-referred
+   * units the composer's buffers hold (i.e. *before* the tone mapper's exposure
+   * multiply). This is the scene's diffuse-white reference: any threshold that
+   * means "brighter than snow" must be a multiple of it, never a constant.
+   *
+   *   L = albedo · ( E_beam · N·L + E_sky ) / π
+   *
+   * `sky.js` publishes `irradiance.direct` (the beam at normal incidence) and
+   * `irradiance.horizontal` (that beam projected onto the horizontal, plus the
+   * sky's own hemispherical irradiance), so the sky term recovers as
+   * `horizontal − direct · sinAlt` and the beam can then be re-projected onto a
+   * slope that actually faces the sun — which is what "sunlit snow" means at a
+   * 10.5° sun. Everything tracks time of day and weather automatically.
+   *
+   * @returns {number} linear radiance, or 0 when the sky has not published yet.
+   */
+  _diffuseWhite(ctx) {
+    const ir = ctx.sky?.irradiance;
+    if (!ir || !Number.isFinite(ir.horizontal) || ir.horizontal <= 0) return 0;
+
+    const albedo = CONFIG.snow?.albedo ?? 0.86;
+    const beam = Math.max(0, ir.direct || 0);
+    const sinAlt = clamp01(ctx.sky?.sunDirection?.y ?? 0);
+    // Diffuse sky + snowfield bounce on the horizontal, beam removed.
+    const skyE = Math.max(0, ir.horizontal - beam * sinAlt);
+    // The beam on a slope tilted `sunlitSlopeDeg` into it.
+    const nDotL = clamp01(
+      Math.sin(Math.asin(sinAlt) + TUNE.bloom.sunlitSlopeDeg * DEG),
+    );
+    return (albedo * (beam * nDotL + skyE)) / Math.PI;
+  }
+
   _updateBloom(ctx, cam, dt, cut) {
     if (!this.flags.bloom) {
       this._sunVis = 0;
@@ -1643,7 +1760,20 @@ export class PostProcessing {
     const u = this.bloomCompositePass.uniforms;
     const invExposure = 1 / Math.max(0.05, this.renderer.toneMappingExposure);
 
-    const threshold = pick(cfg, 'threshold', 0.86) * TUNE.bloom.veilThresholdScale * invExposure;
+    // The bright-pass knee, anchored to the physical diffuse-white radiance of
+    // sunlit snow rather than to a constant — see TUNE.bloom.whiteScale. The
+    // CONFIG value is kept meaningful as a *relative* trim around its documented
+    // default, and the legacy absolute value survives as a floor so a night or
+    // whiteout frame (E_horizontal → 0) can never drop the knee onto the scene.
+    const cfgThreshold = pick(cfg, 'threshold', 0.86);
+    const legacy = cfgThreshold * TUNE.bloom.veilThresholdScale * invExposure;
+    const white = this._diffuseWhite(ctx);
+    const threshold = white > 0
+      ? Math.max(
+        white * TUNE.bloom.whiteScale * (cfgThreshold / TUNE.bloom.whiteReference),
+        legacy,
+      )
+      : legacy;
     const strength = pick(cfg, 'strength', 0.42);
     const radius = clamp01(pick(cfg, 'radius', 0.55));
     const budget = strength / 0.42;
@@ -1805,7 +1935,12 @@ export class PostProcessing {
       passes: this.composer.passes.filter((p) => p.enabled).length,
       flags: { ...this.flags },
       focus: this._focus,
+      cocGain: this.sceneFxPass.uniforms.uCocGain.value,
       sunVisibility: this._sunVis,
+      // Both in linear scene-referred units: the sunlit-snow reference and the
+      // bright-pass knee derived from it. The knee must stay above the first.
+      diffuseWhite: this._diffuseWhite(this.ctx),
+      bloomThreshold: this.bloomBrightPass.uniforms.uThreshold.value,
     };
   }
 }
