@@ -1010,15 +1010,26 @@ export class PostProcessing {
     return this.width * this.height > 2.3e6 ? 'low' : 'medium';
   }
 
-  _createTargets(w, h) {
-    const q = this.tier;
-
+  /**
+   * 24-bit depth, nearest filtered. `UnsignedIntType` + `DepthFormat` maps to
+   * DEPTH_COMPONENT24, which is what three also uses for the multisampled
+   * depth renderbuffer, so the MSAA resolve blit has matching formats.
+   */
+  _makeDepthTexture(w, h) {
     const depth = new THREE.DepthTexture(w, h);
     depth.type = THREE.UnsignedIntType;
     depth.format = THREE.DepthFormat;
     depth.minFilter = THREE.NearestFilter;
     depth.magFilter = THREE.NearestFilter;
     depth.generateMipmaps = false;
+    depth.name = 'post.depth';
+    return depth;
+  }
+
+  _createTargets(w, h) {
+    const q = this.tier;
+
+    const depth = this._makeDepthTexture(w, h);
     this.depthTexture = depth;
 
     this.sceneRT = new THREE.WebGLRenderTarget(w, h, {
@@ -1272,12 +1283,17 @@ export class PostProcessing {
     this.composer.setPixelRatio(1);
     this.composer.setSize(w, h);
 
+    // `RenderTarget.setSize` only resizes the colour attachments, and three
+    // allocates depth textures with immutable `texStorage2D` so they cannot be
+    // resized in place. setSize() disposes the target (which also disposes the
+    // attached depth texture), so allocate a fresh one afterwards and repoint
+    // every consumer at it.
     this.sceneRT.setSize(w, h);
-    // Three does not resize a shared depth texture through the render target in
-    // every path, so do it explicitly and force a reupload.
-    this.depthTexture.image.width = w;
-    this.depthTexture.image.height = h;
-    this.depthTexture.needsUpdate = true;
+    const depth = this._makeDepthTexture(w, h);
+    this.sceneRT.depthTexture = depth;
+    this.depthTexture = depth;
+    this.aoPass.uniforms.tDepth.value = depth;
+    this.sceneFxPass.uniforms.tDepth.value = depth;
 
     const q = this.tier;
     const aw = Math.max(1, Math.floor(w * q.aoScale));
@@ -1736,8 +1752,7 @@ export class PostProcessing {
     this.composer.passes.forEach((p) => p.dispose?.());
     this.composer.renderTarget1.dispose();
     this.composer.renderTarget2.dispose();
-    this.sceneRT.dispose();
-    this.depthTexture.dispose();
+    this.sceneRT.dispose(); // also disposes the attached depth texture
     this.aoRT.dispose();
     this.aoBlurRT.dispose();
     for (const rt of this.bloomRT) rt.dispose();

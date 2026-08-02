@@ -711,7 +711,7 @@ export function buildAtmosphereTables(opts) {
  *   [4].xyz haze illuminant tint                    [4].w  sun disc intensity
  *   [5].xyz sun beam colour                         [5].w  disc softness (rad)
  *   [6].xyz isotropic (cloud deck) tint             [6].w  polariser strength
- *   [7].xyz solar irradiance reaching the ground    [7].w  unused
+ *   [7].xyz solar irradiance reaching the ground    [7].w  aureole radiance
  *
  * sohoSkyR[i] = ( Rayleigh integral .xyz, isotropic deck radiance .w )
  * sohoSkyM[i] = ( Mie integral .xyz, unused .w )
@@ -1076,8 +1076,12 @@ void main() {
 	float rr = clamp( ang / discR, 0.0, 1.0 );
 	float limb = 1.0 - 0.62 * ( 1.0 - sqrt( max( 0.0, 1.0 - rr * rr ) ) );
 	float discMask = 1.0 - smoothstep( discR * 0.35, discR + soft, ang );
-	float aureole = exp( - ang / 0.055 ) * 0.55 + exp( - ang / 0.30 ) * 0.11;
-	vec3 sunGlow = sunTint * sunI * ( discMask * limb + aureole * 0.0016 );
+	// Circumsolar aureole: the glare seed the bloom pass expands into the soft
+	// envelope §7.1 asks for.  Two exponentials — a tight core and a ~8 deg
+	// skirt.  Both must die well inside 30 deg or they lift the whole sky and
+	// wash the deep blue out of the top of frame.
+	float aureole = exp( - ang / 0.045 ) * 0.55 + exp( - ang / 0.14 ) * 0.07;
+	vec3 sunGlow = sunTint * ( sunI * discMask * limb + sohoAtmo[ 7 ].w * aureole );
 
 	#ifdef SOHO_ENV
 		sunGlow = min( sunGlow, vec3( 90.0 ) );
@@ -1780,7 +1784,9 @@ export class Sky {
     a[28] = E * beam[0] / beamLuma;
     a[29] = E * beam[1] / beamLuma;
     a[30] = E * beam[2] / beamLuma;
-    a[31] = 0;
+    // Aureole radiance, scaled by the true beam irradiance rather than by the
+    // clamped disc value, so it thins out correctly under a cloud deck.
+    a[31] = E * (cfg.aureoleScale ?? 1.1);
 
     // --- Clouds ------------------------------------------------------------
     const cu = this._cloudUniforms;
