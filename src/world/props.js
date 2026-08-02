@@ -844,7 +844,7 @@ function buildRopeRun(stations, sag, radius, col) {
     const len = Math.hypot(dx, dz);
     if (len < 1e-3 || len > 40) continue;
     const tx = dx / len, tz = dz / len;
-    const N = 4;
+    const N = 3;   // a shallow catenary over an 8 m span needs no more
     let prev = null;
     for (let s = 0; s <= N; s++) {
       const t = s / N;
@@ -1005,7 +1005,22 @@ const BACKLIT_MAIN = /* glsl */ `
 }
 `;
 
-function installWind(material, uniforms, cacheKey, backlit) {
+/**
+ * Foliage two-sided fix. A double-sided material multiplies the shading normal
+ * by `faceDirection`, which is right for a solid shell and wrong for a grass
+ * blade: the back of a blade is not the inside of anything, and flipping the
+ * normal makes every clump half-black from one side. Multiplying by
+ * `faceDirection` a second time cancels it, so both faces use the authored
+ * (outward-and-up) normal that `buildTussock` bakes in.
+ */
+const FOLIAGE_NORMAL = /* glsl */ `
+#ifdef DOUBLE_SIDED
+	normal *= faceDirection;
+	nonPerturbedNormal = normal;
+#endif
+`;
+
+function installWind(material, uniforms, cacheKey, backlit, foliage) {
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
@@ -1015,6 +1030,12 @@ function installWind(material, uniforms, cacheKey, backlit) {
       '#include <common>',
       `#include <common>\nvarying float vBendAmt;\n${backlit ? BACKLIT_PARS : ''}`,
     );
+    if (foliage) {
+      frag = frag.replace(
+        '#include <normal_fragment_begin>',
+        `#include <normal_fragment_begin>\n${FOLIAGE_NORMAL}`,
+      );
+    }
     if (backlit) {
       frag = frag.replace('#include <opaque_fragment>', `${BACKLIT_MAIN}\n#include <opaque_fragment>`);
     }
@@ -1411,7 +1432,7 @@ export class Props {
       uSwayAmp: { value: 0.055 },
       uSwayFreq: { value: 3.4 },
       uBacklitColor: { value: new THREE.Color(0.95, 0.24, 0.06) },
-    }, 'soho-flag', true);
+    }, 'soho-flag', true, true);
 
     // Snow tussock: double-sided ribbons, slow deep sway, gold backlit rim —
     // §6.2 wants the low sun to blow straight through the seed heads.
@@ -1427,7 +1448,7 @@ export class Props {
       uSwayAmp: { value: 0.10 },
       uSwayFreq: { value: 1.25 },
       uBacklitColor: { value: new THREE.Color(0.72, 0.47, 0.15) },
-    }, 'soho-tussock', true);
+    }, 'soho-tussock', true, true);
 
     this.materials.push(
       this.rockMat, this.snowMat, this.poleMat, this.steelMat,
