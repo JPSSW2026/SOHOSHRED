@@ -135,7 +135,16 @@ const SUN_SOLID_ANGLE = Math.PI * SUN_ANGULAR_RADIUS * SUN_ANGULAR_RADIUS;
  * lands in AgX's shoulder (~0.75–0.9 output) rather than clipping — see
  * `ART_DIRECTION.md` §4.3.
  */
-const SOLAR_IRRADIANCE_UNITS = 23.0;
+const SOLAR_IRRADIANCE_UNITS = 41.0;
+
+/**
+ * Strength of the isotropic multiple-scattering + ground-coupling term,
+ * relative to the physically-estimated mean sphere radiance at each sample.
+ * Calibrated so the zenith lands on `ART_DIRECTION.md` §1.4's measured
+ * `#0F4C8E`–`#2A64A6` through AgX at `CONFIG.render.exposure`: too little and
+ * the sky is a black-blue void, too much and it greys out and fails §12.
+ */
+const MS_STRENGTH = 1.35;
 
 /** Resolution of the sky radiance tables (bins in zenith cosine). */
 const LUT_N = 20;
@@ -554,12 +563,18 @@ export function buildAtmosphereTables(opts) {
   // multiple-scattering LUT.  Everything here is in model units (E0 = 1).
   const sunUp = Math.max(0, sunMu);
   const src = [0, 0, 0];
+  // Mean radiance over the *full sphere* at a scattering point: the snowfield
+  // fills the lower hemisphere (attenuated, and shrinking with altitude), the
+  // sky fills the upper.  J_ms = beta_scatter * meanRadiance, so this is the
+  // quantity the isotropic source needs — not the sum of the two.
+  const GROUND_VIEW = 0.55;
   for (let c = 0; c < 3; c++) {
     const horizontal = sunT[c] * sunUp + E[c];
-    src[c] = (groundAlbedo * horizontal + E[c]) / Math.PI;
+    const groundRadiance = (groundAlbedo * horizontal) / Math.PI;
+    const skyRadiance = E[c] / Math.PI;
+    src[c] = 0.5 * groundRadiance * GROUND_VIEW + 0.5 * skyRadiance;
   }
-  const gain = clamp(w.msGain * 0.62, 0, 0.9);
-  const series = gain / (1 - Math.min(0.6, gain * 0.5));
+  const series = MS_STRENGTH * w.msGain;
   for (let i = 0; i < LUT_N; i++) {
     const o = i * 3;
     const mass = massR[i] + massM[i];
