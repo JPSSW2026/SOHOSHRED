@@ -7,3 +7,4 @@ reference/
 compare/
 shots/
 .smoke-*.mjs
+.snowmat-*.mjs

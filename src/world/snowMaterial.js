@@ -238,6 +238,7 @@ function tileWorley(x, y, px, py, seed) {
   const yi = Math.floor(y);
   const fx = x - xi;
   const fy = y - yi;
+  // Squared distances throughout; two sqrt at the end instead of nine.
   let f1 = 1e9;
   let f2 = 1e9;
   let id = 0;
@@ -246,7 +247,7 @@ function tileWorley(x, y, px, py, seed) {
       const h = latticeHash(xi + i, yi + j, px, py, seed);
       const ox = i + (h & 0xffff) / 65535 - fx;
       const oy = j + ((h >>> 16) & 0xffff) / 65535 - fy;
-      const d = Math.sqrt(ox * ox + oy * oy);
+      const d = ox * ox + oy * oy;
       if (d < f1) {
         f2 = f1;
         f1 = d;
@@ -256,8 +257,8 @@ function tileWorley(x, y, px, py, seed) {
       }
     }
   }
-  _wl.f1 = f1;
-  _wl.f2 = f2;
+  _wl.f1 = Math.sqrt(f1);
+  _wl.f2 = Math.sqrt(f2);
   _wl.id = id;
   return _wl;
 }
@@ -610,13 +611,18 @@ function getTextures(opts) {
   let set = _textureCache.get(key);
   if (set) return set;
 
+  // Snow is 90% of the frame and gets the full resolution; the rock maps carry
+  // only the isotropic half of the schist look (the foliation is analytic) so
+  // they run at three-quarter and half scale respectively.  This keeps the
+  // whole bake comfortably under a second even on a cold JIT.
   const big = size;
+  const mid = Math.max(128, Math.round(size * 0.75));
   const small = Math.max(128, size >> 1);
   set = {
     grain: makeDataTexture(bakeSnowGrain(big, seed + 1), big, { anisotropy: aniso }),
     drift: makeDataTexture(bakeSnowDrift(big, seed + 2), big, { anisotropy: aniso }),
     macro: makeDataTexture(bakeSnowMacro(big, seed + 3), big, { anisotropy: aniso }),
-    rock: makeDataTexture(bakeRockPack(big, seed + 4), big, { srgb: true, anisotropy: aniso }),
+    rock: makeDataTexture(bakeRockPack(mid, seed + 4), mid, { srgb: true, anisotropy: aniso }),
     rockNormal: makeDataTexture(bakeRockNormal(small, seed + 5), small, { anisotropy: aniso }),
   };
   _textureCache.set(key, set);
