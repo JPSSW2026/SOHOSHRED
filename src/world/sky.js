@@ -1109,7 +1109,7 @@ void main() {
 			d *= fade * uCloud.x;
 			// Ice cloud forward-scatters hard: a bright silver edge toward the sun.
 			float silver = 1.0 + 2.6 * pow( max( cosSun, 0.0 ), 14.0 );
-			vec3 cirrusCol = zenithRad * 1.35 + sunTint * sunI * 0.00022 * silver;
+			vec3 cirrusCol = zenithRad * 1.35 + sohoAtmo[ 7 ].xyz * 0.24 * silver;
 			col = mix( col, cirrusCol, clamp( d, 0.0, 0.94 ) );
 		}
 	}
@@ -1140,7 +1140,7 @@ void main() {
 		vec2 sunQ = normalize( vec2( dot( sunDir, tX ), dot( sunDir, tY ) ) + vec2( 1e-4 ) );
 		float rim = smoothstep( -0.2, 0.85, dot( normalize( qr + vec2( 1e-4 ) ), sunQ ) );
 		float updown = clamp( 0.5 - qr.y * 1.4 / max( halfW, 1e-3 ) * 0.35, 0.0, 1.0 );
-		vec3 lit = sunTint * sunI * 0.00030 * ( 0.35 + 0.85 * rim );
+		vec3 lit = sohoAtmo[ 7 ].xyz * 0.33 * ( 0.35 + 0.85 * rim );
 		vec3 shade = mix( uGroundColor * 0.55, zenithRad * 1.15, 0.55 );
 		vec3 lensCol = mix( lit + shade * 0.55, shade * 0.72, updown );
 		col = mix( col, lensCol, clamp( body * amt, 0.0, 0.96 ) );
@@ -1162,7 +1162,7 @@ void main() {
 			// still gives bright tops, grey-blue cores and a soft base.
 			float above = sohoFbm( flow * 0.42 + wind * 0.055 );
 			float thick = clamp( ( dens - above ) * 3.0 + 0.5, 0.0, 1.0 );
-			vec3 top = sunTint * sunI * 0.00046 * ( 0.55 + 0.75 * max( cosSun, 0.0 ) );
+			vec3 top = sohoAtmo[ 7 ].xyz * 0.50 * ( 0.55 + 0.75 * max( cosSun, 0.0 ) );
 			vec3 core = mix( uGroundColor * 0.62, zenithRad, 0.45 );
 			vec3 deckCol = mix( core * ( 0.42 + 0.5 * uCloudGeom.w ), top + core, thick );
 			col = mix( col, deckCol, clamp( d, 0.0, 0.985 ) );
@@ -1246,7 +1246,7 @@ void main() {
 	// Beer–Powder: silver lining looking through the cloud toward the sun,
 	// grey-blue core away from it, snow bounce lifting the underside.
 	float forward = sohoPhaseM( c, 0.62 ) * 5.5;
-	vec3 sunTint = sohoAtmo[ 5 ].xyz * sohoAtmo[ 4 ].w * 0.00034;
+	vec3 sunTint = sohoAtmo[ 7 ].xyz * 0.37;
 	vec3 core = mix( uGroundColor * 0.7, sohoSkyRadiance( vec3( 0.0, 1.0, 0.0 ) ) * 1.1, 0.5 );
 	vec3 col = core * ( 0.55 + 0.45 * n ) + sunTint * ( 0.35 + forward );
 
@@ -1326,6 +1326,10 @@ export class Sky {
     this.groundColor = new THREE.Color(0.3, 0.32, 0.36);
     /** @type {THREE.Texture|null} PMREM cube used as `scene.environment`. */
     this.environmentTexture = null;
+    /** @type {THREE.DirectionalLight|null} created in build(). */
+    this.sun = null;
+    /** @type {THREE.AmbientLight|null} the snowfield bounce, created in build(). */
+    this.bounce = null;
 
     /** Full solar solution, exposed for HUD / debug / shot presets. */
     this.solar = {
@@ -1800,6 +1804,7 @@ export class Sky {
     if (this._bankUniforms) {
       this._bankUniforms.uDrift.value.set(wx * wspd * 0.22, wz * wspd * 0.22);
       this._bankUniforms.uOpacity.value = w.ridgeBank * (cfg.ridgeBankOpacity ?? 1.0);
+      if (this._banks) this._banks.visible = this._bankUniforms.uOpacity.value > 0.004;
     }
 
     // --- Fog carrier (fallback path only) ----------------------------------

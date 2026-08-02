@@ -991,6 +991,7 @@ export class PostProcessing {
     this._prevCamQuat = new THREE.Quaternion();
     this._prevFov = ctx.camera.fov;
     this._focus = pick(CONFIG.post?.dof, 'focusDistance', 9);
+    this._dofOff = !this.flags.dof;
     this._sunVis = 0;
     this._firstFrame = true;
     this._syncedFrame = -1;
@@ -1534,14 +1535,22 @@ export class PostProcessing {
   _updateDof(ctx, cam, dt, cut) {
     const cfg = CONFIG.post?.dof || {};
     const fx = this.sceneFxPass.uniforms;
-    if (!this.flags.dof) return;
+
+    // Skipping the auto-focus rays while DoF is off is worth ~50 heightfield
+    // probes a frame, but the focus must then snap rather than rack when it
+    // comes back on.
+    const wasOff = this._dofOff;
+    this._dofOff = !this.flags.dof;
+    if (this._dofOff) return;
 
     const cine = cam.fov <= TUNE.dof.cinematicFovDeg
       || ctx.player?.camera?.mode === 'cinematic'
       || ctx.player?.camera?.mode === 'orbit';
 
     const target = this._autoFocusDistance(ctx, cam) ?? pick(cfg, 'focusDistance', 9);
-    this._focus = cut ? target : damp(this._focus, target, TUNE.dof.focusLambda, dt);
+    this._focus = (cut || wasOff)
+      ? target
+      : damp(this._focus, target, TUNE.dof.focusLambda, dt);
 
     const sensorH = TUNE.dof.sensorHeight;
     const f = (sensorH * 0.5) / Math.max(1e-4, Math.tan(cam.fov * DEG * 0.5));
@@ -1591,6 +1600,11 @@ export class PostProcessing {
     if (!terrain || typeof terrain.getHeight !== 'function') return null;
     const b = terrain.bounds;
 
+    // Camera momentarily inside the slope (a hard landing, a clipping chase
+    // spring): a "hit at 0.5 m" would rack the whole frame out of focus.
+    const h0 = terrain.getHeight(origin.x, origin.z);
+    if (Number.isFinite(h0) && origin.y <= h0) return null;
+
     let t = 0.5;
     let prevT = 0;
     for (let i = 0; i < TUNE.dof.focusRaySteps; i++) {
@@ -1621,6 +1635,10 @@ export class PostProcessing {
   }
 
   _updateBloom(ctx, cam, dt, cut) {
+    if (!this.flags.bloom) {
+      this._sunVis = 0;
+      return; // every bloom pass is disabled; skip the sun ray-march too
+    }
     const cfg = CONFIG.post?.bloom || {};
     const u = this.bloomCompositePass.uniforms;
     const invExposure = 1 / Math.max(0.05, this.renderer.toneMappingExposure);

@@ -30,7 +30,7 @@ const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 /* ---------------------------------------------------------------- args --- */
 function parseArgs(argv) {
-  const a = { width: 1280, height: 720, out: 'shots', shots: null, build: true, query: '', timeout: 900000, settleScale: 1 };
+  const a = { width: 1280, height: 720, out: 'shots', shots: null, build: true, query: '', timeout: 900000, settleScale: 1, shotTimeout: 600000 };
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i];
     const next = () => argv[++i];
@@ -42,6 +42,7 @@ function parseArgs(argv) {
     else if (k === '--no-build') a.build = false;
     else if (k === '--timeout') a.timeout = +next();
     else if (k === '--settle-scale') a.settleScale = +next();
+    else if (k === '--shot-timeout') a.shotTimeout = +next();
   }
   return a;
 }
@@ -182,7 +183,10 @@ async function main() {
       continue;
     }
     const file = path.join(outDir, `${name}.png`);
-    await page.screenshot({ path: file, type: 'png' });
+    // The software rasteriser can take minutes to compose a frame with the full
+    // post chain, far beyond Playwright's 30s screenshot default. Reading the
+    // drawing buffer is the single slowest step in the whole harness.
+    await page.screenshot({ path: file, type: 'png', timeout: ARGS.shotTimeout, animations: 'disabled' });
     const secs = ((Date.now() - ts) / 1000).toFixed(1);
     console.log(`[shoot] ${name.padEnd(18)} ${secs}s  draws=${meta.stats.drawCalls} tris=${meta.stats.triangles}`);
     report.shots.push({ name, file: path.relative(ROOT, file), description: meta.description, stats: meta.stats, seconds: +secs });
