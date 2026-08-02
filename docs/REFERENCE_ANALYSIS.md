@@ -6,8 +6,17 @@ kept out of git — they are copyrighted marketing assets used only as local
 development reference).
 
 This document outranks general web research: it describes what the target
-**actually looks like**, pixel by pixel. Every visual workstream is accountable
-to it, and critics grade against it.
+**actually looks like**. Every visual workstream is accountable to it, and
+critics grade against it.
+
+> **Precedence note.** The observations here are *qualitative*, read by eye from
+> the frames. `docs/ART_DIRECTION.md` §1 contains the same properties measured
+> *programmatically* (percentiles over masked snow pixels, ratios computed in
+> linear light). **Where the two disagree on a number, the measured values in
+> ART_DIRECTION.md win.** In particular, the shadow-to-sunlit ratios quoted
+> there are linear-light ratios of roughly 0.08–0.5 depending on the frame;
+> any eyeballed sRGB figure is the weaker estimate. Use this document for
+> *what to look at* and that one for *what the number is*.
 
 ## The single most important finding
 
@@ -94,7 +103,7 @@ Open mountain, sun in frame, mid-morning. This is the primary target for
 | Sky near horizon | pale desaturated blue-white, ~`#C8D8EA` |
 | Sunlit snow | bright but sub-clipping, ~`#EDF1F6`, holds detail |
 | Shadowed snow | distinctly blue, ~`#8FA6C8`–`#A8BCD8` |
-| Shadow/sun value ratio | roughly 0.55–0.65, not 0.2 — sky fill is strong |
+| Shadow/sun value ratio | **see the measured table in ART_DIRECTION.md §1.2** |
 | Far ridge contrast | very low; near-far value separation is large |
 | Saturated accents | few, small, high-chroma (orange/red) against desaturation |
 | Sun glare radius | very wide and soft, hundreds of px at 1920 |
