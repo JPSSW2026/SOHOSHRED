@@ -9,3 +9,5 @@ shots/
 .smoke-*.mjs
 .snowmat-*.mjs
 .shadercheck-*.js
+.shaderlook*
+.shadercheck*

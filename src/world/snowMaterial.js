@@ -313,19 +313,51 @@ function makeDataTexture(data, size, { srgb = false, anisotropy = 4 } = {}) {
  * amplitude.  The shader reconstructs the perturbed normal with Mikkelsen's
  * surface-gradient formulation, which also handles the sloped ground correctly.
  */
-function encodeGradient(height, size, strength, data, rOff) {
+function encodeGradient(height, size, headroom, data, rOff) {
+  const n = size * size;
+  const gu = new Float32Array(n);
+  const gv = new Float32Array(n);
+  // Pass 1 — raw central differences, and the magnitude histogram we normalise
+  // against.  A texel-space derivative is tiny in absolute terms and depends on
+  // the field's amplitude *and* its feature size, so a hand-tuned constant
+  // scale is always wrong for at least one of the five maps.  Normalising to a
+  // high percentile makes the 8-bit range fully used and turns `uDetailAmp`
+  // into a genuine physical knob: the peak surface gradient of that layer.
+  const mags = new Float32Array(n);
   for (let y = 0; y < size; y++) {
     const ym = ((y - 1) + size) % size;
     const yp = (y + 1) % size;
     for (let x = 0; x < size; x++) {
       const xm = ((x - 1) + size) % size;
       const xp = (x + 1) % size;
-      const dhdu = (height[y * size + xp] - height[y * size + xm]) * 0.5 * strength;
-      const dhdv = (height[yp * size + x] - height[ym * size + x]) * 0.5 * strength;
-      const i = (y * size + x) * 4 + rOff;
-      data[i] = Math.round(clamp01(0.5 - dhdu * 0.5) * 255);
-      data[i + 1] = Math.round(clamp01(0.5 - dhdv * 0.5) * 255);
+      const i = y * size + x;
+      const a = (height[y * size + xp] - height[y * size + xm]) * 0.5;
+      const b = (height[yp * size + x] - height[ym * size + x]) * 0.5;
+      gu[i] = a;
+      gv[i] = b;
+      mags[i] = Math.max(Math.abs(a), Math.abs(b));
     }
+  }
+  // 99th percentile via a 256-bucket histogram (cheap, and exact enough).
+  let peak = 0;
+  for (let i = 0; i < n; i++) if (mags[i] > peak) peak = mags[i];
+  if (peak <= 1e-9) peak = 1;
+  const hist = new Int32Array(256);
+  for (let i = 0; i < n; i++) hist[Math.min(255, (mags[i] / peak * 255) | 0)]++;
+  let acc = 0;
+  let bucket = 255;
+  const target = n * 0.99;
+  for (let b = 0; b < 256; b++) {
+    acc += hist[b];
+    if (acc >= target) { bucket = b; break; }
+  }
+  const p99 = Math.max((bucket + 1) / 256 * peak, 1e-6);
+  // `headroom` < 1 leaves room for the top percentile to clip gracefully.
+  const scale = headroom / p99;
+  for (let i = 0; i < n; i++) {
+    const o = i * 4 + rOff;
+    data[o] = Math.round(clamp01(0.5 - gu[i] * scale * 0.5) * 255);
+    data[o + 1] = Math.round(clamp01(0.5 - gv[i] * scale * 0.5) * 255);
   }
 }
 
@@ -371,7 +403,7 @@ function bakeSnowGrain(size, seed) {
       data[o + 3] = byte(0.30 + 0.85 * (cluster * 0.5 + 0.5) * (0.45 + 0.90 * facet));
     }
   }
-  encodeGradient(h, size, 9.0, data, 0);
+  encodeGradient(h, size, 0.85, data, 0);
   return data;
 }
 
@@ -429,7 +461,7 @@ function bakeSnowDrift(size, seed) {
       data[o + 3] = byte(clamp01(drift * 0.72 + sastrugi * 0.42));
     }
   }
-  encodeGradient(h, size, 7.5, data, 0);
+  encodeGradient(h, size, 0.90, data, 0);
   return data;
 }
 
@@ -524,7 +556,7 @@ function bakeSnowMacro(size, seed) {
       data[o + 3] = byte(clamp01(scar[i]));
     }
   }
-  encodeGradient(h, size, 3.2, data, 0);
+  encodeGradient(h, size, 0.80, data, 0);
   return data;
 }
 
@@ -615,7 +647,7 @@ function bakeRockNormal(size, seed) {
       data[o + 3] = byte(hv);
     }
   }
-  encodeGradient(h, size, 7.0, data, 0);
+  encodeGradient(h, size, 0.88, data, 0);
   return data;
 }
 
@@ -771,7 +803,7 @@ float sohoHG( float cosT, float g ) {
 float sohoGlintLayer( vec3 wp, vec3 wN, vec3 Hw, float density, float sharp, float coverage, float seed ) {
 	vec2 cell = floor( wp.xz * density + seed );
 	vec3 r = sohoHash33( vec3( cell, seed ) );
-	float active = step( 1.0 - coverage, r.z );
+	float alive = step( 1.0 - coverage, r.z );
 	// Slow per-facet breathing: real twinkle comes from motion, but a little
 	// life keeps a static frame from looking printed.  Never fast enough to read
 	// as noise.
@@ -780,7 +812,7 @@ float sohoGlintLayer( vec3 wp, vec3 wN, vec3 Hw, float density, float sharp, flo
 	float lobe = exp2( - ( 1.0 - saturate( dot( facet, Hw ) ) ) * sharp );
 	// Kill a lattice once its cells drop below a pixel, or it becomes shimmer.
 	float sizeFade = 1.0 - smoothstep( 0.30, 0.95, sohoFootprint * density );
-	return lobe * active * sizeFade;
+	return lobe * alive * sizeFade;
 }
 
 /** Mikkelsen bump-from-screen-derivatives (as used by three's bumpmap chunk). */
@@ -1241,8 +1273,10 @@ function buildUniforms(ctx, opts) {
     // Non-harmonic world tile sizes (metres).  ART_DIRECTION §11.14 asks for at
     // least three octaves at non-harmonic scales plus a low-frequency breakup.
     uDetailScale: { value: new THREE.Vector4(0.37, 1.9, 11.0, 34.0) },
+    // Peak surface gradient contributed by each layer (the maps are normalised
+    // at bake time, so these are the real numbers): 0.30 is a 17 deg facet.
     uDetailAmp: {
-      value: new THREE.Vector4(0.22, 0.16, 0.62 * (sastrugi / 0.55), 0.14),
+      value: new THREE.Vector4(0.30, 0.20, 0.62 * (sastrugi / 0.55), 0.16),
     },
     uDetailFade: { value: new THREE.Vector2(40, 250) },
 
