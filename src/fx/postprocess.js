@@ -258,8 +258,8 @@ void main() {
 `;
 
 /**
- * Shared fragment prelude: hashing (deterministic, no bitwise ops so it is
- * valid GLSL ES 1.00), linear depth and view-space position reconstruction.
+ * Shared fragment prelude: deterministic hashing with no bitwise operators, so
+ * it stays valid GLSL ES 1.00 and produces identical values on every backend.
  */
 const FRAG_COMMON = /* glsl */ `
 const float GOLDEN_ANGLE = 2.39996323;
@@ -276,7 +276,14 @@ float hash13( vec3 p3 ) {
   p3 += dot( p3, p3.yzx + 33.33 );
   return fract( ( p3.x + p3.y ) * p3.z );
 }
+`;
 
+/**
+ * Depth helpers. Only included by passes that also `#include <packing>`, which
+ * is where `perspectiveDepthToViewZ` (and its reversed-depth-buffer variant)
+ * comes from.
+ */
+const FRAG_DEPTH = /* glsl */ `
 /** Positive distance along the view axis, from a hardware depth sample. */
 float linearZ( sampler2D depthTex, vec2 uv, float near, float far ) {
   float d = texture2D( depthTex, uv ).x;
@@ -303,6 +310,7 @@ vec3 viewPos( vec2 uv, float z, vec2 tanHalf ) {
 const AO_FRAG = /* glsl */ `
 #include <packing>
 ${FRAG_COMMON}
+${FRAG_DEPTH}
 
 uniform sampler2D tDepth;
 uniform vec2  uTexel;       // 1 / AO buffer size
@@ -432,6 +440,7 @@ void main() {
 const SCENE_FX_FRAG = /* glsl */ `
 #include <packing>
 ${FRAG_COMMON}
+${FRAG_DEPTH}
 
 uniform sampler2D tScene;
 uniform sampler2D tDepth;
@@ -854,10 +863,12 @@ class FxPass extends Pass {
     }
 
     const dst = this.target !== null ? this.target : this.renderToScreen ? null : writeBuffer;
+    // autoClear stays off: the quad covers the whole target, so a clear is pure
+    // wasted bandwidth for the opaque passes — and it would destroy the
+    // accumulation the additive bloom upsample depends on.
     const oldAutoClear = renderer.autoClear;
     renderer.autoClear = false;
     renderer.setRenderTarget(dst);
-    if (!this.additive) renderer.clear(true, false, false);
     this._fsQuad.render(renderer);
     renderer.autoClear = oldAutoClear;
   }
