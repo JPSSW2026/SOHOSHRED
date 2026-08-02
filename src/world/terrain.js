@@ -2031,9 +2031,20 @@ export class Terrain {
       rb = this._fieldNearest(this.rockBlend, x, z) / 255;
     } else if (!inBox) {
       // Far field: bare, wind-scoured ground on the steep bits.
+      //
+      // The slope MUST NOT come from this ring's own gradient. Out here the
+      // rings are 64–128 m and their vertex-to-vertex gradient is noisy, so a
+      // threshold on it flips rock/snow between adjacent rows — which renders
+      // as horizontal dark stripes banded across every distant ridge (each row
+      // is only a few pixels tall at 2 km). Sampling the far-field height LUT
+      // at a fixed 24 m scale gives a classification that is a property of the
+      // mountain rather than of whichever LOD ring happens to be drawing it.
       e = 0.5;
-      const sDeg = Math.atan(gradMag !== undefined ? gradMag : Math.tan(this.getSlope(x, z))) / DEG;
-      rb = clamp01((sDeg - 40) / 14);
+      const eps = 24;
+      const hx = (this._heightAt(x + eps, z) - this._heightAt(x - eps, z)) / (2 * eps);
+      const hz = (this._heightAt(x, z + eps) - this._heightAt(x, z - eps)) / (2 * eps);
+      const sDeg = Math.atan(Math.hypot(hx, hz)) / DEG;
+      rb = clamp01((sDeg - 32) / 18);
       id = rb > 0.5 ? S_ROCK : S_WINDPACK;
     }
 
