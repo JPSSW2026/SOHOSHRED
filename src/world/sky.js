@@ -1014,9 +1014,10 @@ void main() {
  * the sky fill; a dark lower hemisphere is an automatic fail.
  */
 const SKY_FRAG = /* glsl */ `
+// three prepends <tonemapping_pars_fragment> and <colorspace_pars_fragment> to
+// every ShaderMaterial fragment shader, so only <common> (for rand(), which
+// the dither chunk needs) has to be pulled in explicitly.
 #include <common>
-#include <tonemapping_pars_fragment>
-#include <colorspace_pars_fragment>
 #include <dithering_pars_fragment>
 
 varying vec3 vRay;
@@ -1211,8 +1212,6 @@ void main() {
 
 const BANK_FRAG = /* glsl */ `
 #include <common>
-#include <tonemapping_pars_fragment>
-#include <colorspace_pars_fragment>
 
 varying vec2 vBankUv;
 varying vec3 vWorld;
@@ -1624,6 +1623,9 @@ export class Sky {
     if (!force && key === this._weatherName) return;
     this._weatherName = key;
     this._weather = WEATHER[key];
+    // `CONFIG.world.weather` is the source of truth that `update()` polls, so
+    // write it back or the next frame would revert the change.
+    CONFIG.world.weather = key;
     if (this._built) this._refreshSky(true);
   }
 
