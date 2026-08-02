@@ -48,7 +48,7 @@ import {
   fbm2, ridged2, billow2, warpedFbm2,
   clamp, clamp01, lerp, smoothstep,
 } from '../core/rng.js';
-import { CONFIG, LOCATION } from '../core/config.js';
+import { CONFIG } from '../core/config.js';
 import { createSnowMaterial, createRockMaterial, updateSnowMaterial } from './snowMaterial.js';
 
 /* ================================================================== *
@@ -294,9 +294,12 @@ export class Terrain {
     /* -- Spawns ---------------------------------------------------------- */
     // heading = π faces −Z under the engine's fwd = (sin h, 0, cos h).
     f.spawns = {
-      // Above the T1 bench on the scoured crest plateau, cornice lip ~45 m
-      // ahead: the whole basin and the Remarkables open up below.
-      'broadway-gate': { x: 70, z: 926, heading: Math.PI },
+      // Above the T1 bench on the scoured crest plateau, at the head of the
+      // rib between `broadway` and `soho-chute` — the cornice is gapped there
+      // (rib heads are scoured), which is the natural walk-in. Cornice
+      // segments sit 30 m either side, in profile, for the hero frame. The
+      // fall line from here is clean to the run-out at ≤48°.
+      'broadway-gate': { x: 145, z: 926, heading: Math.PI },
       'bowl-entry': { x: -180, z: 560, heading: Math.PI },
       'mid-traverse': { x: 430, z: 120, heading: Math.PI - 0.35 },
       'runout': { x: -60, z: -700, heading: Math.PI },
@@ -1446,7 +1449,10 @@ export class Terrain {
           const e = (H[jj * n + ii] - h) / dr;
           if (e > E) E = e;
         }
-        const scour = clamp01(-E * 6);
+        // The crest plateau is stripped by the nor'wester whatever the local
+        // shelter index says — above 1820 m the pack is discontinuous and the
+        // blockfield shows through (§1.4).
+        const scour = Math.max(clamp01(-E * 6), smoothstep(1822, 1856, h) * 0.85);
         expo[k] = (scour * 255) | 0;
         d -= 1.4 * scour;
 
