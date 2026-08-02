@@ -256,12 +256,22 @@ export class Terrain {
     this.simMicro = new Simplex(this._seed('sastrugi'));
 
     // --- Analytic centreline profile (§2.3), sampled into a 1 m LUT --------
+    // §2.3's control points, plus a back-slope beyond the crest. The brief
+    // says to clamp the argument at +1024 so PCHIP cannot extrapolate past
+    // maxAltitude — but the flank warp drives the argument to ~1600 in the
+    // upper corners, and a hard clamp turns a fifth of the map into a dead
+    // flat plateau. Extending the curve monotonically downward past the crest
+    // gives the same protection and produces the correct Otago whaleback:
+    // a broad, gently back-tilted summit surface rather than a table top.
     const pchip = makePchip(
-      [-1024, -420, -120, 380, 700, 880, 1024],
-      [1410, 1428, 1480, 1620, 1725, 1852, 1865],
+      [-1024, -420, -120, 380, 700, 880, 1024, 1250, 1600, 2200],
+      [1410, 1428, 1480, 1620, 1725, 1852, 1865, 1857, 1828, 1772],
     );
-    this._profLUT = new Float32Array(2049);
-    for (let i = 0; i < 2049; i++) this._profLUT[i] = pchip(i - 1024);
+    this._profMin = -1024; this._profMax = 2200;
+    this._profLUT = new Float32Array(this._profMax - this._profMin + 1);
+    for (let i = 0; i < this._profLUT.length; i++) {
+      this._profLUT[i] = pchip(i + this._profMin);
+    }
 
     this.features = this._buildFeatures();
     this.spawns = this.features.spawns;
@@ -278,9 +288,10 @@ export class Terrain {
 
   /** Centreline elevation profile; argument is clamped, never extrapolated. */
   _profile(z) {
-    const t = clamp(z, -1024, 1024) + 1024;
+    const last = this._profLUT.length - 1;
+    const t = clamp(z, this._profMin, this._profMax) - this._profMin;
     const i = t | 0;
-    if (i >= 2048) return this._profLUT[2048];
+    if (i >= last) return this._profLUT[last];
     return this._profLUT[i] + (this._profLUT[i + 1] - this._profLUT[i]) * (t - i);
   }
 
@@ -1438,6 +1449,10 @@ export class Terrain {
         // -- curvature: concave collects, convex sheds ----------------------
         d += clamp(-curv[k], -0.6, 1.6);
 
+        const hx = (H[row + (i < n - 1 ? i + 1 : i)] - H[row + (i > 0 ? i - 1 : i)]) / (2 * cell);
+        const hz = (H[(j < n - 1 ? j + 1 : j) * n + i] - H[(j > 0 ? j - 1 : j) * n + i]) / (2 * cell);
+        const slopeDeg = Math.atan(Math.hypot(hx, hz)) / DEG;
+
         // -- wind scour ------------------------------------------------------
         let E = -Infinity;
         for (let r = 0; r < 8; r++) {
@@ -1452,14 +1467,14 @@ export class Terrain {
         // The crest plateau is stripped by the nor'wester whatever the local
         // shelter index says — above 1820 m the pack is discontinuous and the
         // blockfield shows through (§1.4).
-        const scour = Math.max(clamp01(-E * 6), smoothstep(1822, 1856, h) * 0.85);
+        // …but only on plateau-like ground: crest tops and spur shoulders,
+        // not the steep rim faces, which the shelter index already handles.
+        const crest = smoothstep(1826, 1854, h) * 0.62 * (1 - smoothstep(10, 20, slopeDeg));
+        const scour = Math.max(clamp01(-E * 6), crest);
         expo[k] = (scour * 255) | 0;
         d -= 1.4 * scour;
 
         // -- sluffing on steep ground ---------------------------------------
-        const hx = (H[row + (i < n - 1 ? i + 1 : i)] - H[row + (i > 0 ? i - 1 : i)]) / (2 * cell);
-        const hz = (H[(j < n - 1 ? j + 1 : j) * n + i] - H[(j > 0 ? j - 1 : j) * n + i]) / (2 * cell);
-        const slopeDeg = Math.atan(Math.hypot(hx, hz)) / DEG;
         d -= clamp01((slopeDeg - 38) / 14) * 1.2;
 
         // Left unclamped below zero on purpose: the bare-ground balance pass
