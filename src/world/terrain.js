@@ -1608,6 +1608,27 @@ export class Terrain {
     this._blur(H, tmp, 1);
     for (let k = 0; k < H.length; k++) H[k] = lerp(H[k], tmp[k], 0.12);
 
+    // Despike. Droplet erosion occasionally leaves a single-post deposit, and
+    // at 2 m spacing a 1 m spike is a 27° jolt the physics feels and the eye
+    // reads as noise. Clamp each post to its neighbours' mean plus a slack
+    // that scales with the local relief, so genuine slopes and rollovers are
+    // untouched and only isolated posts move. Bluff faces are exempt — they
+    // are meant to be sharp.
+    const bluff = this.bluffMask;
+    const src2 = new Float32Array(H);
+    for (let j = 1; j < n - 1; j++) {
+      const row = j * n;
+      for (let i = 1; i < n - 1; i++) {
+        const k = row + i;
+        if (bluff[k] > 100) continue;
+        const a = src2[k - 1], b = src2[k + 1], c = src2[k - n], d = src2[k + n];
+        const mean = (a + b + c + d) * 0.25;
+        const relief = Math.max(a, b, c, d) - Math.min(a, b, c, d);
+        const slack = Math.max(0.40, relief * 0.13);
+        H[k] = clamp(H[k], mean - slack, mean + slack);
+      }
+    }
+
     for (let k = 0; k < H.length; k++) {
       H[k] = softMin(softMax(H[k], 1866, 12), 1409, 6);
     }
@@ -1895,11 +1916,15 @@ export class Terrain {
     const microFade = half * 0.82;
 
     let minY = Infinity, maxY = -Infinity;
+    // Untucked heights, kept so the normal pass is not poisoned by the tuck
+    // ramp (which is hidden geometry and must not tilt the visible seam).
+    const raw = lv.raw || (lv.raw = new Float32Array(vpr * vpr));
+    const filled = (i, j) => !(li > 0 && i > h0 && i < h1 && j > h0 && j < h1);
 
     for (let j = 0; j <= N; j++) {
       const z = cz + (j - N * 0.5) * s;
       for (let i = 0; i <= N; i++) {
-        if (li > 0 && i > h0 && i < h1 && j > h0 && j < h1) continue;   // unreferenced
+        if (!filled(i, j)) continue;                                    // unreferenced
         const x = cx + (i - N * 0.5) * s;
         const vi = j * vpr + i;
 
@@ -1911,6 +1936,7 @@ export class Terrain {
           const fade = 1 - smoothstep(microFade * 0.55, microFade, cheb);
           if (fade > 0) y += this._micro(x, z) * fade;
         }
+        raw[vi] = y;
 
         // Tuck under the finer ring.
         if (finer) {
@@ -1921,20 +1947,42 @@ export class Terrain {
           if (d > 0) y -= tuckDepth * smoothstep(0, s, d);
         }
 
-        const hx = (this._heightAt(x + eps, z) - this._heightAt(x - eps, z)) / (2 * eps);
-        const hz = (this._heightAt(x, z + eps) - this._heightAt(x, z - eps)) / (2 * eps);
-        const inv = 1 / Math.sqrt(hx * hx + hz * hz + 1);
-
         const p = vi * 3;
         pos[p] = x; pos[p + 1] = y; pos[p + 2] = z;
-        nor[p] = -hx * inv; nor[p + 1] = inv; nor[p + 2] = -hz * inv;
         uv[vi * 2] = (x - this.minX) * invSize;
         uv[vi * 2 + 1] = (z - this.minZ) * invSize;
 
-        this._writeVertexAttrs(vi, x, z, attrs, Math.hypot(hx, hz));
-
         if (y < minY) minY = y;
         if (y > maxY) maxY = y;
+      }
+    }
+
+    // Normals. Rings at or above the heightfield's own 2 m spacing take their
+    // gradient from the grid they already built (four array reads); the two
+    // sub-post rings sample the field at 2 m so their shading matches
+    // getNormal() exactly instead of faceting on the bilinear cells.
+    const fromGrid = s >= this.cell;
+    for (let j = 0; j <= N; j++) {
+      const z = cz + (j - N * 0.5) * s;
+      for (let i = 0; i <= N; i++) {
+        if (!filled(i, j)) continue;
+        const vi = j * vpr + i, p = vi * 3;
+        let hx, hz;
+        if (fromGrid) {
+          const iL = i > 0 && filled(i - 1, j) ? i - 1 : i;
+          const iR = i < N && filled(i + 1, j) ? i + 1 : i;
+          const jD = j > 0 && filled(i, j - 1) ? j - 1 : j;
+          const jU = j < N && filled(i, j + 1) ? j + 1 : j;
+          hx = (raw[j * vpr + iR] - raw[j * vpr + iL]) / Math.max(1e-6, (iR - iL) * s);
+          hz = (raw[jU * vpr + i] - raw[jD * vpr + i]) / Math.max(1e-6, (jU - jD) * s);
+        } else {
+          const x = cx + (i - N * 0.5) * s;
+          hx = (this._heightAt(x + eps, z) - this._heightAt(x - eps, z)) / (2 * eps);
+          hz = (this._heightAt(x, z + eps) - this._heightAt(x, z - eps)) / (2 * eps);
+        }
+        const inv = 1 / Math.sqrt(hx * hx + hz * hz + 1);
+        nor[p] = -hx * inv; nor[p + 1] = inv; nor[p + 2] = -hz * inv;
+        this._writeVertexAttrs(vi, cx + (i - N * 0.5) * s, z, attrs, Math.hypot(hx, hz));
       }
     }
 
@@ -2272,14 +2320,21 @@ export class Terrain {
     // Spawn sanity + a straight glide down the fall line.
     const sp = this.getSpawn();
     const spInfo = this.sample(sp.position.x, sp.position.z, {});
-    let worst = 0, jump = 0;
+    let worst = 0, jump = 0, prevDh = null;
     for (let z = sp.position.z; z > -600; z -= 2) {
       const s = this.getSlope(sp.position.x, z) / DEG;
       if (s > worst) worst = s;
-      const dh = Math.abs(this.getHeight(sp.position.x, z) - this.getHeight(sp.position.x, z + 2));
-      if (dh > jump) jump = dh;
+      // A steep *pitch* is fine; what must not exist is a step the
+      // neighbouring posts do not predict, i.e. a jump in the gradient.
+      const dh = this.getHeight(sp.position.x, z) - this.getHeight(sp.position.x, z + 2);
+      if (prevDh !== null) jump = Math.max(jump, Math.abs(dh - prevDh));
+      prevDh = dh;
     }
     if (worst > 50) warnings.push(`fall-line glide hits ${worst.toFixed(0)}°`);
+    if (jump > 1.5) warnings.push(`fall-line gradient jump ${jump.toFixed(2)} m over 2 m`);
+    const spSlope = spInfo.slope / DEG;
+    if (spSlope < 5 || spSlope > 11) warnings.push(`spawn slope ${spSlope.toFixed(1)}° outside 5–11°`);
+    if (spInfo.surface !== 'windpack') warnings.push(`spawn surface is ${spInfo.surface}, expected windpack`);
 
     // Mesh/physics agreement over the near rings.
     const rng = makeRng(this._seed('acceptance'));
