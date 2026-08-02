@@ -1151,7 +1151,7 @@ export class Terrain {
       const moatRng = makeRng(this._seed('moat'));
       const segs = [];
       for (let phi = -46 * DEG; phi < 44 * DEG; phi += 0.06) {
-        if (moatRng() < 0.42) segs.push([phi, phi + moatRng.range(0.05, 0.14), moatRng.range(1.5, 3.0), moatRng.range(6, 12)]);
+        if (moatRng() < 0.42) segs.push([phi, phi + moatRng.range(0.05, 0.14), moatRng.range(1.2, 2.2), moatRng.range(9, 16)]);
       }
       for (const [p0, p1, dep, wid] of segs) {
         const pm = (p0 + p1) * 0.5, half = (p1 - p0) * 0.5;
@@ -1260,13 +1260,47 @@ export class Terrain {
     this._blur(H, hSmooth, 4);
 
     /* -- Benched traverses: cut bank uphill, fill berm downhill ------------ */
+    // A cat track is dead straight *in profile* against a noisy hillside —
+    // that is the realism cue. But it also has to follow the hillside, or the
+    // cut/fill becomes a 40 m quarry scar. So: sample the ground along the
+    // centreline, smooth it hard, limit the grade, then bound the cut and
+    // fill to a couple of metres.
     for (const t of F.tracks) {
-      const e0 = this._field(t.pts[0][0], t.pts[0][1]);
-      const slope = Math.tan(t.grade * DEG);
+      const ds = 4;
+      const M = Math.max(4, Math.ceil(t.length / ds));
+      const ground = new Float64Array(M + 1);
+      for (let m = 0; m <= M; m++) {
+        const s = (m / M) * t.length;
+        let seg = 0;
+        while (seg < t.cum.length - 2 && t.cum[seg + 1] < s) seg++;
+        const u = (s - t.cum[seg]) / Math.max(1e-6, t.cum[seg + 1] - t.cum[seg]);
+        ground[m] = this._field(
+          lerp(t.pts[seg][0], t.pts[seg + 1][0], u),
+          lerp(t.pts[seg][1], t.pts[seg + 1][1], u),
+        );
+      }
+      const R = Math.max(2, Math.round(90 / ds));
+      const prof = new Float64Array(M + 1);
+      for (let m = 0; m <= M; m++) {
+        let acc = 0, c = 0;
+        for (let q = -R; q <= R; q++) { acc += ground[clamp(m + q, 0, M)]; c++; }
+        prof[m] = acc / c;
+      }
+      // Descending grade, with only the gentlest permitted rise.
+      const step = t.length / M;
+      const maxFall = Math.tan(3.4 * DEG) * step, maxRise = Math.tan(0.35 * DEG) * step;
+      for (let m = 1; m <= M; m++) {
+        prof[m] = clamp(prof[m], prof[m - 1] - maxFall, prof[m - 1] + maxRise);
+      }
       const hw = t.halfWidth;
       this._forBox(t.minX, t.maxX, t.minZ, t.maxZ, hw + 26, (k, x, z) => {
         polyClosest(t.pts, t.cum, x, z, P);
-        const target = e0 + slope * P.s;
+        const fm = clamp01(P.s / t.length) * M;
+        const m0 = Math.min(M, fm | 0), m1 = Math.min(M, m0 + 1);
+        const bench = lerp(prof[m0], prof[m1], fm - m0);
+        const gm = lerp(ground[m0], ground[m1], fm - m0);
+        // Bound the cut bank and the fill so the bench never becomes a scar.
+        const target = clamp(bench, gm - 3.2, gm + 2.2);
         const w = 1 - smoothstep(hw, hw + 9, P.d);
         if (w > 0) H[k] = lerp(H[k], target, w * 0.94);
         // Fill berm on the downhill side only — a natural side-hit the whole way.

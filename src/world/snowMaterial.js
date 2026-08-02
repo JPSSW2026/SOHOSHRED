@@ -957,19 +957,6 @@ const SNOW_SURFACE = /* glsl */ `
 		vec4 tG2 = vec4( 0.5, 0.5, 0.0, 0.5 );
 	#endif
 
-	// ---- track / carve splat ----
-	float trkTrench = 0.0;
-	float trkLip = 0.0;
-	float trkComp = 0.0;
-	#ifdef USE_TRACK_MAP
-		vec2 tuv = ( sohoWP.xz - uTrackRegion.xy ) * uTrackRegion.zw;
-		vec2 tin = step( vec2( 0.0 ), tuv ) * step( tuv, vec2( 1.0 ) );
-		vec4 tk = texture2D( uTrackMap, clamp( tuv, 0.0, 1.0 ) ) * ( tin.x * tin.y );
-		trkTrench = saturate( tk.r * tk.a ) * uTrackStrength;
-		trkLip    = saturate( tk.g * tk.a ) * uTrackStrength;
-		trkComp   = saturate( tk.b * tk.a );
-	#endif
-
 	// ---- detail fades ----
 	float fadeFar = 1.0 - smoothstep( uDetailFade.x, uDetailFade.y, sohoDist );
 	float f1 = ( 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 24.0 / uDetailScale.x ) ) * fadeFar;
@@ -1000,6 +987,21 @@ const SNOW_SURFACE = /* glsl */ `
 	// ...and a bright lip of drifted snow on the other side of it.
 	float snowLip = smoothstep( 0.20, 0.40, accum ) * ( 1.0 - smoothstep( 0.40, 0.62, accum ) );
 	float rockF = 1.0 - snowAmt;
+
+	// ---- track / carve splat (ctx.trails) ----
+	// Channels are documented on SNOW_TRACK_TEXTURE_CHANNELS.  A board cannot cut
+	// a trench into schist, so everything here is gated on snow cover.
+	float trkTrench = 0.0;
+	float trkLip = 0.0;
+	float trkComp = 0.0;
+	#ifdef USE_TRACK_MAP
+		vec2 tuv = ( sohoWP.xz - uTrackRegion.xy ) * uTrackRegion.zw;
+		vec2 tin = step( vec2( 0.0 ), tuv ) * step( tuv, vec2( 1.0 ) );
+		vec4 tk = texture2D( uTrackMap, clamp( tuv, 0.0, 1.0 ) ) * ( tin.x * tin.y * ( 1.0 - rockF ) );
+		trkTrench = saturate( tk.r * tk.a ) * uTrackStrength;
+		trkLip    = saturate( tk.g * tk.a ) * uTrackStrength;
+		trkComp   = saturate( tk.b * tk.a );
+	#endif
 
 	// Sastrugi only exist where the wind works the surface.
 	float sastrugiW = sfWind + 0.55 * sfIce + 0.30 * sfPow + 0.05 * sfGroom;
@@ -1068,6 +1070,7 @@ const SNOW_SURFACE = /* glsl */ `
 	albedo *= 1.0 - tMc.w * 0.06 * f4 * smoothstep( 0.30, 0.70, tDr.w ); // old scars
 	albedo *= 1.0 - trkTrench * 0.15;
 	albedo *= 1.0 + trkLip * 0.05;
+	albedo *= 1.0 + snowLip * 0.05;                              // drift lip at the rock edge
 
 	// ---- rock, blended in on the steep and the scoured ----
 	vec2 rockUvA = sohoWP.xz / uRockScale;
@@ -1084,7 +1087,6 @@ const SNOW_SURFACE = /* glsl */ `
 	rockAlb *= 1.0 + folA * 0.16 * folFade + folB * 0.10;
 	rockAlb = mix( rockAlb, rockAlb * vec3( 1.20, 1.00, 0.76 ), saturate( folB * 0.6 + 0.35 ) * 0.30 );
 	rockAlb *= 1.0 - moat * 0.24;
-	albedo *= 1.0 + snowLip * 0.05;
 
 	diffuseColor.rgb *= mix( albedo, rockAlb, rockF );
 
@@ -1106,7 +1108,7 @@ const SNOW_SURFACE = /* glsl */ `
 	// Concavity gates the transport blue: trench interiors, drift undercuts,
 	// cup bottoms and the lee of every pillow.  Everywhere else it must be zero
 	// or the whole frame goes blue and LAW 1 fails.
-	float concav = saturate( tMc.w * 0.45 + ( 1.0 - tDr.w ) * 0.32 + trkTrench * 1.30 + moat * 0.5 );
+	float concav = saturate( tMc.w * 0.45 + ( 1.0 - tDr.w ) * 0.32 + trkTrench * 1.30 + snowLip * 0.35 );
 	sohoSSSAmount = uSssStrength * concav * ( 1.0 - rockF ) * ( 1.0 - 0.6 * sfIce );
 
 	float glintFade = 1.0 - smoothstep( uGlintRange.x, uGlintRange.y, sohoDist );
