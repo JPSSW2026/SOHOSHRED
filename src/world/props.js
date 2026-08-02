@@ -1838,4 +1838,285 @@ export class Props {
       }
     }
   }
+
+  /* ------------------------------------------------------------------ *
+   * cornices and wind-drift lips
+   * ------------------------------------------------------------------ */
+
+  /** Register a merged static mesh. */
+  _static(geometry, material, name, opts = {}) {
+    if (!geometry || !geometry.attributes.position || geometry.attributes.position.count === 0) {
+      geometry?.dispose?.();
+      return null;
+    }
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = name;
+    mesh.castShadow = opts.castShadow ?? true;
+    mesh.receiveShadow = opts.receiveShadow ?? true;
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
+    this.object3D.add(mesh);
+    this.statics.push(mesh);
+    return mesh;
+  }
+
+  /**
+   * The crest cornice and the spur-crest drift lips.
+   *
+   * The terrain caps the cornice at 0° because a heightfield cannot overhang
+   * (TERRAIN_BRIEF §2.5 hands this to us explicitly). The silhouette of an
+   * overhanging lip against the sky, and the deep-blue undercut beneath it,
+   * are two of the highest-value things on the whole crest — this is what the
+   * hero shot is looking at from the `broadway-gate` spawn.
+   */
+  _buildCornices() {
+    const rng = makeRng(this._seed('cornice'));
+    const P = this.probe;
+    const stations = [];
+
+    const pushRun = (run) => {
+      if (run.length > 2) { stations.push(...run, null); }
+    };
+
+    /* -- Crest arc (headwall lip) ----------------------------------------- */
+    for (const seg of this.features.cornice || []) {
+      const arcLen = Math.abs(seg.phi1 - seg.phi0) * CREST_R;
+      if (arcLen < 12) continue;
+      const steps = Math.max(4, Math.round(arcLen / 5));
+      const run = [];
+      for (let i = 0; i <= steps; i++) {
+        const u = i / steps;
+        const phi = lerp(seg.phi0, seg.phi1, u);
+        const x = FOCUS_X + Math.sin(phi) * CREST_R;
+        const z = FOCUS_Z + Math.cos(phi) * CREST_R;
+        if (Math.abs(x) > 1010 || Math.abs(z) > 1010) continue;
+        // Downhill on the headwall is radially inward, toward the focus.
+        const lx = -Math.sin(phi), lz = -Math.cos(phi);
+        // Taper both ends to nothing so a segment never terminates in a wall.
+        const taper = Math.sin(Math.PI * clamp01(u)) ** 0.55;
+        const lip = (seg.lip ?? 2.4) * taper * rng.range(0.88, 1.12);
+        run.push({
+          x, z, lx, lz, lip,
+          over: lip * rng.range(1.15, 1.75),
+          ground: P.height(x, z),
+        });
+      }
+      pushRun(run);
+    }
+
+    /* -- Spur crests: lee-side wind pillows and small cornices ------------ */
+    // Wind from 292° loads the −X flank of every spur and rib. The lip there
+    // is smaller than the crest cornice but there is a lot of it, and it is
+    // what makes the same slope read differently 40 m apart.
+    for (const spur of this.features.spurs || []) {
+      let run = [];
+      let carry = rng.range(0, 60);
+      walkPolyline(spur.pts, 6, (x, z, tx, tz, s) => {
+        // Present over ~55% of the crest in 40–110 m segments.
+        const on = ((s + carry) % 150) < 82;
+        if (!on) { pushRun(run); run = []; return; }
+        if (Math.abs(x) > 1000 || Math.abs(z) > 1000) { pushRun(run); run = []; return; }
+        // Lee side = whichever perpendicular runs downwind.
+        let lx = -tz, lz = tx;
+        if (lx * this.wind.x + lz * this.wind.z < 0) { lx = -lx; lz = -lz; }
+        const ground = P.height(x, z);
+        const lip = rng.range(0.45, 1.35);
+        run.push({ x, z, lx, lz, lip, over: lip * rng.range(1.3, 2.1), ground });
+      });
+      pushRun(run);
+    }
+
+    if (stations.length) {
+      this._static(buildCorniceRibbon(stations), this.snowMat, 'props-cornice', {
+        castShadow: true, receiveShadow: true,
+      });
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * marker poles and flags
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Bamboo marker poles. On a real NZ ski field the piste edges and every
+   * benched traverse are poled at ~20 m, and because a pole is a known height
+   * it is the cheapest unambiguous scale cue in the frame (§9.4). At a 10.6°
+   * sun each one also lays down an 11 m shadow bar across the fall line, which
+   * is worth as much again for reading the terrain's shape.
+   */
+  _placePoles() {
+    const T = this.tune;
+    const rng = makeRng(this._seed('poles'));
+    const P = this.probe;
+
+    this.poleField = this._field('marker-pole', this.poleMat, this.geo.pole, {
+      castShadow: true, receiveShadow: true, shadowLevels: 2, cullAngular: 0.0055,
+    });
+    this.flagField = this._field('marker-flag', this.flagMat, this.geo.flag, {
+      castShadow: false, receiveShadow: true, cullAngular: 0.0022,
+    });
+
+    let budget = Math.round(T.poles.limit * clamp(T.density ?? 1, 0.05, 4));
+
+    const plant = (x, z, withFlag) => {
+      if (budget <= 0) return false;
+      if (Math.abs(x) > 1015 || Math.abs(z) > 1015) return false;
+      const s = P.sample(x, z);
+      if (s.slope / DEG > 42) return false;
+      const y = s.height;
+      // Poles lean a little; a field of perfectly plumb poles reads as CAD.
+      _e.set(rng.range(-0.075, 0.075), rng() * TAU, rng.range(-0.075, 0.075), 'YXZ');
+      _q.setFromEuler(_e);
+      _v3.set(x, y, z);
+      const h = rng.range(0.92, 1.08);
+      _v3b.set(1, h, 1);
+      _m4.compose(_v3, _q, _v3b);
+      this.poleField.add(_m4, 1.25, null);
+      budget--;
+
+      if (withFlag) {
+        // The flag streams downwind off the pole top.
+        _e.set(0, this.windYaw + rng.range(-0.35, 0.35), 0, 'YXZ');
+        _q.setFromEuler(_e);
+        _v3.set(x, y + 2.15 * h - 0.20, z);
+        _v3b.set(1, 1, 1);
+        _m4.compose(_v3, _q, _v3b);
+        _col.setRGB(rng.range(0.92, 1.10), rng.range(0.90, 1.06), rng.range(0.88, 1.08));
+        this.flagField.add(_m4, 0.34, _col);
+      }
+      // A drift tail at the base: a pole planted in snow always has one, and
+      // without it the pole looks stabbed through a sheet of paper.
+      if (this.driftField && rng() < 0.55) {
+        _e.set(0, this.windYaw, 0, 'YXZ');
+        _q.setFromEuler(_e);
+        _v3.set(x + this.wind.x * 0.35, y - 0.16, z + this.wind.z * 0.35);
+        const r = rng.range(0.7, 1.5);
+        _v3b.set(r, rng.range(0.12, 0.30), r * 0.8);
+        _m4.compose(_v3, _q, _v3b);
+        this.driftField.add(_m4, r * 1.5, null);
+      }
+      return true;
+    };
+
+    /* -- Both edges of every groomed corridor ----------------------------- */
+    for (const c of this.features.corridors || []) {
+      const off = (c.halfWidth ?? 20) + 1.4;
+      let i = 0;
+      walkPolyline(c.pts, T.poles.corridorSpacing, (x, z, tx, tz) => {
+        const px = -tz, pz = tx;
+        const j = rng.range(-1.6, 1.6);
+        plant(x + px * off + tx * j, z + pz * off + tz * j, true);
+        plant(x - px * off + tx * j, z - pz * off + tz * j, true);
+        i++;
+      });
+      void i;
+    }
+
+    /* -- Downhill edge of each benched traverse --------------------------- */
+    for (const t of this.features.tracks || []) {
+      const off = (t.halfWidth ?? 3) + 1.1;
+      walkPolyline(t.pts, T.poles.trackSpacing, (x, z, tx, tz) => {
+        // Pick the perpendicular that goes downhill.
+        const px = -tz, pz = tx;
+        const hA = P.height(x + px * off, z + pz * off);
+        const hB = P.height(x - px * off, z - pz * off);
+        const s = hA < hB ? 1 : -1;
+        plant(x + px * off * s, z + pz * off * s, true);
+      });
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * boundary fencing and hazard netting
+   * ------------------------------------------------------------------ */
+
+  _placeFences() {
+    const T = this.tune;
+    const rng = makeRng(this._seed('fence'));
+    const P = this.probe;
+
+    this.fencePostField = this._field('fence-post', this.poleMat, this.geo.fencePost, {
+      castShadow: true, receiveShadow: true, shadowLevels: 2, cullAngular: 0.0060,
+    });
+
+    let budget = Math.round(T.fence.limit * clamp(T.density ?? 1, 0.05, 4));
+    const netStations = [];
+    const ropeStations = [];
+
+    const post = (x, z, out) => {
+      if (budget <= 0) return;
+      if (Math.abs(x) > 1015 || Math.abs(z) > 1015) { out.push(null); return; }
+      const s = P.sample(x, z);
+      if (s.slope / DEG > 44) { out.push(null); return; }
+      _e.set(rng.range(-0.05, 0.05), rng() * TAU, rng.range(-0.05, 0.05), 'YXZ');
+      _q.setFromEuler(_e);
+      _v3.set(x, s.height, z);
+      _v3b.set(1, rng.range(0.95, 1.05), 1);
+      _m4.compose(_v3, _q, _v3b);
+      this.fencePostField.add(_m4, 0.95, null);
+      budget--;
+      out.push({ x, y: s.height, z });
+    };
+
+    /* -- Orange hazard netting along the top of every bluff band ---------- */
+    // A roped-and-netted cliff edge is the single most recognisable "this is a
+    // patrolled ski area" object there is, and the orange is one of the three
+    // small high-chroma accents the colour recipe allows (§9.2).
+    for (const bl of this.features.bluffs || []) {
+      const run = [];
+      walkPolyline(bl.pts, T.fence.postSpacing, (x, z) => {
+        const n = P.normal(x, z, _v3);
+        let dx = n.x, dz = n.z;
+        const l = Math.hypot(dx, dz);
+        if (l < 1e-3) { dx = 0; dz = 1; } else { dx = -dx / l; dz = -dz / l; }
+        // 8 m back from the lip, on the uphill side.
+        post(x + dx * 8, z + dz * 8, run);
+      });
+      if (run.length > 1) netStations.push(...run, null);
+    }
+
+    /* -- Rope-and-pole boundary on the run-out road and the east margin --- */
+    const ropeRuns = [];
+    const tracks = this.features.tracks || [];
+    const home = tracks.find((t) => t.name === 'home-track') || tracks[tracks.length - 1];
+    if (home) ropeRuns.push({ pts: home.pts, off: (home.halfWidth ?? 3) + 2.2, downhill: true });
+    const east = (this.features.corridors || []).find((c) => c.name === 'east-side');
+    if (east) ropeRuns.push({ pts: east.pts, off: (east.halfWidth ?? 18) + 9, downhill: false, side: 1 });
+
+    for (const r of ropeRuns) {
+      const run = [];
+      walkPolyline(r.pts, T.fence.postSpacing + 1.5, (x, z, tx, tz) => {
+        const px = -tz, pz = tx;
+        let s = r.side ?? 1;
+        if (r.downhill) {
+          s = P.height(x + px * r.off, z + pz * r.off) < P.height(x - px * r.off, z - pz * r.off) ? 1 : -1;
+        }
+        post(x + px * r.off * s, z + pz * r.off * s, run);
+      });
+      if (run.length > 1) ropeStations.push(...run, null);
+    }
+
+    if (netStations.length) {
+      const geo = buildNetting(
+        netStations.map((s) => (s ? { x: s.x, y: s.y, z: s.z } : null)),
+        T.fence.netHeight,
+      );
+      this._static(geo, this.netMat, 'props-hazard-netting', { castShadow: true, receiveShadow: false });
+      // The netting is hung on a rope along its top edge.
+      const top = netStations.map((s) => (s ? { x: s.x, y: s.y + T.fence.netHeight, z: s.z } : null));
+      this._static(buildRopeRun(top, 0.05, 0.026, [0.055, 0.058, 0.062]), this.ropeMat, 'props-net-rope', {
+        castShadow: false, receiveShadow: false,
+      });
+    }
+    if (ropeStations.length) {
+      const mid = ropeStations.map((s) => (s ? { x: s.x, y: s.y + 0.98, z: s.z } : null));
+      this._static(buildRopeRun(mid, 0.16, 0.030, [0.520, 0.098, 0.028]), this.ropeMat, 'props-boundary-rope', {
+        castShadow: true, receiveShadow: false,
+      });
+      const low = ropeStations.map((s) => (s ? { x: s.x, y: s.y + 0.52, z: s.z } : null));
+      this._static(buildRopeRun(low, 0.20, 0.024, [0.045, 0.048, 0.052]), this.ropeMat, 'props-boundary-rope-low', {
+        castShadow: false, receiveShadow: false,
+      });
+    }
+  }
 }
