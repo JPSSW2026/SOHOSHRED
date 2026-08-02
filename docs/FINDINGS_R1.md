@@ -71,3 +71,61 @@ of how good the frame was.
 Boot 8.4 s · 51 draw calls · 144 k triangles · **98 s per 960×540 frame** on
 SwiftShader. Budget roughly 10–15 minutes of pure rasterisation for a full
 eight-preset capture round, and scale critique resolution accordingly.
+
+---
+
+# Post-fix render (exposure 0.6, re-aimed shot presets)
+
+The featureless-white-sheet failure is resolved. Terrain form, cast shadows,
+schist outcrops, marker poles and a genuine sky gradient are all now present.
+Mean luma should be re-measured, but the mountain reads as a mountain.
+
+Three defects are visible in the new captures and are severe enough to name
+before the critique phase, because they are geometry/pipeline bugs rather than
+matters of taste:
+
+## 1. Floating white shards (CRITICAL — `props.js`)
+
+`shots/r1/west-spur.png` shows a dozen detached white angular planes hovering
+above the snow surface across the whole mid- and near-field. They read as
+broken geometry, not as snow.
+
+Most likely the **cornice lip / drift-collar ribbons**: `props.js` builds those
+as thin overhanging strips precisely because a heightfield cannot overhang. If
+the strip's anchor edge is placed against a terrain height sampled at a
+different LOD — or sampled before the clipmap has streamed that ring — the
+ribbon detaches and floats. Candidate causes, in order:
+  a. drift/cornice anchors sampling `getHeight()` at build time while the
+     visual mesh at that location carries clipmap micro-displacement;
+  b. the ribbon's own vertical extent exceeding the local snow depth;
+  c. instance transforms not being re-anchored after a terrain LOD reshuffle.
+
+This is the single most damaging defect in the frame — nothing else so
+immediately reads as "unfinished game".
+
+## 2. Dark horizon band (MAJOR — `sky.js`)
+
+A hard, dark blue-grey band sits across the middle of `west-spur.png` where the
+sky meets the far terrain, with the sky *above* it washing out much paler. The
+reference frames show the opposite gradient: saturated at zenith, paler toward
+the horizon. This inverts it and produces a muddy stripe.
+
+Probably the aerial-perspective in-scatter term being applied with an
+incorrect height falloff, or the backdrop shell being fogged toward a colour
+that is darker than the sky behind it.
+
+## 3. Visible LOD tile seams (MAJOR — `terrain.js` / `snowMaterial.js`)
+
+Faint rectangular grid boundaries are discernible in the mid-field. The
+clipmap's crack-free stitching is evidently working geometrically (no gaps),
+so this is a *shading* discontinuity — most likely detail-texture fade or
+normal-map mip selection stepping at the ring boundary rather than blending
+across it.
+
+## Also worth checking
+
+- Cloud layer still shows directional streaking rather than coherent form.
+- Rock outcrops read as flat dark smudges rather than lit, faceted schist.
+- Diagonal streak artefacts on the upper-right slope of `west-spur.png` suggest
+  sastrugi/wind-drift detail is being applied at too large an amplitude or with
+  an unclamped screen-space derivative.
