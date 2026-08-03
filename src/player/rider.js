@@ -624,6 +624,11 @@ export class Rider {
         sheen,
         sheenRoughness: 0.55,
         sheenColor: new THREE.Color(base).lerp(new THREE.Color(0xffffff), 0.35),
+        // A whisper of same-hue emissive keeps saturated kit colours from
+        // greying out under AgX in shade - the trick every game uses to make
+        // a signal jacket read as signal at all light levels.
+        emissive: new THREE.Color(base),
+        emissiveIntensity: 0.055,
       });
       return m;
     };
@@ -646,9 +651,9 @@ export class Rider {
     // yoke, hood and pants — the silhouette reads as a single red figure
     // against the snow, exactly like the instructor reference. Black stays
     // only on helmet, gloves, boots and hardware.
-    const shell = cloth(0xd62914, 0.54, 0.42, [2, 3]);
-    const shellGrey = cloth(0xd62914, 0.58, 0.40, [2, 3]);
-    const pants = cloth(0xcb2511, 0.64, 0.38, [2, 3]);
+    const shell = cloth(0xe22508, 0.54, 0.42, [2, 3]);
+    const shellGrey = cloth(0xe22508, 0.58, 0.40, [2, 3]);
+    const pants = cloth(0xd52206, 0.64, 0.38, [2, 3]);
     const shellDark = shellGrey; // collar/hem trim reads as the black blocking
 
     const helmet = new THREE.MeshStandardMaterial({
@@ -759,24 +764,26 @@ export class Rider {
       plate.rotation.y = -Math.PI * 0.5;
       mount.add(plate);
 
-      part(new THREE.BoxGeometry(0.135, 0.020, 0.30), M.binding, plate, 0, 0.010, 0);
+      part(new THREE.BoxGeometry(0.108, 0.014, 0.255), M.binding, plate, 0, 0.007, 0);
       // Heelcup + highback — behind the boot, which after the plate yaw is
       // the heel edge of the board.
-      const hb = part(new THREE.BoxGeometry(0.128, 0.20, 0.026), M.binding, plate, 0, 0.115, -0.118);
-      hb.rotation.x = -0.20;
-      part(new THREE.BoxGeometry(0.132, 0.062, 0.028), M.binding, plate, 0, 0.040, -0.116);
+      const hb = part(new THREE.BoxGeometry(0.096, 0.155, 0.014), M.binding, plate, 0, 0.095, -0.104);
+      hb.rotation.x = -0.24;
+      // Taper: a highback narrows toward the top.
+      hb.scale.set(1, 1, 1); hb.geometry.translate(0, 0, 0);
+      part(new THREE.BoxGeometry(0.104, 0.045, 0.016), M.binding, plate, 0, 0.030, -0.102);
       // Mounting disc.
       trim(new THREE.CylinderGeometry(0.052, 0.052, 0.008, 14), M.binding, plate, 0, 0.023, 0);
 
       // Ankle and toe straps: real arcs over the boot, with ratchet buckles and
       // ladder tails on the toe side.
-      const ankle = trim(new THREE.TorusGeometry(0.072, 0.013, 6, 14, 2.5), M.rubber, plate, 0, 0.052, -0.010);
+      const ankle = trim(new THREE.TorusGeometry(0.064, 0.009, 6, 14, 2.5), M.rubber, plate, 0, 0.046, -0.008);
       ankle.rotation.set(Math.PI * 0.5, 0, Math.PI * 0.5 - 1.25);
-      const toe = trim(new THREE.TorusGeometry(0.062, 0.011, 6, 14, 2.4), M.rubber, plate, 0, 0.036, 0.098);
+      const toe = trim(new THREE.TorusGeometry(0.055, 0.008, 6, 14, 2.4), M.rubber, plate, 0, 0.032, 0.088);
       toe.rotation.set(Math.PI * 0.5, 0, Math.PI * 0.5 - 1.20);
-      trim(new THREE.BoxGeometry(0.030, 0.022, 0.036), M.buckle, plate, 0.070, 0.062, -0.010);
-      trim(new THREE.BoxGeometry(0.026, 0.018, 0.032), M.buckle, plate, 0.062, 0.044, 0.098);
-      trim(new THREE.BoxGeometry(0.010, 0.052, 0.020), M.rubber, plate, -0.070, 0.040, -0.010);
+      trim(new THREE.BoxGeometry(0.022, 0.016, 0.026), M.buckle, plate, 0.060, 0.052, -0.008);
+      trim(new THREE.BoxGeometry(0.019, 0.013, 0.024), M.buckle, plate, 0.054, 0.038, 0.088);
+      trim(new THREE.BoxGeometry(0.008, 0.040, 0.016), M.rubber, plate, -0.060, 0.034, -0.008);
     }
 
     /* --- rider ------------------------------------------------------ */

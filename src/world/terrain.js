@@ -598,8 +598,16 @@ export class Terrain {
     // 420 m corrugation that gives every far face the avalanche-flute
     // shading the reference wall is textured with.
     const wall = smoothstep(6000, 11000, r);
+    // Massif clustering: a continuous ridged field at one amplitude reads as
+    // a rampart, not a mountain range. Group the energy into distinct
+    // massifs with real cols and gaps between them — the reference horizon
+    // is peaks and notches, and the sky showing through the low points is
+    // what makes the high points read as majesty rather than wall.
+    const massif = 0.30 + 0.85 * clamp01(
+      fbm2(this.simFar, x / 9200 + 3.3, z / 9200 - 6.1, { octaves: 2 }) * 0.5 + 0.5,
+    );
     h += (ridged2(this.simFar, x / 2600 + 7.7, z / 2600 - 3.1, { octaves: 3, sharpness: 1.4 }) - 0.40)
-      * 420 * wall;
+      * 420 * wall * massif;
     // Flute wavelength must stay resolvable by the backdrop's 100-180 m
     // far posts: 420 m at 105 m amplitude aliased into a picket-fence comb.
     h += (ridged2(this.simFar, x / 900 - 11.3, z / 900 + 5.9, { octaves: 2, sharpness: 1.3 }) - 0.45)
@@ -2418,10 +2426,15 @@ export class Terrain {
       const hx = (this._heightAt(x + eps, z) - this._heightAt(x - eps, z)) / (2 * eps);
       const hz = (this._heightAt(x, z + eps) - this._heightAt(x, z - eps)) / (2 * eps);
       const sDeg = Math.atan(Math.hypot(hx, hz)) / DEG;
-      // Deep-winter identity (user's reference call): the surrounding ranges
-      // are snow-clad to the crests, with bare rock only on genuinely
-      // unholdable aretes. 32° was exposing rock across whole mid-slopes.
-      rb = clamp01((sDeg - 44) / 14);
+      // Deep-winter identity: ranges snow-clad to the crests, rock only on
+      // unholdable faces. Two thresholds: 44° nearby, easing to 38° on the
+      // range wall — partly because real far walls show rock on their steep
+      // flutes, and partly practical: the snow textures are XZ-planar and
+      // smear into vertical streaks on steep faces, while the rock path uses
+      // a wall-friendly projection.
+      const r2 = Math.hypot(x, z);
+      const thresh = lerp(44, 38, smoothstep(4000, 9000, r2));
+      rb = clamp01((sDeg - thresh) / 13);
       id = rb > 0.5 ? S_ROCK : S_WINDPACK;
     }
 
@@ -2514,19 +2527,30 @@ export class Terrain {
    */
   _makeBackdrop() {
     const R0 = BACKDROP_INNER, R1 = CONFIG.terrain.backdropRadius;
-    const RN = 40;
     // Angular resolution is the silhouette's resolution. At 192 segments the
     // post spacing at r = 22 km is 720 m — about seven posts across the whole
     // Remarkables massif, which cannot carry a serrated crest no matter what
-    // the height function does. The outer half of the shell therefore runs at
-    // 768 segments (180 m at 22 km); the inner rings do not need it and the
-    // two resolutions are stitched with a 1:4 triangle fan.
-    const AN_NEAR = 192, AN_FAR = 768, FAR_R = 12000;
-    const rings = RN + 2;                       // +1 outer, +1 skirt
-
-    const growth = Math.pow(R1 / R0, 1 / RN);
+    // the height function does. The outer band therefore runs at 768 segments;
+    // the inner rings do not need it and the two resolutions are stitched with
+    // a 1:4 triangle fan.
+    //
+    // RADIAL spacing is the wall's resolution, and pure log growth is wrong
+    // for it: forty log rings put thirty inside 8 km and left 2–4 km radial
+    // gaps across the 8–26 km band — the entire range wall was two or three
+    // sample rings with kilometres of stretched interpolation between them,
+    // which is exactly the "featureless ice curtain" the user called out.
+    // Log spacing inside 8 km (the seam band needs it), then fixed 450 m
+    // rings across the wall so every ridge row gets real geometry.
+    const AN_NEAR = 192, AN_FAR = 768, FAR_R = 8000;
+    const WALL_STEP = 450;
+    const RN_LOG = 22;
     const radii = [];
-    for (let k = 0; k <= RN; k++) radii.push(R0 * Math.pow(growth, k));
+    const growth = Math.pow(FAR_R / R0, 1 / RN_LOG);
+    for (let k = 0; k <= RN_LOG; k++) radii.push(R0 * Math.pow(growth, k));
+    for (let r = FAR_R + WALL_STEP; r < R1; r += WALL_STEP) radii.push(r);
+    radii.push(R1);
+    const RN = radii.length - 1;
+    const rings = RN + 2;                       // +1 outer, +1 skirt
     radii.push(R1);                              // duplicated for the skirt
 
     const ans = radii.map((r) => (r >= FAR_R ? AN_FAR : AN_NEAR));
