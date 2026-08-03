@@ -120,6 +120,13 @@ const MICRO_LEVELS = 3;
  * "matches the mesh to within a few centimetres" contract.
  */
 const MICRO_CAP = 0.045;
+/**
+ * Fraction of a foliation cycle occupied by the plate's lip. Wide enough that
+ * the lip spans three or more rows of the bluff grid: a lip narrower than two
+ * samples is a step edge, and a step edge aliases whatever its fundamental
+ * wavelength is.
+ */
+const FOL_LIP = 0.42;
 
 /** Where the backdrop shell begins, and how far the box-edge blend runs. */
 const BACKDROP_INNER = 2400;
@@ -1373,33 +1380,77 @@ export class Terrain {
           const w = lerp(22, spread, u);
           const cone = Math.exp(-Math.pow((x - mx) / w, 2)) * (1 - smoothstep(0.6, 1, u));
           if (cone < 0.01) return;
-          // Two lump scales: 40 m lobes and 10 m blocks, together ±1.9 m.
-          const lobe = billow2(sim, x / 26, z / 26, { octaves: 3 }) - 0.44;
-          const block = billow2(sim, x / 9.5 + 7.1, z / 9.5 - 3.3, { octaves: 2 }) - 0.45;
+          // Two lump scales: 26 m lobes and 12 m blocks, together ±1.9 m. Both
+          // stop at λ 12 m / 4 posts — the previous 6.5 m and 4.75 m octaves
+          // aliased on the 2 m grid and speckled the fans.
+          const lobe = billow2(sim, x / 26, z / 26, { octaves: 2 }) - 0.44;
+          const block = billow2(sim, x / 12 + 7.1, z / 12 - 3.3, { octaves: 1 }) - 0.45;
           H[k] += (lobe * 3.3 + block * 1.15) * cone * m.amp;
         });
       }
     }
 
-    /* -- Solifluction terraces across the basin floor ---------------------- */
+    /* -- Solifluction lobes across the basin floor ------------------------- */
+    // The previous form — a 0.75 m riser on `(h / tread) % 1` applied to every
+    // post below 1456 m — was corduroy, not solifluction. Contours of constant
+    // h are parallel lines across a slope, so a tread that only varies at a
+    // 220 m scale draws a perfectly regular parallel band set across the whole
+    // floor; a 0.75 m riser is a 4–6 % slope perturbation, which a 10.6° raking
+    // sun turns into a 20-luma alternating ripple that survives to the far
+    // field. Real solifluction is *patchy and aspect-selective*: a few discrete
+    // lobate benches on moderate ground, never a continuous contour set.
+    //
+    // Four changes, in order of how much each one matters:
+    //   1. a low-frequency lobe mask, so terraces occupy ~25 % of the floor;
+    //   2. a slope gate (14–28°), because lobes do not form on flats or scarps;
+    //   3. a 14/44 m phase offset inside the modulo, so the bands stop being
+    //      parallel and no single vertical period survives (§11 tell 14);
+    //   4. the riser itself dropped 0.75 → 0.16 m.
+    // Deltas are accumulated into a scratch field and applied afterwards so the
+    // slope gate reads the *pre-terrace* surface and cannot feed back on itself.
     {
       const sim = this.simDrift;
-      for (let j = 0; j < n; j++) {
+      const RISER = 0.16;
+      const dTer = new Float32Array(n * n);
+      for (let j = 1; j < n - 1; j++) {
         const z = this.minZ + j * cell, row = j * n;
-        for (let i = 0; i < n; i++) {
+        for (let i = 1; i < n - 1; i++) {
           const k = row + i;
           const h = H[k];
           if (h > 1456) continue;      // must match the mask's upper edge
+          const band = 1 - smoothstep(1436, 1456, h);
+          if (band <= 0.002) continue;
           const x = this.minX + i * cell;
-          const mask = (1 - smoothstep(1436, 1456, h));
-          const tread = 13 + 6 * fbm2(sim, x / 220, z / 220, { octaves: 2 });
-          const s = (h / tread) % 1;
-          // 0.75 m risers (§2.5 asks for 0.3–0.8 m) with the break held tight
-          // against the tread, so the floor carries readable contour steps
-          // rather than a sinusoidal ripple.
-          H[k] += 0.75 * mask * (smoothstep(0.68, 0.96, s < 0 ? s + 1 : s) - 0.5);
+
+          // 1. Lobate patches, 40–110 m across, covering about a quarter of
+          //    the floor. Everything outside a patch stays perfectly smooth.
+          const lobe = fbm2(sim, x / 54 + 17.3, z / 54 - 9.1, { octaves: 3 });
+          const patch = smoothstep(0.12, 0.30, lobe);
+          if (patch <= 0.002) continue;
+
+          // 2. Solifluction needs a slope to creep down and a surface to creep
+          //    over: nothing on the flats, nothing on the steep scarps.
+          const gx = (H[k + 1] - H[k - 1]) / (2 * cell);
+          const gz = (H[k + n] - H[k - n]) / (2 * cell);
+          const sDeg = Math.atan(Math.hypot(gx, gz)) / DEG;
+          const gate = smoothstep(11, 16, sDeg) * (1 - smoothstep(26, 33, sDeg));
+          if (gate <= 0.002) continue;
+
+          // 3. Non-harmonic tread plus a two-scale phase offset. Because the
+          //    offset is added to `h` inside the modulo, the risers wander
+          //    across the contours instead of tracking them.
+          const tread = 11 + 7 * fbm2(sim, x / 137 + 3.7, z / 137 + 8.9, { octaves: 3 });
+          const phase = 5.5 * sim.noise2D(x / 44, z / 44)
+            + 1.8 * sim.noise2D(x / 14.3 + 6.1, z / 14.3 - 2.4);
+          let s = ((h + phase) / tread) % 1;
+          if (s < 0) s += 1;
+          // 4. A rounded riser spread over 40 % of the tread. On 15° ground the
+          //    break then runs ~17 m across the surface — eight 2 m posts, so
+          //    the grid carries it without a harmonic tail to alias.
+          dTer[k] = RISER * band * patch * gate * (smoothstep(0.55, 0.95, s) - 0.5);
         }
       }
+      for (let k = 0; k < dTer.length; k++) H[k] += dTer[k];
     }
 
     /* -- Braided creek line: cut in _phaseDrainage() with the rest of the
@@ -1414,7 +1465,11 @@ export class Terrain {
           const k = row + i;
           if (H[k] < 1832) continue;
           const x = this.minX + i * cell;
-          H[k] += fbm2(sim, x / 3.1, z / 3.1, { octaves: 2 }) * 0.10
+          // λ 16 / 8 m. The old λ 3.1 / 1.55 m sat far below the 2 m post
+          // Nyquist limit and folded into a post-to-post checkerboard across
+          // the whole crest; plate-scale relief belongs to the rock material,
+          // not to the heightfield.
+          H[k] += fbm2(sim, x / 16, z / 16, { octaves: 2 }) * 0.10
             * smoothstep(1832, 1846, H[k]);
         }
       }
@@ -1706,20 +1761,41 @@ export class Terrain {
         // ±1 m drift band across a 12 m headwater trench erases it.
         const amp = dScale * shed * (1 - 0.6 * (drain ? drain[k] : 0));
 
-        // Band 3 — mogul-scale drift, λ 8–30 m.
-        const b3 = (billow2(simD, x / 17, z / 17, { octaves: 3 }) - 0.45) * 0.95 * amp;
-        // Band 4 — drift lobes and pillows over buried rock, λ 4–8 m.
-        const b4 = fbm2(simF, x / 6.2, z / 6.2, { octaves: 2 }) * 0.26 * amp;
+        // Bands 3 and 4 are band-limited to the 2 m post grid: the finest
+        // octave either band may carry is 8 m (4 posts). The old settings ran
+        // billow to λ 4.25 m and fbm to λ 3.1 m — both under the 4 m Nyquist
+        // limit of a 2 m heightfield — so ~9 cm of displacement folded into a
+        // post-to-post ripple across the *entire* snow surface. Under a 10.6°
+        // raking sun that is a ±2.5° facet swing on every post pair, which is
+        // the corduroy/fingerprint texture; and because the coarse clipmap
+        // rings resample the same aliased field, it stayed at full amplitude
+        // into the far field instead of fading (§11 tell 16).
+        // Amplitudes go up as the wavelengths do, to ±0.55 m and ±0.15 m —
+        // both still inside §2.6's ±1.2 m / ±0.35 m, and chosen so the slope
+        // histogram lands where it did before the band limit (0–5° 16.6 %
+        // against 16.4 %), rather than trading a texture artefact for a
+        // flatter mountain.
+        // Band 3 — mogul-scale drift, λ 20 / 10 m (§2.6 asks 8–30 m).
+        const b3 = (billow2(simD, x / 20, z / 20, { octaves: 2 }) - 0.45) * 1.22 * amp;
+        // Band 4 — drift lobes and pillows over buried rock, λ 11 m. The 4–8 m
+        // end of this band is below what a 2 m heightfield can carry at all; it
+        // lives in the snow material's detail normal, which is filtered.
+        const b4 = fbm2(simF, x / 11, z / 11, { octaves: 1 }) * 0.30 * amp;
 
         H[k] += b3 + b4;
       }
     }
 
     // A single light pass keeps 2 m posts free of aliasing spikes without
-    // dulling the landform (the blur radius is one post).
+    // dulling the landform (the blur radius is one post). A 3-tap box has a
+    // response of −1/3 at the 4 m post-alternating frequency and +0.97 at
+    // λ 20 m, so mixing 32 % of it removes 43 % of whatever ripple sits at the
+    // grid limit — the band that renders as corduroy — and 4 % of the moguls.
+    // Band 3's amplitude is raised alongside it so the slope histogram does
+    // not drift: §2.14 test 6 is measured, not assumed (see _acceptance).
     const tmp = new Float32Array(H.length);
     this._blur(H, tmp, 1);
-    for (let k = 0; k < H.length; k++) H[k] = lerp(H[k], tmp[k], 0.12);
+    for (let k = 0; k < H.length; k++) H[k] = lerp(H[k], tmp[k], 0.32);
 
     // Despike. Droplet erosion occasionally leaves a single-post deposit, and
     // at 2 m spacing a 1 m spike is a 27° jolt the physics feels and the eye
@@ -2073,7 +2149,7 @@ export class Terrain {
         // Sub-post detail, capped so getHeight() still matches the mesh.
         if (micro) {
           const fade = 1 - smoothstep(microFade * 0.55, microFade, cheb);
-          if (fade > 0) y += this._micro(x, z) * fade;
+          if (fade > 0) y += this._micro(x, z, s) * fade;
         }
 
         // Geomorph toward the next coarser post spacing over the outer
@@ -2276,7 +2352,7 @@ export class Terrain {
    * surface wind with a steep undercut upwind face and a gentle downwind
    * tail — a symmetric ripple reads as corduroy, not as sastrugi.
    */
-  _micro(x, z) {
+  _micro(x, z, step = 0) {
     const inBox = x >= this.minX && x <= this.maxX && z >= this.minZ && z <= this.maxZ;
     if (!inBox || !this.surf) return 0;
     const id = this._fieldNearest(this.surf, x, z);
@@ -2289,15 +2365,25 @@ export class Terrain {
     const jitter = this.simMicro.noise2D(u * 0.22, v * 1.1);
 
     if (id === S_WINDPACK || id === S_ICE) {
-      const p = u / 1.35 + jitter * 0.55;
-      let s = p - Math.floor(p);
-      // Steep rise (upwind face), long gentle tail.
-      const prof = s < 0.14 ? (s / 0.14) : 1 - (s - 0.14) / 0.86;
+      // The sastrugi carrier is λ 1.9 m. A ring whose posts are wider than
+      // λ/4 cannot carry it — it renders it as a post-to-post comb instead —
+      // so the carrier is faded out by ring spacing. Past the 1 m ring it is
+      // gone, which is also what §11 tell 16 asks for: sastrugi at 800 m
+      // subtends 0.02° and must not be manufacturing contrast out there.
+      const lim = step > 0 ? clamp01((1.9 / step - 2.6) / 1.4) : 1;
+      if (lim <= 0) return 0;
+      const p = u / 1.9 + jitter * 0.55;
+      const s = p - Math.floor(p);
+      // Steep rise (upwind face), long gentle tail — smoothed at both ends so
+      // the sawtooth's harmonic tail has nothing left to fold.
+      const prof = s < 0.22 ? smoothstep(0, 0.22, s) : 1 - smoothstep(0.22, 1, s);
       const amp = Math.min(MICRO_CAP, (0.05 + 0.30 * e) * CONFIG.snow.sastrugiStrength * 0.5);
-      return (prof - 0.5) * 2 * amp;
+      return (prof - 0.5) * 2 * amp * lim;
     }
-    // Powder / drifted ground: soft ripple only.
-    return this.simMicro.noise2D(u * 0.5, v * 0.32) * MICRO_CAP * 0.35;
+    // Powder / drifted ground: soft ripple only, λ 6.2 m along wind and 10 m
+    // across it, faded the same way once the ring can no longer resolve it.
+    const limP = step > 0 ? clamp01((6.2 / step - 2.6) / 1.4) : 1;
+    return this.simMicro.noise2D(u * 0.16, v * 0.10) * MICRO_CAP * 0.35 * limP;
   }
 
   /**
@@ -2415,14 +2501,23 @@ export class Terrain {
    *
    * Every schist surface in the basin shares one foliation plane (§2.13:
    * strike +38° from +X, dip 32°), so the fracture relief must be *banded
-   * against that plane*, not isotropic noise. Three wavelengths are stacked;
-   * the phase of each is jittered along strike so the result is irregular
-   * layering rather than a mechanical comb, exactly as the rock material's
-   * own normal banding does at texture scale.
+   * against that plane*, not isotropic noise. Wavelengths are stacked; the
+   * phase of each is jittered along strike so the result is irregular layering
+   * rather than a mechanical comb, exactly as the rock material's own normal
+   * banding does at texture scale.
+   *
+   * `minLam` is the shortest wavelength the *consumer's* sample grid can carry.
+   * This is not a nicety: displacing a 0.5 m row grid with a λ 0.6 m and a
+   * λ 0.15 m band gives 1.2 and 0.3 samples per wavelength, and what comes out
+   * is not fine relief, it is an exact row-alternating in/out comb. Every
+   * second row then gets an inverted facet normal, `aSurface.w` flips with it,
+   * and the face renders as a venetian blind of white and dark-blue stripes.
+   * Bands under the limit are faded out here rather than clamped at the call
+   * site, so no consumer can reintroduce the artefact by accident.
    *
    * `lam` is metres between plates, `amp` is the peak-to-peak displacement.
    */
-  _foliationRelief(x, y, z) {
+  _foliationRelief(x, y, z, minLam = 0) {
     const f = this._folBasis;
     const sim = this.simFine;
     const c0 = x * f.nx + y * f.ny + z * f.nz;      // distance along the normal
@@ -2430,12 +2525,18 @@ export class Terrain {
     let d = 0;
     for (let i = 0; i < f.bands.length; i++) {
       const [lam, amp, ph] = f.bands[i];
+      const w = minLam > 0 ? smoothstep(minLam * 0.85, minLam * 1.35, lam) : 1;
+      if (w <= 0.001) continue;
       const jit = sim.noise2D(a0 / (lam * 7) + ph, c0 / (lam * 11));
       const s = c0 / lam + jit * 0.5;
       const fr = s - Math.floor(s);
-      // Sharp lip, sloping back: plates break, they do not undulate.
-      const tri = fr < 0.28 ? fr / 0.28 : 1 - (fr - 0.28) / 0.72;
-      d += (tri - 0.5) * amp;
+      // Sharp lip, sloping back: plates break, they do not undulate. C1 at
+      // both ends of the cycle — a raw sawtooth's harmonic tail aliases
+      // through the sample grid even when its fundamental does not.
+      const tri = fr < FOL_LIP
+        ? smoothstep(0, FOL_LIP, fr)
+        : 1 - smoothstep(FOL_LIP, 1, fr);
+      d += (tri - 0.5) * amp * w;
     }
     return d;
   }
@@ -2456,24 +2557,44 @@ export class Terrain {
    * tag every up-facing micro-facet as snow-holding through `aSurface.w` —
    * which is what produces the "every ledge holds snow" read and breaks the
    * flat-plate silhouette.
+   *
+   * The displacement is band-limited to what this grid can carry. `MIN_LAM`
+   * below is 4× the largest step either grid axis takes *along the foliation
+   * normal*, and the frontage axis is the binding one: the foliation normal
+   * has a horizontal component of 0.53, so a column step of `c` advances up to
+   * 0.53·c of `c0` against 0.5 m per row. At the old 2 m columns that put the
+   * limit at 4.2 m; the columns are 1.25 m now, which brings it to 2.65 m and
+   * lets the 3.8 m band through with margin. Under the limit the relief does
+   * not become fine detail, it becomes the venetian-blind comb — see
+   * `_foliationRelief`.
    */
   _makeBluffFaces() {
-    const rng = makeRng(this._seed('bluff.faces'));
-
     // Shared foliation basis (§2.13). Plane normal = strike × dip.
     const STRIKE = 38 * DEG, DIP = 32 * DEG;
     const sx = Math.cos(STRIKE), sz = Math.sin(STRIKE);
+    const fnx = -sz * Math.sin(DIP), fny = Math.cos(DIP), fnz = sx * Math.sin(DIP);
     this._folBasis = {
       sx, sz,
-      nx: -sz * Math.sin(DIP), ny: Math.cos(DIP), nz: sx * Math.sin(DIP),
-      // λ (m), peak-to-peak displacement (m), phase
-      bands: [[2.4, 0.42, 0], [0.6, 0.20, 13.7], [0.15, 0.07, 31.1]],
+      nx: fnx, ny: fny, nz: fnz,
+      // λ (m), peak-to-peak displacement (m), phase. Only the first band is
+      // above the geometry's sampling limit; the 0.6 m and 0.15 m plate
+      // spacings are real, but they belong to the rock material's per-pixel
+      // foliation (snowMaterial.createRockMaterial, `uFoliationSpacing`),
+      // where they are evaluated at pixel rate and mip-filtered. Left in the
+      // table so the model stays complete — `_foliationRelief` fades them.
+      bands: [[3.8, 0.44, 0], [0.6, 0.20, 13.7], [0.15, 0.07, 31.1]],
     };
 
-    const COL_STEP = 2.0;     // metres along the bluff frontage
+    const COL_STEP = 1.25;    // metres along the bluff frontage
     const ROW_STEP = 0.5;     // metres down the face — the whole point
+    // Worst-case advance along the foliation normal per grid step, ×4.
+    const nHoriz = Math.hypot(fnx, fnz);
+    const MIN_LAM = 4 * Math.max(ROW_STEP, COL_STEP * nHoriz);
 
     const verts = [], uvs = [], idx = [];
+    // Row index / row count / undisplaced face-normal Y, per vertex — needed
+    // by the ledge mask below, which must be low-passed down the face.
+    const vRow = [], vRows = [], vBaseNy = [];
 
     for (const b of this.features.bluffs) {
       const faceW0 = b.height / Math.tan(b.faceAngle);
@@ -2504,9 +2625,15 @@ export class Terrain {
 
         // The break line meanders and the buttresses vary in stand-off: a
         // dead-straight top edge sampled on 2 m posts is what stair-steps.
+        // Both wobbles are smooth noise at λ ≥ 9 m — i.e. ≥ 7 columns. The old
+        // λ 5.5 m term and, worse, the old per-column `rng.range()` on the
+        // bottom edge were white noise on the column axis: each column got an
+        // independent face width, which tilts each strip differently and
+        // stripes the frontage vertically.
         const wobT = this.simFine.noise2D(px / 21 + 4.3, pz / 21 - 8.1) * 0.6
-          + this.simFine.noise2D(px / 5.5, pz / 5.5) * 0.25;
-        const wobB = rng.range(-0.3, 0.5) + this.simFine.noise2D(px / 17 - 2.7, pz / 17 + 5.9) * 0.9;
+          + this.simFine.noise2D(px / 9.0, pz / 9.0) * 0.25;
+        const wobB = 0.1 + this.simFine.noise2D(px / 12.5 + 21.7, pz / 12.5 - 4.2) * 0.4
+          + this.simFine.noise2D(px / 17 - 2.7, pz / 17 + 5.9) * 0.9;
 
         const topX = px + perpX * (faceW * 0.5 + 0.35 + wobT);
         const topZ = pz + perpZ * (faceW * 0.5 + 0.35 + wobT);
@@ -2520,6 +2647,14 @@ export class Terrain {
         const oL = Math.hypot(ox, oy, oz) || 1;
         ox /= oL; oy /= oL; oz /= oL;
 
+        // Undisplaced face normal: its Y is the horizontal fraction of the
+        // down-face direction, i.e. cos(face angle as actually built). Every
+        // segment has its own face angle (58–78°), so the ledge mask below has
+        // to be measured *relative* to this, not against an absolute n.y.
+        const runH = Math.hypot(topX - botX, topZ - botZ);
+        const runL = Math.hypot(runH, topY - botY) || 1;
+        const baseNy = runH / runL;
+
         colFirst[c] = verts.length / 3;
         for (let r = 0; r <= rows; r++) {
           const v = r / rows;
@@ -2529,9 +2664,10 @@ export class Terrain {
           // Ease the relief off at the very top and bottom so the face still
           // meets the heightfield, and taper it out at the segment ends.
           const edge = Math.min(1, Math.min(v, 1 - v) * rows * 0.25 + 0.35);
-          const k = this._foliationRelief(x, y, z) * edge * (0.45 + 0.55 * along);
+          const k = this._foliationRelief(x, y, z, MIN_LAM) * edge * (0.45 + 0.55 * along);
           verts.push(x + ox * k, y + oy * k, z + oz * k);
           uvs.push(sArc * 0.25, 1 - v);
+          vRow.push(r); vRows.push(rows); vBaseNy.push(baseNy);
         }
       }
 
@@ -2564,14 +2700,35 @@ export class Terrain {
     // high enough perturbed normal; aSurface.w biases its accumulation, so
     // every up-facing plate ends up capped and the face stops reading as one
     // uniform dark plane.
+    //
+    // Two rules, both learned the hard way. (1) Measure the *relative* up-tilt
+    // against the column's own undisplaced face normal — an absolute threshold
+    // caps a 58° segment entirely and a 78° one not at all. (2) Low-pass the
+    // normal down the face first. This mask is a hard switch between white
+    // snow and dark schist, so any row-to-row wobble in the normal it reads
+    // becomes a row-to-row wobble between white and dark — a three-post
+    // tremor in the geometry turns into a 120-level swing on screen.
     const nAttr = geo.getAttribute('normal');
     const vCount = nAttr.count;
     const aSurface = new Float32Array(vCount * 4);
+    // A 5-tap [1,2,3,2,1] triangle: zero response at the row-alternating
+    // frequency and 0.85 at the 9.5-row plate period, so it deletes the comb
+    // band outright and leaves the plates alone.
+    const TAP = [1, 2, 3, 2, 1];
     for (let i = 0; i < vCount; i++) {
-      // A 65–75° face already carries n.y ≈ 0.26–0.42, so the band starts
-      // above that: only micro-facets the foliation relief has genuinely
-      // tilted up count as ledges.
-      aSurface[i * 4 + 3] = smoothstep(0.45, 0.72, nAttr.getY(i));
+      const r = vRow[i], rr = vRows[i];
+      let sum = 0, w = 0;
+      for (let q = -2; q <= 2; q++) {
+        const rq = r + q;
+        if (rq < 0 || rq > rr) continue;
+        sum += nAttr.getY(i + q) * TAP[q + 2]; w += TAP[q + 2];
+      }
+      // Band chosen by measurement, not taste: mean mask 0.13 with a
+      // row-alternating component of 0.058 rms. Widening it to a mean of 0.23
+      // takes the alternating component to 0.082, i.e. straight back toward
+      // the stripes — the mask is a hard white/dark switch, so its high
+      // frequencies cost far more than its mean does.
+      aSurface[i * 4 + 3] = smoothstep(0.015, 0.19, sum / w - vBaseNy[i]);
     }
     geo.setAttribute('aSurface', new THREE.BufferAttribute(aSurface, 4));
 

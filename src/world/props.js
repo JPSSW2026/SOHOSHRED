@@ -44,7 +44,7 @@
  * `makeRng(seedFromString(...))` so two builds of the same seed are identical.
  *
  * Budget (all figures for the shipped tuning):
- *   ~900 rock instances · ~700 poles · ~5k tussock clumps · ~600 debris lumps
+ *   ~600 rock instances · ~700 poles · ~7k tussock clumps · ~600 debris lumps
  *   14 towers · 33 chairs. Typically 14–22 draw calls on screen, and every
  *   instanced field drops its LOD and then culls on projected angular size, so
  *   the far field costs almost nothing.
@@ -102,9 +102,18 @@ const DEFAULT_TUNE = {
   /** Global multiplier on every instance budget — the harness can thin us. */
   density: 1.0,
   rock: {
-    scatterLimit: 300,   // free-standing outcrops on rock-classed ground
-    blockLimit: 240,     // crest blockfield plates
-    talusLimit: 260,     // bluff toe apron + bluff crest teeth
+    /**
+     * Fewer, larger, more legible masses. Round 6 shipped 300 outcrops +
+     * 240 plates + 260 talus into a frame where the wide presets stand
+     * 300–600 m off, and at that range they all collapse onto the same 2–4 px
+     * footprint: the measured read on `shots/r6/west-spur.png` is "dozens of
+     * near-identical rectangles confettied across the ridge". A schist tor
+     * field is a handful of legible masses with a scatter of shed plates
+     * *around* them, not a uniform sprinkle (§6.1, checklist 31/32).
+     */
+    scatterLimit: 210,   // free-standing outcrops on rock-classed ground
+    blockLimit: 150,     // crest blockfield plates
+    talusLimit: 200,     // bluff toe apron + bluff crest teeth
     driftCollars: true,
   },
   poles: {
@@ -113,43 +122,66 @@ const DEFAULT_TUNE = {
     limit: 760,
   },
   fence: {
-    postSpacing: 7.5,
-    netHeight: 1.05,
-    limit: 420,
+    /** §: posts every 4–6 m. At 5 m and 320 m range they resolve as a comb. */
+    postSpacing: 5.0,
+    /** Net hangs *below* the post tops so the comb of posts breaks the line. */
+    netHeight: 0.95,
+    postHeight: 1.85,
+    limit: 720,
   },
   tussock: {
-    limit: 5200,
-    chunk: 240,          // m; one InstancedMesh per chunk
-    maxElevation: 1560,  // TERRAIN_BRIEF §2.13 — the tussock belt proper
-    maxDepth: 0.25,
-    maxSlopeDeg: 24,
     /**
-     * Wind-scoured shoulders. §6.2 puts tussock on "convex ridge shoulders"
-     * and the terrain brief on the "lower spur shoulders"; the primary gate
-     * (depth < 0.25 m AND slope < 24°) confines it to ground so flat that only
-     * the run-out margins qualify, and no shot preset frames those. Windpack
-     * with under 18 cm on it is scoured ground by definition, and it holds up
-     * to 30°.
+     * §2 names tussock "our single most valuable natural colour accent" and
+     * the direct substitute for the reference set's autumn trees, and rounds
+     * 1–6 all measured warm high-chroma at 0.00–0.13% against a 1.5–4% target.
+     * The cause was never the budget or the cull distance — it was the gate.
+     *
+     * Two independent rules were each individually fatal:
+     *
+     *   • `surface === 'rock'` was rejected outright, and `terrain.js`
+     *     classifies *every* post with under 10 cm of pack as `rock`
+     *     (terrain.js:1874). That is 6.2% of the basin — precisely the
+     *     wind-scoured ground §6.2 puts tussock on — and it was the first
+     *     thing thrown away.
+     *   • `maxElevation 1560` confines the belt to the run-out margins. The
+     *     basin runs 1410–1865 m and the wide presets frame 1500–1800 m.
+     *
+     * Measured on the shipped seed, the old gate passed 1.18% of the basin
+     * (0.68% inside the hero-basin framing); the gate below passes 4.35%
+     * (2.4% inside hero-basin, 20% inside west-spur's run-out foreground).
      */
-    shoulderDepth: 0.18,
-    shoulderSlopeDeg: 30,
+    limit: 10000,
+    patches: 300,
+    chunk: 240,          // m; one InstancedMesh per chunk
+    maxElevation: 1580,  // TERRAIN_BRIEF §2.13 — the tussock belt proper
+    maxDepth: 0.34,
+    maxSlopeDeg: 26,
+    /**
+     * What "wind-scoured" means, operationally. Any one of these is enough:
+     * a thin pack, a high upwind-shelter index, or a convex shoulder. §6.2
+     * asks for "convex ridge shoulders and the windward side of outcrops" and
+     * these are the three channels `terrain.sample()` gives us to find them.
+     */
+    scourDepth: 0.30,
+    scourExposure: 0.40,
+    scourCurvature: 0.10,
     /**
      * Above the tussock belt the vegetation is *Raoulia* cushionfield and
      * *Aciphylla* speargrass (TERRAIN_BRIEF §2.13 item 6), not *Chionochloa* —
-     * so this tier exists, but only on scoured windpack, only a third as
-     * dense, and only 0.2–0.4 m of it clears the snow. It is what puts a gold
-     * accent on the spur crests the wide shots actually point at.
+     * so this tier exists, but only on scoured ground, shorter, sparser, and
+     * pulled a little off gold. It is what puts a warm accent on the spur
+     * crests and the crest plateau the wide shots actually point at.
      */
-    fellfieldMaxElevation: 1830,
-    fellfieldFrac: 0.34,
+    fellfieldMaxElevation: 1845,
+    fellfieldMaxDepth: 0.24,
+    fellfieldFrac: 0.55,
     /**
-     * The old 300 m cull was the whole reason the measured high-chroma budget
-     * came back at 0.00% on five of nine frames: every wide preset stands more
-     * than 300 m from any ground that passes the gate, so the accent was
-     * culled before it could be graded. A clump is sub-pixel at 700 m but a
-     * *patch* of them is not, and the patch is the accent.
+     * A clump is sub-pixel at 700 m but a *patch* of them is not, and the
+     * patch is the accent — so the far-field thinning floor is 0.35, not the
+     * 0.08 that deleted the accent from exactly the wide frames that needed
+     * it, and the cull is past the far side of every preset's framing.
      */
-    near: 90, far: 400, cull: 780, minFrac: 0.08,
+    near: 150, far: 600, cull: 900, minFrac: 0.50,
   },
   debris: { limit: 620 },
   lift: { towers: 14, chairSpacing: 42, chairSpeed: 5.0 },
@@ -664,8 +696,16 @@ function buildTussock(rng, opt = {}) {
   const segs = opt.segs ?? 3;
   const height = opt.height ?? 1.0;
   const pos = [], nrm = [], col = [], bend = [];
-  const baseCol = [0.155, 0.108, 0.048];
-  const tipCol = [0.512, 0.352, 0.128];
+  // Linear-light albedo for the two ends of the blade. The tip is the exact
+  // §6.2 gold `#B08A4E` scaled a little brighter (that swatch is the *lit*
+  // appearance, and this is an albedo that still has to be multiplied by the
+  // light); the base is `#6A5738`. The previous tip sat at a linear R:G:B of
+  // 1 : 0.69 : 0.25, which encodes to sRGB `#BDA163` — HSV S = 0.48, right on
+  // the checklist-33 chroma threshold, so half the population fell out of the
+  // measurement the moment any blue skylight landed on it. 1 : 0.62 : 0.18 is
+  // #B08A4E's own ratio and clears the threshold with margin.
+  const baseCol = [0.148, 0.098, 0.038];
+  const tipCol = [0.480, 0.300, 0.086];
 
   const emit = (p, n, c, b) => {
     pos.push(p[0], p[1], p[2]); nrm.push(n[0], n[1], n[2]);
@@ -939,9 +979,19 @@ function buildRopeRun(stations, sag, radius, col) {
   return B.build('soho-rope');
 }
 
-/** Hazard netting panels between posts, UV'd for the alpha-tested net map. */
+/**
+ * Hazard netting panels between posts, UV'd for the alpha-tested net map.
+ *
+ * Each span is subdivided so the top edge can carry a real catenary. The old
+ * builder emitted one quad per span with the *same* `midSag` subtracted at both
+ * ends, which is not a sag at all — it lowered the whole panel by a constant
+ * and left the top edge a straight chord from post to post. A netting run whose
+ * top edge is a polyline through the post tops with no dip between them is one
+ * of the two things that read the fence as a drawn line rather than an object.
+ */
 function buildNetting(stations, height) {
   const pos = [], nrm = [], uvs = [];
+  const SUB = 4;
   for (let i = 0; i < stations.length - 1; i++) {
     const a = stations[i], b = stations[i + 1];
     if (!a || !b) continue;
@@ -949,22 +999,32 @@ function buildNetting(stations, height) {
     const len = Math.hypot(dx, dz);
     if (len < 1e-3 || len > 24) continue;
     const nx = -dz / len, nz = dx / len;
-    // Slight sag in the middle so the run is not a ruler-straight fence.
-    const midSag = Math.min(0.16, len * 0.02);
-    const rail = [
-      [a.x, a.y, a.z], [b.x, b.y, b.z],
-    ];
+    // A slack net between two posts hangs; 4% of the span is a realistic dip
+    // for polypropylene mesh strung by hand.
+    const sag = Math.min(0.22, len * 0.04);
     const uSpan = len / 2.0;
-    const quad = (p0, p1, y0a, y1a, y0b, y1b, u0, u1) => {
-      const A = [p0[0], p0[1] + y0a, p0[2]];
-      const Bv = [p1[0], p1[1] + y0b, p1[2]];
-      const C = [p1[0], p1[1] + y1b, p1[2]];
-      const D = [p0[0], p0[1] + y1a, p0[2]];
+    const ha = Number.isFinite(a.h) ? a.h : height;
+    const hb = Number.isFinite(b.h) ? b.h : height;
+    for (let s = 0; s < SUB; s++) {
+      const t0 = s / SUB, t1 = (s + 1) / SUB;
+      const at = (t) => {
+        const x = a.x + dx * t, z = a.z + dz * t;
+        // Foot follows the ground line between the two post bases; the top
+        // rail is the chord minus the catenary.
+        const foot = lerp(a.y, b.y, t) - 0.12;
+        const top = lerp(a.y + ha, b.y + hb, t) - sag * 4 * t * (1 - t);
+        return { x, z, foot, top };
+      };
+      const p0 = at(t0), p1 = at(t1);
+      const A = [p0.x, p0.foot, p0.z];
+      const Bv = [p1.x, p1.foot, p1.z];
+      const C = [p1.x, p1.top, p1.z];
+      const D = [p0.x, p0.top, p0.z];
       pos.push(...A, ...Bv, ...C, ...A, ...C, ...D);
       for (let q = 0; q < 6; q++) nrm.push(nx, 0, nz);
+      const u0 = t0 * uSpan, u1 = t1 * uSpan;
       uvs.push(u0, 0, u1, 0, u1, 1, u0, 0, u1, 1, u0, 1);
-    };
-    quad(rail[0], rail[1], -0.1, height - midSag, -0.1, height - midSag, 0, uSpan);
+    }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -978,32 +1038,135 @@ function buildNetting(stations, height) {
  * 5.  PROCEDURAL TEXTURES  (zero external assets)
  * ======================================================================== */
 
-/** Orange safety netting: a diamond lattice with an alpha-tested cutout. */
-function makeNetTexture(size = 64) {
-  const data = new Uint8Array(size * size * 4);
-  const strand = 0.16;         // fraction of the cell occupied by the strand
+/**
+ * Orange safety netting: a diamond lattice with an alpha-tested cutout, and
+ * **coverage-preserving mipmaps**, which is the whole point of this function.
+ *
+ * A stock box-filtered mip chain over an alpha-tested cutout does not preserve
+ * the cutout's coverage: a lattice that is 30% opaque at level 0 has *every*
+ * texel sitting near α = 0.3 by level 4, so `alphaTest 0.5` either discards the
+ * entire fence or — with anisotropic filtering picking a much sharper mip along
+ * the minor axis, which is exactly what a 1 m fence viewed at 300 m does —
+ * keeps a nearly solid run of strand texels. That second case is what
+ * `shots/r6/west-spur.png` shows: an unbroken 2 px orange stroke across 350 px
+ * of frame with no netting structure in it at all, reading as a marker-pen line
+ * drawn on the image (tell §11.23).
+ *
+ * The fix is Castano's: box-filter each level, then rescale that level's alpha
+ * so the fraction of texels at or above the alpha-test threshold matches level
+ * 0. The netting then thins into a broken, dotted lattice at range instead of
+ * collapsing to a solid bar or vanishing, at every mip and every anisotropy.
+ */
+function makeNetTexture(size = 128, alphaRef = 0.5) {
+  // ~42% opaque, i.e. a net that is a bit under 60% open — orange bird-mesh,
+  // not a tarpaulin. Coarse cells (three diamonds per tile, ~0.3 m on the
+  // ground) because the fence's whole job is to survive at 200–400 m, and a
+  // 5 cm mesh is under a pixel there whatever the mip chain does.
+  const strand = 0.12;         // fraction of the cell occupied by the strand
+  const cells = 3;             // diamonds across the tile
+  const level0 = new Uint8Array(size * size * 4);
+  const SS = 4;                // supersamples per axis for the level-0 alpha
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const u = x / size, v = y / size;
-      // Two crossed sawtooth families → a diamond mesh.
-      const d1 = Math.abs(((u + v) * 4) % 1 - 0.5) * 2;
-      const d2 = Math.abs(((u - v) * 4 + 8) % 1 - 0.5) * 2;
-      const on = (d1 > 1 - strand * 2) || (d2 > 1 - strand * 2);
+      // Level 0's alpha is a *coverage estimate*, not a binary test. A hard
+      // 0/255 lattice box-filters to a handful of identical alpha values on
+      // the coarse levels — at 4×4 every texel comes out the same number —
+      // and a level whose alphas are all equal can only be scaled to 0% or
+      // 100% coverage, so the whole rescaling scheme degenerates exactly
+      // where it matters. Seventeen distinct edge values is enough to keep
+      // every level's histogram continuous.
+      let acc = 0;
+      for (let sy = 0; sy < SS; sy++) {
+        for (let sx = 0; sx < SS; sx++) {
+          const u = (x + (sx + 0.5) / SS) / size, v = (y + (sy + 0.5) / SS) / size;
+          // Two crossed sawtooth families → a diamond mesh.
+          const d1 = Math.abs(((u + v) * cells) % 1 - 0.5) * 2;
+          const d2 = Math.abs(((u - v) * cells + 8) % 1 - 0.5) * 2;
+          if (d1 > 1 - strand * 2 || d2 > 1 - strand * 2) acc++;
+        }
+      }
+      const u = (x + 0.5) / size, v = (y + 0.5) / size;
       const i = (y * size + x) * 4;
       // Warm orange with a little shading variation along the strand.
       const k = 0.86 + 0.14 * Math.sin((u + v) * 40);
-      data[i] = Math.round(232 * k);
-      data[i + 1] = Math.round(83 * k);
-      data[i + 2] = Math.round(31 * k);
-      data[i + 3] = on ? 255 : 0;
+      level0[i] = Math.round(232 * k);
+      level0[i + 1] = Math.round(83 * k);
+      level0[i + 2] = Math.round(31 * k);
+      level0[i + 3] = Math.round((acc / (SS * SS)) * 255);
     }
   }
-  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
+
+  const coverageOf = (buf, scale) => {
+    let n = 0;
+    for (let i = 3; i < buf.length; i += 4) if ((buf[i] / 255) * scale >= alphaRef) n++;
+    return n / (buf.length / 4);
+  };
+  const target = coverageOf(level0, 1);
+
+  const mipmaps = [{ data: level0, width: size, height: size }];
+  // The box filter always reads the *unscaled* chain. Filtering the already-
+  // rescaled level and then rescaling again compounds the correction, and the
+  // chain collapses to zero coverage two levels from the bottom.
+  let raw = level0, w = size, h = size;
+  while (w > 1 || h > 1) {
+    const nw = Math.max(1, w >> 1), nh = Math.max(1, h >> 1);
+    const next = new Uint8Array(nw * nh * 4);
+    for (let y = 0; y < nh; y++) {
+      for (let x = 0; x < nw; x++) {
+        const x0 = Math.min(w - 1, x * 2), x1 = Math.min(w - 1, x * 2 + 1);
+        const y0 = Math.min(h - 1, y * 2), y1 = Math.min(h - 1, y * 2 + 1);
+        const o = (y * nw + x) * 4;
+        for (let c = 0; c < 4; c++) {
+          next[o + c] = Math.round((
+            raw[(y0 * w + x0) * 4 + c] + raw[(y0 * w + x1) * 4 + c]
+            + raw[(y1 * w + x0) * 4 + c] + raw[(y1 * w + x1) * 4 + c]
+          ) / 4);
+        }
+      }
+    }
+    const dst = next.slice();
+    // Pick the alpha scale whose resulting coverage is *closest* to level 0's.
+    //
+    // Coverage is a step function of the scale, so bisection is the wrong
+    // tool: every distinct alpha value in the level is one step, and on the
+    // coarse levels there are only a handful. Enumerating them is exact, and
+    // it is the only way to get the top of the chain right — a 2×2 level can
+    // only express 0 / 25 / 50 / 75 / 100% and "smallest scale reaching the
+    // target" rounds every one of them up to 100%, which puts the solid
+    // orange bar straight back in the frame at the ranges where it was the
+    // original complaint. Closest-match takes 50% at 2×2 and 0% at 1×1, so
+    // the netting dissolves at extreme range the way sub-pixel coverage of a
+    // 42%-open mesh actually should.
+    const alphas = new Set([0]);
+    for (let i = 3; i < dst.length; i += 4) if (dst[i] > 0) alphas.add(dst[i]);
+    let scale = 0, bestErr = Infinity, bestCov = 0;
+    for (const a of alphas) {
+      // The 1 + 1e-6 matters: without it the candidate that makes alpha `a`
+      // land *exactly* on the test threshold rounds the wrong way in binary
+      // floating point and the level scores zero coverage instead of its
+      // intended half.
+      const cand = a > 0 ? ((alphaRef * 255) / a) * (1 + 1e-6) : 0;
+      const cov = coverageOf(dst, cand);
+      const err = Math.abs(cov - target);
+      // Ties go to the candidate that keeps some coverage: a level that
+      // erases the netting outright is never the right answer while level 0
+      // still has strands in it.
+      if (err < bestErr - 1e-9 || (Math.abs(err - bestErr) <= 1e-9 && cov > bestCov)) {
+        bestErr = err; bestCov = cov; scale = cand;
+      }
+    }
+    for (let i = 3; i < dst.length; i += 4) dst[i] = Math.min(255, Math.round(dst[i] * scale));
+    mipmaps.push({ data: dst, width: nw, height: nh });
+    raw = next; w = nw; h = nh;
+  }
+
+  const tex = new THREE.DataTexture(level0, size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.mipmaps = mipmaps;
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
   tex.magFilter = THREE.LinearFilter;
   tex.minFilter = THREE.LinearMipmapLinearFilter;
-  tex.generateMipmaps = true;
+  tex.generateMipmaps = false;
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.needsUpdate = true;
   return tex;
@@ -1517,7 +1680,16 @@ export class Props {
     // brighter than the shadowed snow around it (§6.1, checklist 23/31). At
     // 0.84 the near-horizontal ledges still load — which the brief requires —
     // but the 45–65° faces stay schist all the way out.
-    this.rockMat = createRockMaterial(ctx, { snowOnRock: 0.84, rockRoughness: 0.72 });
+    // …and 0.84 was still too high once the plate relief has faded. The
+    // accumulation term is `saturate(ledge*1.05 + cavity*0.35 + drift + …)`
+    // scaled by this number, and at 0.84 a 45° facet still comes out ~58%
+    // snow — so a distant outcrop is a pale lozenge *brighter than the
+    // shadowed snow it stands in*, which is precisely backwards: §6.1 puts
+    // shadowed schist at `#3E4453`, well below shadowed snow's `#8897B6`.
+    // At 0.64 a flat-lying ledge still loads (accum ≈ 0.61 → 85% snow, which
+    // the brief requires) but everything past ~35° stays schist, and the tor
+    // field reads as dark geology against white instead of confetti.
+    this.rockMat = createRockMaterial(ctx, { snowOnRock: 0.64, rockRoughness: 0.72 });
     this.rockMat.name = 'props-schist';
 
     // Ground-snow shading for drifts, cornice lips and avalanche blocks, so a
@@ -1537,8 +1709,14 @@ export class Props {
       name: 'props-rope', vertexColors: true, roughness: 0.88, metalness: 0.0,
     });
 
-    this.netTex = makeNetTexture(64);
-    this.netTex.anisotropy = Math.max(1, Math.min(8, ctx?.maxAnisotropy ?? 4));
+    this.netTex = makeNetTexture(128, 0.5);
+    // Capped at 4. Anisotropy selects the mip from the *minor* derivative, so
+    // an alpha-tested cutout viewed edge-on — which is what a 1 m fence at
+    // 300 m is — samples a far sharper level than the footprint deserves. The
+    // coverage-preserving chain in `makeNetTexture` means that no longer
+    // welds the lattice into a solid bar, but there is nothing to gain from
+    // pushing it to 16 either.
+    this.netTex.anisotropy = Math.max(1, Math.min(4, ctx?.maxAnisotropy ?? 4));
     this.netMat = new THREE.MeshStandardMaterial({
       name: 'props-netting',
       map: this.netTex,
@@ -1607,10 +1785,28 @@ export class Props {
      * tor on the crest, a broad low outcrop on rock-classed ground, and an
      * angular block for talus and blockfield.
      */
+    /**
+     * Three LOD levels per archetype.
+     *
+     * The far level used to be `{ slabs: 1, sides: 4 }` — which is a *box*. It
+     * is also the level every wide preset actually renders: a 4 m outcrop at
+     * 400 m subtends 0.009 rad, below the 0.014 threshold, so the entire
+     * outcrop, tor and talus population in `hero-basin`, `west-spur`,
+     * `ridge-backlight` and `air-trick` was drawn as axis-aligned cuboids with
+     * a single flat up-facing cap. That cap loads snow (see `snowOnRock`) and
+     * comes out a pale blue-grey square: the "dozens of near-identical
+     * rectangular blocks scattered on the snow" read, and it is a geometry
+     * bug, not a shading one.
+     *
+     * Two slabs and six sides is 12 quads instead of 5 — 40 triangles against
+     * a 1 px footprint, which is nothing — and it keeps the two things that
+     * make schist schist at range: a tabular plan and a top face tilted to the
+     * foliation dip rather than flat to the sky.
+     */
     const lod = (params) => [
       { geometry: buildSlabStack(makeRng(params.seed), { ...params, slabs: params.slabs, sides: params.sides }), angular: 0.052 },
-      { geometry: buildSlabStack(makeRng(params.seed), { ...params, slabs: Math.max(2, params.slabs - 2), sides: Math.max(4, params.sides - 1), batter: 0.95 }), angular: 0.014 },
-      { geometry: buildSlabStack(makeRng(params.seed), { ...params, slabs: 1, sides: 4, batter: 0.97 }), angular: 0.0 },
+      { geometry: buildSlabStack(makeRng(params.seed), { ...params, slabs: Math.max(2, params.slabs - 2), sides: Math.max(5, params.sides - 1), batter: 0.95 }), angular: 0.012 },
+      { geometry: buildSlabStack(makeRng(params.seed), { ...params, slabs: 2, sides: 6, batter: 0.94, step: (params.step ?? 0.09) * 1.4 }), angular: 0.0 },
     ];
 
     this.geo = {
@@ -1632,9 +1828,18 @@ export class Props {
         // dotted line of poles that marks the piste edge into the distance.
         { geometry: buildPole({ radial: 4, segs: 2, radius: 0.038, tipFrac: 0.16 }), angular: 0.0 },
       ],
+      /**
+       * Fence posts stand `netHeight` + ~0.9 m, i.e. proud of the netting, and
+       * they are deliberately fat: a 28 mm post at the 320 m `west-spur`
+       * framing is 0.18 px and simply is not there, which is why the fence
+       * came back as a bare orange stroke with no structure. A 55 mm post is
+       * still a plausible waratah and it is the thing that turns the line into
+       * a comb. The far level is fatter again for the same reason the marker
+       * poles' far level is.
+       */
       fencePost: [
-        { geometry: buildPole({ height: 1.55, radius: 0.028, tipFrac: 0.0, body: [0.196, 0.166, 0.096] }), angular: 0.010 },
-        { geometry: buildPole({ height: 1.55, radius: 0.038, radial: 4, segs: 2, tipFrac: 0.0, body: [0.196, 0.166, 0.096] }), angular: 0.0 },
+        { geometry: buildPole({ height: 1.0, radius: 0.055, segs: 3, tipFrac: 0.0, body: [0.126, 0.112, 0.078] }), angular: 0.010 },
+        { geometry: buildPole({ height: 1.0, radius: 0.085, radial: 4, segs: 2, tipFrac: 0.0, body: [0.126, 0.112, 0.078] }), angular: 0.0 },
       ],
       flag: [{ geometry: buildFlag({}), angular: 0.0 }],
       tower: [
@@ -1724,7 +1929,17 @@ export class Props {
     // 0.16 h + 0.5 m cap left the small plates sitting on the surface with a
     // razor snow/rock intersection all round — checklist 31, and named in
     // §11.23 as one of the most damning tells in the document.
-    const sink = opt.sink ?? (0.26 * height + Math.min(0.70, (opt.depth ?? 0.3) * 1.15));
+    // …and 0.26 h was still not enough at range. `terrain.getHeight()` is a
+    // bilinear tap on the 2 m heightfield, but the *rendered* surface is a
+    // clipmap whose ring at 300–500 m carries 16 m posts (terrain.js
+    // LOD_LEVELS): on a convex shoulder the drawn mesh sits below the sampled
+    // height by a good fraction of a metre, and a rock keyed to the sampled
+    // height stands clear of it with daylight underneath. Sinking a further
+    // 6% of the footprint (capped at 40 cm so nothing small is buried)
+    // swallows that reconstruction error without changing how anything reads
+    // in the near field, where the two agree to centimetres.
+    const lodSink = Math.min(0.40, 0.06 * Math.max(length, width));
+    const sink = opt.sink ?? (0.30 * height + lodSink + Math.min(0.70, (opt.depth ?? 0.3) * 1.15));
     _e.set(rng.range(-0.10, 0.10), -strike, rng.range(-0.10, 0.10), 'YXZ');
     _q.setFromEuler(_e);
     _v3.set(x, y - sink, z);
@@ -1762,7 +1977,7 @@ export class Props {
     // was full of rock meeting snow at a geometric edge with no collar in
     // sight. 0.34 m is roughly where a drift stops being a lump and starts
     // being a tail, so that is where the gate belongs.
-    if (this.driftField && this.tune.rock.driftCollars && height > 0.34) {
+    if (this.driftField && this.tune.rock.driftCollars && height > 0.22) {
       const scale = Math.max(length, width);
       const dx = this.wind.x, dz = this.wind.z;
       // Offset the mound so its steep face hugs the rock and the tail runs off.
@@ -1789,14 +2004,19 @@ export class Props {
     const T = this.tune;
     const density = clamp(T.density ?? 1, 0.05, 4);
 
+    // Every level writes to the shadow map. At a 10.6° sun a 3 m outcrop owes
+    // a 16 m shadow, and that shadow bar is the only thing in the frame that
+    // says the rock is *in* the snow rather than pasted on it (checklist 24,
+    // 31). Restricting the shadow pass to the near LOD meant every rock past
+    // ~250 m — i.e. all of them, in a wide preset — cast nothing at all.
     this.torField = this._field('tor', this.rockMat, this.geo.tor, {
-      useColor: true, shadowLevels: 2, cullAngular: 0.0022,
+      useColor: true, shadowLevels: 3, cullAngular: 0.0022,
     });
     this.outcropField = this._field('outcrop', this.rockMat, this.geo.outcrop, {
-      useColor: true, shadowLevels: 2, cullAngular: 0.0026,
+      useColor: true, shadowLevels: 3, cullAngular: 0.0026,
     });
     this.blockField = this._field('block', this.rockMat, this.geo.block, {
-      useColor: true, shadowLevels: 1, cullAngular: 0.0040,
+      useColor: true, shadowLevels: 2, cullAngular: 0.0040,
     });
     // The collar casts: a 1 m mound under a 10.6° sun lays down a 5 m shadow
     // bar, and that bar is most of what tells the viewer the rock is *in* the
@@ -1869,8 +2089,13 @@ export class Props {
     for (let i = 0; i < outcrops.count; i++) {
       const x = outcrops.x[i], z = outcrops.z[i];
       const s = P.sample(x, z);
-      const big = rng() < 0.30;
-      const len = big ? rng.range(6, 15) : rng.range(2.2, 6.5);
+      // TERRAIN_BRIEF §1.2 item 3 sizes an Otago tor at 1.5–8 m tall and
+      // 2–15 m long. Weighting the population toward the top of that band and
+      // cutting the head-count in the same breath trades a uniform sprinkle
+      // of 2 px specks for a handful of masses with a legible silhouette,
+      // which is what checklist 32 is asking for.
+      const big = rng() < 0.42;
+      const len = big ? rng.range(7, 15) : rng.range(3.0, 7.5);
       this._addRock(this.outcropField, {
         x, z, y: s.height,
         length: len,
@@ -1906,12 +2131,17 @@ export class Props {
     for (let i = 0; i < plates.count; i++) {
       const x = plates.x[i], z = plates.z[i];
       const s = P.sample(x, z);
-      const l = rng.range(0.25, 1.25);
+      // Periglacial blockfield plates are metre-scale, not decimetre-scale,
+      // and a plate that reads as a sub-pixel speck is noise in the frame
+      // rather than geology. The explicit `sink` is kept — a flat-lying plate
+      // is not a tor and must not be swallowed — but it now clears the 2 m
+      // heightfield's own reconstruction error.
+      const l = rng.range(0.7, 2.4);
       this._addRock(this.blockField, {
         x, z, y: s.height, length: l,
         height: l * rng.range(0.16, 0.34), width: l * rng.range(0.55, 0.9),
         strike: FOLIATION_STRIKE + rng.range(-0.35, 0.35),
-        rng, depth: s.depth, sink: l * 0.10,
+        rng, depth: s.depth, sink: l * 0.14 + 0.10,
       });
     }
   }
@@ -2353,26 +2583,49 @@ export class Props {
     const P = this.probe;
 
     this.fencePostField = this._field('fence-post', this.poleMat, this.geo.fencePost, {
-      castShadow: true, receiveShadow: true, shadowLevels: 2, cullAngular: 0.0035,
+      castShadow: true, receiveShadow: true, shadowLevels: 2, cullAngular: 0.0016,
     });
 
     let budget = Math.round(T.fence.limit * clamp(T.density ?? 1, 0.05, 4));
     const netStations = [];
     const ropeStations = [];
+    const postH = T.fence.postHeight ?? 1.85;
 
     const post = (x, z, out) => {
       if (budget <= 0) return;
       if (Math.abs(x) > 1015 || Math.abs(z) > 1015) { out.push(null); return; }
       const s = P.sample(x, z);
       if (s.slope / DEG > 44) { out.push(null); return; }
-      _e.set(rng.range(-0.05, 0.05), rng() * TAU, rng.range(-0.05, 0.05), 'YXZ');
+      // Height and lean come off a metre-scale noise rather than per-post
+      // white noise, so consecutive posts agree with their neighbours and the
+      // run wanders the way a hand-strung fence does instead of stepping
+      // randomly — the difference between "fence" and "ruler".
+      const w = this.simp.noise2D(x * 0.09, z * 0.09);
+      const w2 = this.simp.noise2D(x * 0.031 + 41.7, z * 0.031 - 18.3);
+      const h = postH * clamp(1 + w * 0.11 + w2 * 0.06, 0.78, 1.20);
+      _e.set(w2 * 0.085 + rng.range(-0.03, 0.03), rng() * TAU, w * 0.085 + rng.range(-0.03, 0.03), 'YXZ');
       _q.setFromEuler(_e);
-      _v3.set(x, s.height, z);
-      _v3b.set(1, rng.range(0.95, 1.05), 1);
+      // Sunk 0.15–0.30 m below the surface: a post driven into windpack sits
+      // in a small crater, and a post whose base stops exactly on the drawn
+      // surface is the decal tell one scale down.
+      _v3.set(x, s.height - 0.15 - 0.15 * clamp01(w * 0.5 + 0.5), z);
+      _v3b.set(1, h, 1);
       _m4.compose(_v3, _q, _v3b);
-      this.fencePostField.add(_m4, 0.95, null);
+      this.fencePostField.add(_m4, h * 0.75, null);
       budget--;
-      out.push({ x, y: s.height, z });
+      // A drift collar at every third post. The fence line is the one place
+      // in the frame where a whole *row* of contact points is visible at once,
+      // so getting the contact wrong there is visible as a pattern.
+      if (this.driftField && rng() < 0.34) {
+        _e.set(0, this.windYaw, 0, 'YXZ');
+        _q.setFromEuler(_e);
+        _v3.set(x + this.wind.x * 0.30, s.height - 0.18, z + this.wind.z * 0.30);
+        const r = rng.range(0.55, 1.15);
+        _v3b.set(r, rng.range(0.14, 0.32), r * 0.8);
+        _m4.compose(_v3, _q, _v3b);
+        this.driftField.add(_m4, r * 1.5, null);
+      }
+      out.push({ x, y: s.height, z, h: Math.min(T.fence.netHeight, h - 0.85) });
     };
 
     /* -- Orange hazard netting along the top of every bluff band ---------- */
@@ -2414,15 +2667,20 @@ export class Props {
     }
 
     if (netStations.length) {
-      const geo = buildNetting(
-        netStations.map((s) => (s ? { x: s.x, y: s.y, z: s.z } : null)),
-        T.fence.netHeight,
-      );
+      // The stations carry their own net height (post height minus the free
+      // post top), so the run's top edge follows the posts rather than sitting
+      // at one constant offset above the ground line.
+      const geo = buildNetting(netStations, T.fence.netHeight);
       this._static(geo, this.netMat, 'props-hazard-netting', { castShadow: true, receiveShadow: false });
-      // The netting is hung on a rope along its top edge.
-      const top = netStations.map((s) => (s ? { x: s.x, y: s.y + T.fence.netHeight, z: s.z } : null));
-      this._static(buildRopeRun(top, 0.05, 0.026, [0.055, 0.058, 0.062]), this.ropeMat, 'props-net-rope', {
-        castShadow: false, receiveShadow: false,
+      // The netting is hung on a rope along its top edge — with the same
+      // catenary the netting has, so the two agree, and casting, because at
+      // 10.6° even a 1.8 m post owes a 9.6 m shadow and the whole point of the
+      // fence is the shadow ladder it lays across the fall line.
+      const top = netStations.map((s) => (
+        s ? { x: s.x, y: s.y + (Number.isFinite(s.h) ? s.h : T.fence.netHeight), z: s.z } : null
+      ));
+      this._static(buildRopeRun(top, 0.16, 0.030, [0.055, 0.058, 0.062]), this.ropeMat, 'props-net-rope', {
+        castShadow: true, receiveShadow: false,
       });
     }
     if (ropeStations.length) {
@@ -2432,7 +2690,7 @@ export class Props {
       });
       const low = ropeStations.map((s) => (s ? { x: s.x, y: s.y + 0.52, z: s.z } : null));
       this._static(buildRopeRun(low, 0.20, 0.024, [0.045, 0.048, 0.052]), this.ropeMat, 'props-boundary-rope-low', {
-        castShadow: false, receiveShadow: false,
+        castShadow: true, receiveShadow: false,
       });
     }
   }
@@ -2466,8 +2724,16 @@ export class Props {
     const yaw = Math.atan2(tx, tz);          // local +Z along the line
     const gauge = 2.6;                       // half the rope spacing
 
+    // Both LOD levels write to the shadow map. A 9.5 m tower owes a 51 m
+    // shadow at 10.6°, which would be one of the strongest compositional
+    // elements in `hero-basin`; with `shadowLevels: 1` every tower past the
+    // 0.020 rad detail threshold — which is anything beyond ~370 m — was
+    // silently dropped from the shadow pass. (This is necessary, not
+    // sufficient: see the note in the report about the single-frustum shadow
+    // fit in sky.js, which is what is actually deleting the near towers'
+    // shadows too.)
     this.towerField = this._field('lift-tower', this.steelMat, this.geo.tower, {
-      castShadow: true, receiveShadow: true, shadowLevels: 1, cullAngular: 0.0012,
+      castShadow: true, receiveShadow: true, shadowLevels: 2, cullAngular: 0.0012,
     });
     this.chairField = this._field('lift-chair', this.steelMat, this.geo.chair, {
       castShadow: true, receiveShadow: true, shadowLevels: 1, cullAngular: 0.0016,
@@ -2496,6 +2762,22 @@ export class Props {
       _m4.compose(_v3, _q, _v3b);
       this.towerField.add(_m4, 7.5 * hs, null);
       addSheave(x, z, g + 9.5 * hs + 0.05);
+
+      // A wind-scoured moat and a lee drift around the base flange. Every mast
+      // in `shots/r6/hero-basin.png` terminates on flat white with a razor
+      // edge and no contact darkening whatever; a real tower foot sits in a
+      // 3–4 m plough of drifted snow, and the collar is geometry that shades
+      // itself even when the shadow pass is not helping.
+      if (this.driftField) {
+        _e.set(0, this.windYaw, 0, 'YXZ');
+        _q.setFromEuler(_e);
+        const ox = x + this.wind.x * 0.9, oz = z + this.wind.z * 0.9;
+        const cr = rng.range(2.3, 3.4);
+        _v3.set(ox, P.height(ox, oz) - 0.55, oz);
+        _v3b.set(cr, rng.range(0.85, 1.35), cr * 0.82);
+        _m4.compose(_v3, _q, _v3b);
+        this.driftField.add(_m4, cr * 1.6, null);
+      }
 
       this._colliders.push({
         type: 'box',
@@ -2527,8 +2809,11 @@ export class Props {
           const y = lerp(A.y, B.y, t) - sag * 4 * t * (1 - t);
           path[side].push({ x, y, z });
           // Triangular prism section — thin, dark, and it must survive at
-          // 800 m, so it is not allowed to get any thinner than this.
-          const r = 0.055;
+          // 800 m, so it is not allowed to get any thinner than this. At 0.055
+          // the haul rope is 0.36 px at the `hero-basin` framing and the
+          // chairs read as detached red ticks with nothing joining them;
+          // 0.085 holds a continuous line without becoming a drawn cable.
+          const r = 0.085;
           const ring = [
             [x, y + r, z],
             [x + px * r * 0.87, y - r * 0.5, z + pz * r * 0.87],
@@ -2624,15 +2909,35 @@ export class Props {
 
   /**
    * Narrow-leaved snow tussock (*Chionochloa rigida*) in the wind-scoured
-   * margins: only where the settled pack is under 25 cm, below 1,560 m and on
-   * ground under 24° (TERRAIN_BRIEF §2.13 — nowhere else). Against a white
-   * field these gold patches are the most valuable natural colour accent we
-   * have, and they are the direct substitute for the reference set's trees.
+   * margins, and cushionfield above the belt. Against a white field these gold
+   * patches are the most valuable natural colour accent we have (§2), and they
+   * are the direct substitute for the reference set's trees.
    *
    * Scattered in two levels — blue-noise patch centres, then a jittered lattice
    * within each patch — because tussock genuinely grows in clumps separated by
    * bare fellfield, and a single flat Poisson over 2 km² would need an 9M-cell
    * background grid to resolve a 0.9 m spacing.
+   *
+   * **Why the gate is written the way it is.** Six rounds measured warm
+   * high-chroma at 0.00–0.13% of frame against §9.2's 1.5–6%, and each round
+   * moved the budget, the cull distance or the colour. None of those was the
+   * problem. The predicate was, in two places:
+   *
+   *   1. `surface === 'rock'` was rejected. `terrain._phaseClassify` labels
+   *      *any* post carrying under 10 cm of snow `rock`, and the depth field
+   *      is explicitly bisected so that 5.5% of the basin sits there — so the
+   *      single largest body of genuinely wind-scoured ground in the basin,
+   *      the exact ground §6.2 asks for, was the first thing discarded.
+   *   2. The 1,560 m ceiling. The basin runs 1,410–1,865 m and every wide
+   *      preset frames 1,500–1,800 m, so the belt proper was almost entirely
+   *      out of shot even when it did place.
+   *
+   * The rule below asks the three questions the art direction actually asks —
+   * is this ground scoured, is it shallow enough to stand in, is it flat
+   * enough to hold a plant — and takes elevation as a *size and species* cue
+   * rather than an on/off switch. On the shipped seed it passes 4.4% of the
+   * basin against the old rule's 1.2%, and 2.4% / 20% inside the `hero-basin`
+   * and `west-spur` framings against 0.7% / 5.5%.
    */
   _placeTussock() {
     const T = this.tune.tussock;
@@ -2647,53 +2952,55 @@ export class Props {
     });
     this.chunked.push(this.tussockField);
 
-    // `relax` widens the depth window on a retry. The primary rule is the
-    // brief's (depth < 0.25 m), but a lean scour year on a given seed can
-    // leave almost nothing eligible, and a basin with no tussock at all loses
-    // the only saturated natural colour in the frame — so the second and third
-    // passes also take deeply wind-scoured convex ground, which is where
-    // ART_DIRECTION §6.2 puts tussock anyway.
+    // `relax` widens the depth window on a retry: a lean scour year on some
+    // future seed could still leave the belt thin, and a basin with no gold in
+    // it at all loses the only saturated natural colour in the frame.
     let relax = 1;
     /**
-     * Returns 0 (nothing grows here), 1 (tussock belt) or 2 (scoured
-     * fellfield: shorter, sparser, greyer). The caller needs the class, not
-     * just a boolean, because the two are different plants at different sizes.
+     * Returns 0 (nothing grows here), 1 (tussock belt: tall gold *Chionochloa*)
+     * or 2 (fellfield above the belt: shorter, sparser, a shade off gold). The
+     * caller needs the class, not just a boolean, because the two are
+     * different plants at different sizes.
      */
     const classify = (x, z) => {
       const s = P.sample(x, z);
-      if (s.surface === 'groomed' || s.surface === 'rock') return 0;
+      // A groomed piste is mown by a winch cat every night. Nothing else is
+      // excluded by surface class — least of all `rock`, which is where
+      // tussock grows.
+      if (s.surface === 'groomed') return 0;
       const slopeDeg = s.slope / DEG;
-      // Tier 1 — the belt proper: TERRAIN_BRIEF §2.13, verbatim.
-      if (slopeDeg <= T.maxSlopeDeg && s.height <= T.maxElevation && s.depth <= T.maxDepth) return 1;
-      // Tier 1b — wind-scoured shoulders inside the belt. Still Chionochloa,
-      // just on ground the flat-and-shallow rule was too tight to reach.
-      if (s.height <= T.maxElevation && slopeDeg <= T.shoulderSlopeDeg
-        && s.depth <= T.shoulderDepth
-        && (s.surface === 'windpack' || s.surface === 'ice' || s.exposure > 0.5)) return 1;
-      // Tier 2 — cushionfield / speargrass above the belt, scoured ground only.
-      if (s.height <= T.fellfieldMaxElevation && slopeDeg <= T.shoulderSlopeDeg
-        && s.depth <= T.shoulderDepth
-        && (s.surface === 'windpack' || s.exposure > 0.6 || s.curvature > 0.12)) return 2;
-      if (relax < 2) return 0;
-      // Tier 3 — a lean scour year on this seed left the belt almost empty;
-      // widen the depth window rather than ship a frame with no accent at all.
-      if (slopeDeg <= T.maxSlopeDeg && s.height <= T.maxElevation
-        && s.depth <= T.maxDepth * 2.2
-        && (s.exposure > 0.55 || s.curvature > 0.12)) return 1;
-      if (relax < 3) return 0;
-      // Tier 4 — the run-out margins below ~1,470 m, where the pack is thin
-      // and patchy and only the heads and seed stalks clear it.
-      return (slopeDeg <= T.maxSlopeDeg && s.height < 1470 && s.depth <= 0.9) ? 1 : 0;
+      if (slopeDeg > T.maxSlopeDeg + relax * 3) return 0;
+      // Wind-scoured, by any of the three channels the terrain exposes: a thin
+      // pack, a high upwind-shelter index, or a convex shoulder (§6.2 —
+      // "convex ridge shoulders and the windward side of outcrops").
+      const scoured = s.depth <= T.scourDepth
+        || s.exposure > T.scourExposure
+        || s.curvature > T.scourCurvature;
+      if (!scoured) return 0;
+      // Tier 1 — the belt proper (TERRAIN_BRIEF §2.13).
+      if (s.height <= T.maxElevation && s.depth <= T.maxDepth * relax) return 1;
+      // Tier 2 — *Raoulia* cushionfield and *Aciphylla* above the belt, on
+      // scoured ground only. Thinned by `fellfieldFrac` at placement.
+      if (s.height <= T.fellfieldMaxElevation && s.depth <= T.fellfieldMaxDepth * relax) return 2;
+      return 0;
     };
     const suitable = (x, z) => classify(x, z) !== 0;
 
     const scatterPatches = () => poissonScatter(makeRng(this._seed('tussock.patches') + relax), {
       minX: b.minX + 20, maxX: b.maxX - 20, minZ: b.minZ + 20, maxZ: b.maxZ - 20,
-      rMin: 9, rMax: 34, k: 8, limit: 420, seedBudget: 26000,
+      // A *wide* blue-noise radius, deliberately. Bridson grows a connected
+      // front from each seed and only re-seeds when that front dies, so a
+      // tight radius lets the first eligible region absorb the entire patch
+      // budget: at rMin 11 all twelve populated chunks came out west of
+      // x = −380 and the `hero-basin` framing got nothing. At rMin 28 a patch
+      // costs ~700 m² of the 180,000 m² eligible area, which is the whole
+      // budget — so the sampler is forced to spread across every scoured
+      // shoulder in the basin instead of carpeting one of them.
+      rMin: 28, rMax: 88, k: 8, limit: T.patches, seedBudget: 40000,
       radiusAt: (x, z) => {
         // Denser patches where the wind has scoured hardest.
         const s = P.sample(x, z);
-        return lerp(34, 9, clamp01(s.exposure * 0.7 + (1 - s.depth / T.maxDepth) * 0.4));
+        return lerp(88, 28, clamp01(s.exposure * 0.7 + (1 - s.depth / T.maxDepth) * 0.4));
       },
       accept: (x, z) => (this._cleared(x, z) ? false : suitable(x, z)),
     });
@@ -2702,6 +3009,9 @@ export class Props {
     while (patches.count < 90 && relax < 3) {
       relax++;
       patches = scatterPatches();
+    }
+    if (typeof console !== 'undefined' && CONFIG.debug?.verbose) {
+      console.info(`[props] tussock: ${patches.count} patches at relax ${relax}`);
     }
 
     // Spread the budget across every patch rather than filling the first few:
@@ -2713,8 +3023,17 @@ export class Props {
     for (let p = 0; p < patches.count; p++) {
       let budget = perPatch;
       const cx = patches.x[p], cz = patches.z[p];
-      const radius = rng.range(2.8, 9.0);
-      const spacing = rng.range(0.85, 1.5);
+      const radius = rng.range(5.0, 14.0);
+      // The lattice pitch is derived from the budget and the patch area rather
+      // than rolled independently. With an independent pitch the lattice
+      // produces several times more candidates than the budget allows and the
+      // budget runs out partway down the *first few rows* — every patch came
+      // out as a crescent along its northern edge, at roughly a tenth of the
+      // density the numbers said it had. Solving for the pitch makes the
+      // budget and the geometry agree, so a patch fills as a patch.
+      const wanted = perPatch / (0.62 * (relax > 1 ? 0.8 : 1));
+      const spacing = clamp(Math.sqrt((Math.PI * radius * radius) / Math.max(1, wanted)), 0.55, 1.5)
+        * rng.range(0.92, 1.08);
       const n = Math.ceil((radius * 2) / spacing);
       for (let j = 0; j <= n && budget > 0; j++) {
         for (let i = 0; i <= n && budget > 0; i++) {
@@ -2734,31 +3053,38 @@ export class Props {
           // 0.45–0.85 m tall, and the deeper the snow the less of it clears —
           // down to heads and seed stalks only (§1.4: 0.1–0.4 m showing).
           const sink = clamp(s.depth * 0.9, 0.0, 0.55);
-          const showing = clamp(0.86 - s.depth * 0.62, 0.14, 0.86) * rng.range(0.82, 1.12)
-            * (cls === 2 ? 0.45 : 1.0);
+          const showing = clamp(0.88 - s.depth * 0.62, 0.18, 0.88) * rng.range(0.82, 1.12)
+            * (cls === 2 ? 0.48 : 1.0);
           const h = showing + sink;
-          const spread = cls === 2 ? rng.range(0.55, 0.85) : rng.range(0.80, 1.25);
+          const spread = cls === 2 ? rng.range(0.65, 1.00) : rng.range(1.00, 1.55);
           _e.set(rng.range(-0.10, 0.10), rng() * TAU, rng.range(-0.10, 0.10), 'YXZ');
           _q.setFromEuler(_e);
           _v3.set(gx, s.height - sink, gz);
-          _v3b.set(spread, h, cls === 2 ? spread * rng.range(0.9, 1.1) : rng.range(0.80, 1.25));
+          _v3b.set(spread, h, cls === 2 ? spread * rng.range(0.9, 1.1) : spread * rng.range(0.85, 1.15));
           _m4.compose(_v3, _q, _v3b);
-          // Bronze → straw → gold, plus the odd silvered seed head. The mesh's
-          // baked vertex colour already runs #6A5738 → #B99A5E, so this is the
-          // per-clump multiplier around it; cushionfield is pulled toward a
-          // greyer olive because *Raoulia* is not gold.
+          // Bronze → straw → gold. The mesh's baked vertex colour already runs
+          // #6A5738 → #B08A4E, so this is the per-clump multiplier around it.
+          //
+          // Every one of these ramps keeps R > G > B at both ends. The old
+          // cushionfield ramp had G *above* R, pulling tier 2 to a neutral
+          // olive — and tier 2 is the only tier that reaches the elevations
+          // the `hero-basin` and `ridge-backlight` presets frame, so the one
+          // place the accent could have appeared in those shots was the one
+          // place it was desaturated out. Cushionfield is duller than snow
+          // tussock, but *Aciphylla* and dead *Chionochloa* litter are bronze,
+          // not grey.
           const k = rng();
           if (cls === 2) {
             baseCol.setRGB(
-              lerp(0.74, 1.00, k) * rng.range(0.94, 1.06),
-              lerp(0.80, 1.02, k) * rng.range(0.95, 1.05),
-              lerp(0.80, 0.96, k) * rng.range(0.93, 1.07),
+              lerp(0.82, 1.06, k) * rng.range(0.95, 1.05),
+              lerp(0.76, 0.96, k) * rng.range(0.95, 1.05),
+              lerp(0.64, 0.82, k) * rng.range(0.93, 1.07),
             );
           } else {
             baseCol.setRGB(
-              lerp(0.86, 1.28, k) * rng.range(0.94, 1.06),
-              lerp(0.88, 1.16, k) * rng.range(0.95, 1.05),
-              lerp(0.82, 1.05, k) * rng.range(0.92, 1.08),
+              lerp(0.94, 1.30, k) * rng.range(0.95, 1.05),
+              lerp(0.86, 1.14, k) * rng.range(0.95, 1.05),
+              lerp(0.70, 0.96, k) * rng.range(0.93, 1.07),
             );
           }
           this.tussockField.add(_m4, gx, gz, baseCol);

@@ -759,6 +759,7 @@ uniform vec4  uSurfRough;        // powder, windpack, groomed, ice
 uniform vec4  uSurfWrap;         // diffuse wrap width per class
 uniform vec3  uSssColor;         // transport tint, raw
 uniform vec3  uSssTint;          // transport tint, max-channel normalised
+uniform vec3  uSkyFillTint;      // 15,000 K sky illuminant (ART_DIRECTION §4.2)
 uniform float uSssStrength;
 uniform vec2  uWindDir;          // unit, world XZ, direction the wind TRAVELS
 uniform float uSparkleTime;
@@ -825,9 +826,34 @@ float sohoHG( float cosT, float g ) {
  * specular direction and migrates as the camera swings.
  */
 float sohoGlintLayer( vec3 wp, vec3 wN, vec3 Hw, float density, float sharp, float coverage, float seed ) {
-	vec2 cell = floor( wp.xz * density + seed );
+	vec2 gp = wp.xz * density + seed;
+	vec2 cell = floor( gp );
 	vec3 r = sohoHash33( vec3( cell, seed ) );
 	float alive = step( 1.0 - coverage, r.z );
+
+	// ---- shape -----------------------------------------------------------
+	// A glint is ONE ice facet a fraction of a millimetre across.  Lighting the
+	// whole lattice cell is what produced the axis-aligned white rectangles
+	// (tell #12, checklist 25): the cell is 3-8 cm of ground, so at 2 m it is a
+	// 3-5 px square with flat sides and square corners, and shrinking the cell
+	// just moves the same square closer to the camera.
+	//
+	// So the cell is a *placement* lattice, not the mark.  Each live cell owns a
+	// single jittered point, drawn with a radius pinned to the PIXEL footprint —
+	// which makes the mark ~2 px across at every distance, round because the
+	// falloff is radial, and sub-cell because the radius is clamped well inside
+	// the cell.  The jitter is confined to the middle 40% of the cell so a point
+	// never clips against its own cell boundary and reads as a half-moon.
+	vec3 j = sohoHash33( vec3( cell, seed + 19.0 ) );
+	float cellW = 1.0 / max( density, 1.0e-4 );                 // metres per cell
+	// No lower clamp: 0.75 x the footprint is already ~1.5 px across by
+	// construction, and any floor expressed in metres becomes a fat lozenge
+	// again the moment the camera gets close enough.
+	float radW = min( 0.75 * sohoFootprint, 0.28 * cellW );
+	float dW = length( fract( gp ) - ( j.xy * 0.4 + 0.3 ) ) * cellW;
+	float spot = 1.0 - smoothstep( radW * 0.45, radW, dW );
+
+	// ---- lobe ------------------------------------------------------------
 	// Slow per-facet breathing: real twinkle comes from motion, but a little
 	// life keeps a static frame from looking printed.  Never fast enough to read
 	// as noise.
@@ -847,9 +873,12 @@ float sohoGlintLayer( vec3 wp, vec3 wN, vec3 Hw, float density, float sharp, flo
 	// set still clusters about the specular direction instead of spraying evenly
 	// over the slope (checklist 25 wants sparse and intense, not a uniform field).
 	lobe *= saturate( dot( facet, wN ) );
-	// Kill a lattice once its cells drop below a pixel, or it becomes shimmer.
-	float sizeFade = 1.0 - smoothstep( 0.30, 0.95, sohoFootprint * density );
-	return lobe * alive * sizeFade;
+	// Kill a lattice once its cells drop under ~1.4 px.  Below that there is more
+	// than one cell per fragment, only one of them is ever evaluated, and the
+	// field turns into shimmer.  0.72 (was 0.95) is the honest limit now that the
+	// mark is a point inside the cell rather than the cell itself.
+	float sizeFade = 1.0 - smoothstep( 0.28, 0.72, sohoFootprint * density );
+	return lobe * spot * alive * sizeFade;
 }
 
 /** Mikkelsen bump-from-screen-derivatives (as used by three's bumpmap chunk). */
@@ -897,10 +926,14 @@ const RE_DIRECT_SNOW = /* glsl */ `
 		float trans = smoothstep( 0.30, -0.35, ndl ) * sohoSSSAmount;
 		reflectedLight.directDiffuse += directLight.color * ( trans * 0.85 ) * uSssColor * material.diffuseContribution * RECIPROCAL_PI;
 
-		// (e) Crystal glints — two non-harmonic world lattices.
+		// (e) Crystal glints — two non-harmonic world lattices.  The second one
+		//     used to run at 3.87x the density and 0.7x the coverage, i.e. ~4000
+		//     live cells per square metre, which is where most of the uniform dim
+		//     glitter field came from.  2.13x / 0.40x keeps the near-field
+		//     richness without the carpet.
 		vec3 Hw = normalize( ( vec4( normalize( sL + sV ), 0.0 ) * viewMatrix ).xyz );
 		float gl = sohoGlintLayer( vSnowWorldPos, sohoNormalW, Hw, uGlint.x, uGlint.y, uGlint.w, 0.0 );
-		gl += 0.55 * sohoGlintLayer( vSnowWorldPos, sohoNormalW, Hw, uGlint.x * 3.87, uGlint.y * 0.7, uGlint.w * 0.7, 17.0 );
+		gl += 0.45 * sohoGlintLayer( vSnowWorldPos, sohoNormalW, Hw, uGlint.x * 2.13, uGlint.y * 0.75, uGlint.w * 0.40, 17.0 );
 		reflectedLight.directSpecular += directLight.color * ( gl * uGlint.z * sohoGlintMul * saturate( ndl * 5.0 ) );
 	}
 
@@ -941,13 +974,38 @@ const RE_DIRECT_SNOW = /* glsl */ `
  *                shadow-map fetch, no dependency on another module's chunk
  *                patch, and it tracks the PCF kernel exactly.
  *
- * The 0.55 ceiling is chosen against the measured table: `uSssTint` is
- * `sssColor` max-normalised, ≈ (0.653, 0.779, 1.0), and `mix(1, tint, 0.55)` is
- * (0.809, 0.878, 1.0) — which is the researched snow-on-snow bounce tint — for
- * a B/R multiplier of 1.24 on the fill.  Against the ≈1.05 the ambient arrives
- * at, that lands shadowed snow at B/R ≈ 1.30, mid-band for LAW 2, while costing
- * the fill 13% of its luminance (hero-basin currently sits at 0.656, above the
- * 0.22–0.55 band, so shedding a little there is the right direction too).
+ * Two corrections over the round-1 form of this block, both of which are about
+ * *which* physical quantity the tint stands for rather than about its size:
+ *
+ *  1. **It is an illuminant, not a transport tint.**  The colour used here was
+ *     `uSssTint` — `CONFIG.snow.sssColor` max-normalised.  §3.2 is explicit
+ *     that `sssColor` is Blue #2, the *transport* tint, and that collapsing the
+ *     two mechanisms into one is the classic failure.  The shadow fill is
+ *     Blue #1: a 15,000 K sky, i.e. §4.2's (0.63, 0.76, 1.00).  The two happen
+ *     to be within 4% of each other in B/R, so this is a semantics fix that
+ *     deliberately does not move the measured number — but it means a future
+ *     change to `sssColor` (a trench-wall property) no longer silently rotates
+ *     every shadow in the game.  The transport tint is still mixed in where the
+ *     concavity gate says the pocket is deep enough to earn it.
+ *
+ *  2. **It must not steal fill luminance.**  §4.4's last bullet: shadow colour
+ *     comes from the fill, "not from multiplying to black".  A raw
+ *     `mix(1, tint, a)` is a multiply by a vector whose every component is <= 1,
+ *     so it darkened the shadowed fill by 13% — a *level* change smuggled in
+ *     under a *hue* change, and level is exactly the quantity LAW 3 measures.
+ *     Renormalising to unit luminance makes this a pure chromaticity rotation:
+ *     the fill keeps its level and only its colour moves, which is the honest
+ *     stand-in for "in shadow you keep the blue sky and lose the neutral snow
+ *     bounce" that `sky.js` delivers structurally.
+ *
+ * Sizing, held deliberately still.  Measured over `shots/r6`, shadow B/R lands
+ * at 1.204 / 1.264 / 1.368 / 1.417 on the four frames that contain a real cast
+ * shadow — that is LAW 2 satisfied, and the six "failures" are frames whose
+ * 10th-percentile snow pixel is not in shadow at all (see the fill-ratio work
+ * in SNOW_SURFACE).  So the ceiling moves 0.55 -> 0.52 purely to cancel the
+ * +4% B/R that the sky illuminant carries over the transport tint, holding the
+ * fill's B/R multiplier at 1.238 (was 1.236).  Nothing here is re-tuned; the
+ * frames that pass must keep passing.
  */
 const INDIRECT_TINT = /* glsl */ `
 #ifdef SOHO_SNOW
@@ -962,9 +1020,16 @@ const INDIRECT_TINT = /* glsl */ `
 		// caps the fill at 0.55 of sunlit, i.e. a ratio of 0.8), ~0 inside a cast
 		// shadow.  The knee sits low so penumbra ramps rather than steps.
 		float sunOccl = 1.0 - smoothstep( 0.04, 0.32, beamLum / max( fillLum, 1.0e-5 ) );
-		float shadowTint = max( saturate( sohoSSSAmount ),
-			0.55 * max( sunAway, sunOccl ) * sohoSnowness );
-		reflectedLight.indirectDiffuse *= mix( vec3( 1.0 ), uSssTint, shadowTint );
+		float concav = saturate( sohoSSSAmount );
+		float shadowTint = max( concav, 0.52 * max( sunAway, sunOccl ) * sohoSnowness );
+		// Chromaticity of the light that survives into shadow: the 15,000 K sky
+		// (§4.2), pulled toward the pack's own red-depleted transport colour only
+		// where the concavity gate says the photons took a long path (§3.2).
+		vec3 fillCol = mix( uSkyFillTint, uSssTint, concav );
+		vec3 tint = mix( vec3( 1.0 ), fillCol, shadowTint );
+		// Pure hue rotation: unit luminance, so LAW 3's ratio is untouched.
+		tint /= max( dot( tint, vec3( 0.2126, 0.7152, 0.0722 ) ), 1.0e-4 );
+		reflectedLight.indirectDiffuse *= tint;
 	}
 #endif
 `;
@@ -1016,7 +1081,30 @@ const SNOW_SURFACE = /* glsl */ `
 	#endif
 
 	// ---- detail fades ----
+	// Two independent guards per band, and BOTH are needed:
+	//
+	//   * a footprint guard, which deletes a layer once its features stop being
+	//     resolvable (a Nyquist argument), and
+	//   * a distance guard, which deletes it once physics has deleted the
+	//     contrast whether or not the pixels could still resolve it — §5.3
+	//     item 1: "fade detail-normal amplitude to zero over 40 -> 250 m.  Most
+	//     of the missing far-field contrast reduction is an LOD bug, not a fog
+	//     bug."
+	//
+	// Band 3 (the drift/sastrugi map) previously had ONLY the footprint guard,
+	// and that guard was written against the 11 m *tile* rather than the 1.375 m
+	// *ripple* the tile carries.  On a facing slope across the basin a pixel
+	// covers ~0.8 m at 300 m, so the guard was still passing 60% amplitude at
+	// 150 m and did not reach zero until ~280 m.  The result was a regular 6-8 px
+	// corrugation running unbroken over hundreds of metres of mid-slope, which
+	// put more local contrast in the FAR field than in the near one and inverted
+	// the near/far sigma ratio (checklist 17 / 27, measured 0.18-1.92 against a
+	// >= 4.0 gate).  It now carries the same 40 -> 250 m fade the grain layers do.
 	float fadeFar = 1.0 - smoothstep( uDetailFade.x, uDetailFade.y, sohoDist );
+	// The macro band is 4.25 m features, an order of magnitude coarser, so it is
+	// allowed to survive much further out — it is what carries the old tracks and
+	// the broad settling into the mid field (checklist 28) — but it too has to end.
+	float fadeMacro = 1.0 - smoothstep( uDetailFade.x * 3.5, uDetailFade.y * 2.6, sohoDist );
 	// The grain layer's guard used a 24x multiplier, which drove f1 to zero once
 	// the pixel footprint passed ~1.7 cm — i.e. at 3-10 m, exactly the range the
 	// near-field grain is supposed to be carrying.  A 0.37 m tile is only
@@ -1024,8 +1112,13 @@ const SNOW_SURFACE = /* glsl */ `
 	// 24.0 was simply deleting the near field (checklist 4 / 27).
 	float f1 = ( 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 6.0 / uDetailScale.x ) ) * fadeFar;
 	float f2 = ( 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 24.0 / uDetailScale.y ) ) * fadeFar;
-	float f3 = 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 16.0 / uDetailScale.z );
-	float f4 = 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 14.0 / uDetailScale.w );
+	// 1.375 m sastrugi wavelength inside an 11 m tile (bakeSnowDrift: P = 8 over
+	// uDetailScale.z), so the footprint guard has to be written against the
+	// RIPPLE, not the tile: half amplitude by a quarter wavelength per pixel,
+	// gone by half a wavelength per pixel.
+	float sastLambda = uDetailScale.z / 8.0;
+	float f3 = ( 1.0 - smoothstep( 0.25 * sastLambda, 0.50 * sastLambda, sohoFootprint ) ) * fadeFar;
+	float f4 = ( 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 20.0 / uDetailScale.w ) ) * fadeMacro;
 
 	// ---- snow-on-rock: never a razor edge ----
 	// Accumulation is biased by aspect (up-facing ledges hold), by the drift
@@ -1078,8 +1171,33 @@ const SNOW_SURFACE = /* glsl */ `
 		trkComp   = saturate( tk.b * tk.a );
 	#endif
 
-	// Sastrugi only exist where the wind works the surface.
-	float sastrugiW = sfWind + 0.55 * sfIce + 0.30 * sfPow + 0.05 * sfGroom;
+	// TERRAIN_BRIEF §2.8 is categorical: "Sastrugi (only where surface ∈
+	// {'windpack','ice'})".  The old weight ran the band at 0.30 on powder,
+	// which painted a wind-carved 1.375 m ripple field across the 52% of the
+	// basin that is deep, smooth, lee-side powder — i.e. across the entire
+	// shadowed mid-slope, which is exactly where the corrugation was reported.
+	//
+	// But the drift map is a superposition of TWO phenomena (bakeSnowDrift):
+	// the sastrugi sawtooth, and 3-8 m wind pillows and dunes.  Only the first
+	// is windpack-exclusive; the dunes are lee deposition and are the reason
+	// powder is not a flat plane.  Zeroing the whole band on powder would throw
+	// the dunes away with the sastrugi and leave half the mountain plastic.
+	// tDr.z is the bake's own sastrugi crest mask, so the two separate
+	// per-fragment: wind-worked snow gets the whole map, everything else keeps
+	// the map away from the crests and loses it on them.  Groomed corridors are
+	// tilled flat and keep almost none of it — the corduroy term below is their
+	// surface structure.
+	float windWorked = saturate( sfWind + 0.55 * sfIce );
+	float sastrugiW = mix( 1.0 - tDr.z, 1.0, windWorked ) * ( 1.0 - 0.80 * sfGroom );
+
+	// (f) Surface-state variation WITHIN a class.  terrain.sample() classifies on
+	// a ~4 m post spacing, but the pack varies at 1-10 m: crests are scoured,
+	// wind-hardened and smoother; troughs hold softer, deeper, rougher snow.
+	// Without this the frame has exactly as many snow types as the classifier
+	// has classes and reads as a single material (checklist 18).  Driven off the
+	// drift height and the macro breakup, and carried by the same two fades as
+	// the geometry they describe so it never manufactures far-field contrast.
+	float packVar = ( tDr.w - 0.5 ) * 1.20 * f3 + ( tMc.z - 0.5 ) * 0.70 * f4;
 
 	// ---- height gradients, summed across scales ----
 	// (chain rule: a lookup at uv = A * p has world gradient A^T * g, which in
@@ -1174,6 +1292,11 @@ const SNOW_SURFACE = /* glsl */ `
 	// ---- roughness ----
 	float rough = uSurfRough.x * sfPow + uSurfRough.y * sfWind + uSurfRough.z * sfGroom + uSurfRough.w * sfIce;
 	rough *= 0.90 + 0.18 * tG1.w;
+	// Crests are wind-hardened and slightly smoother, troughs softer and rougher
+	// (§3.4f, §3.1's albedo/roughness-by-state table).  +-13% is a state change,
+	// not a texture: it is visible as the slope changing character across a
+	// drift, which is what stops one snow reading everywhere.
+	rough *= 1.0 - 0.13 * packVar;
 	rough = mix( rough, rough * 0.80, trkComp );
 	rough = mix( rough, rough * 0.86, tMc.w * 0.6 );
 	rough = mix( rough, uRockRough, rockF );
@@ -1184,6 +1307,10 @@ const SNOW_SURFACE = /* glsl */ `
 
 	// ---- shading-model scalars ----
 	sohoWrap = uSurfWrap.x * sfPow + uSurfWrap.y * sfWind + uSurfWrap.z * sfGroom + uSurfWrap.w * sfIce;
+	// Same state axis as the roughness above: a wind-hardened crest transports
+	// less and has a crisper terminator than the loose snow in the trough beside
+	// it (§3.4a, "fresh loose powder w = 0.50, windpack 0.35").
+	sohoWrap *= 1.0 - 0.16 * packVar;
 	sohoWrap = mix( sohoWrap, 0.05, rockF );
 
 	// Concavity gates the transport blue: trench interiors, drift undercuts,
@@ -1417,9 +1544,17 @@ function buildUniforms(ctx, opts) {
     // least three octaves at non-harmonic scales plus a low-frequency breakup.
     uDetailScale: { value: new THREE.Vector4(0.37, 1.9, 11.0, 34.0) },
     // Peak surface gradient contributed by each layer (the maps are normalised
-    // at bake time, so these are the real numbers): 0.30 is a 17 deg facet.
+    // at bake time, so these are the real numbers): 0.38 is a 21 deg facet.
+    //
+    // The two grain layers carry the near field and nothing else — f1 is gone by
+    // ~7 cm/px and f2 by ~9 cm/px — and at 0.30/0.20 the macro framing rendered
+    // as a smooth slab between the drift scribbles, with a 32 px-tile sigma of
+    // 7.9 and a mean frame saturation of 0.074 on `snow-detail`.  That is the
+    // "no material at the closest possible framing" blocker.  0.38/0.25 is a
+    // 27% lift on a layer that is *only* ever seen inside ~10 m, so it cannot
+    // touch the far field or re-open tell #15 (over-texturing at distance).
     uDetailAmp: {
-      value: new THREE.Vector4(0.30, 0.20, 0.62 * (sastrugi / 0.55), 0.13),
+      value: new THREE.Vector4(0.38, 0.25, 0.62 * (sastrugi / 0.55), 0.13),
     },
     uDetailFade: { value: new THREE.Vector2(40, 250) },
 
@@ -1429,25 +1564,66 @@ function buildUniforms(ctx, opts) {
 
     //                              powder windpack groomed  ice
     uSurfRough: { value: new THREE.Vector4(0.58, 0.42, 0.36, 0.09) },
-    uSurfWrap: { value: new THREE.Vector4(0.50, 0.35, 0.30, 0.10) },
+    // Diffuse wrap width, §3.4(a).  The doc's band is 0.35–0.50 and its own
+    // worked example ("at w = 0.40 the falloff spreads an extra 23.6 deg") sits
+    // at 0.40, which is where powder now is.
+    //
+    // Why it moved off the top of the band: at a 10.6 deg sun every surface in
+    // the basin is near the terminator — flat ground is at N·L = 0.184 — so the
+    // wrap is not a small correction here, it is the dominant term.  At w = 0.50
+    // `saturate((N·L + w)/(1 + w))` lifts flat ground from 0.184 to 0.456 and a
+    // face turned 10 deg away from 0.0 to 0.227, i.e. it manufactures fill out
+    // of the sun term and flattens the snow histogram until the 10th-percentile
+    // "shadow" sample is not a shadow at all.  Measured over `shots/r6`: the
+    // four frames with a real cast shadow land LAW 2 at B/R 1.204–1.417, and the
+    // six that fail it all have linear fill ratios of 0.57–0.68 — above the
+    // 0.22–0.55 band — because their darkest snow is merely turned away, not
+    // shadowed.  Narrowing the wrap deepens exactly those pixels and leaves cast
+    // shadows (where `directLight.color` is already zero) completely untouched,
+    // so the four passing frames cannot be pushed out of band by this.
+    uSurfWrap: { value: new THREE.Vector4(0.40, 0.33, 0.27, 0.09) },
 
     uSssColor: { value: new THREE.Color(sss[0], sss[1], sss[2]) },
     uSssTint: { value: new THREE.Color(sss[0] / sssMax, sss[1] / sssMax, sss[2] / sssMax) },
+    // 15,000 K clear high-altitude sky, ART_DIRECTION §4.2.  This is Blue #1 —
+    // the illuminant that lights shadowed snow — and it is deliberately a
+    // different constant from `sssColor`, which is Blue #2, the transport tint.
+    uSkyFillTint: { value: new THREE.Color(0.63, 0.76, 1.0) },
     uSssStrength: { value: snow.sssStrength ?? 0.62 },
 
     uWindDir: { value: windDirectionGame() },
     uSparkleTime: { value: 0 },
     // density (lattice cells per metre), lobe sharpness, intensity, coverage
+    //
+    // The three numbers below are the whole of §3.4(e)'s "sparse and intense,
+    // never a uniform overlay", and the previous set was the exact inverse of
+    // it: 34 cells/m at 0.34 coverage is a 2.9 cm lattice firing 34% of its
+    // cells, i.e. ~390 live cells per square metre before the second layer adds
+    // another ~4000.  Measured in `shots/r6`: 133 discrete blobs over 1.11% of
+    // `snow-detail` at 1.18x the local background, against a < 0.5%-of-snow-area
+    // cap and a 3-20x intensity floor — over budget on area and under it on
+    // intensity simultaneously, which is tell #12 verbatim.
+    //
+    //   density  34 -> 12 cells/m.  An 8.3 cm cell instead of a 2.9 cm one, so
+    //            the placement lattice stays several pixels wide out to the
+    //            distance limit and the point drawn inside it is genuinely
+    //            sub-cell rather than the cell itself.
+    //   coverage 0.34 -> 0.16.  ~23 live cells/m2 rather than ~390.
+    //   sharp    190 -> 340.  A 3.9 deg half-power cone (dot(H, facet) > 0.998
+    //            reads at 0.56 of peak, 8 deg off at 0.05), so the fired set
+    //            collapses toward the sun's specular direction instead of
+    //            spraying evenly over the slope.  620 remains unreachable.
+    //   strength 9.0 -> 16.0.  Not a big lift, on purpose: a well-aligned glint
+    //            already clipped at 9.0 and the dim majority was the actual
+    //            defect.  1.8x compensates for the mark now being ~2 px of a
+    //            multisampled pixel rather than a filled cell, which is where
+    //            the survivors get their 3-20x back.
     uGlint: {
       value: new THREE.Vector4(
-        34 * Math.sqrt(sparkleDensity / 1400),
-        // Lobe sharpness.  620 is a 2.4 deg half-power cone — far tighter than
-        // the facet lattice can ever satisfy under a 10.6 deg sun, so the term
-        // never fired.  190 is a ~5.9 deg cone: still a hard, star-like point,
-        // but reachable.  See sohoGlintLayer().
-        190,
-        9.0 * sparkleStrength,
-        0.34,
+        12 * Math.sqrt(sparkleDensity / 1400),
+        340,
+        16.0 * sparkleStrength,
+        0.16,
       ),
     },
     uGlintRange: { value: new THREE.Vector2(25, 40) },

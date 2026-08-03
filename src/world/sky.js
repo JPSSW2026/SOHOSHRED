@@ -214,6 +214,33 @@ function snowAlbedoRGB(scalar) {
 const GROUND_LIT_FRACTION = 0.46;
 
 /**
+ * Effective solid-angle share of the snowfield seen from a scattering point,
+ * used by the isotropic multiple-scattering / ground-coupling pass.
+ *
+ * This is the term that makes an *alpine* horizon.  A horizontal view ray at
+ * 1800 m runs for hundreds of kilometres of optical path over a surface whose
+ * albedo is 0.86, and the radiance of that surface (albedo · E_horizontal / π)
+ * is roughly **twice** the single-scattered sky radiance in the same direction.
+ * Light that bounces off the snowfield and is then scattered toward the eye is
+ * therefore not a correction to the horizon, it is a large part of *what the
+ * horizon is* — and because `massR/massM` (the scattering column) is ~11×
+ * larger along a grazing ray than along a vertical one, this term lands almost
+ * entirely on the low sky and barely touches the zenith.  That is exactly the
+ * shape §12 asks for: `#0F4C8E` at the top of frame running to `#C2D4EA` at the
+ * horizon, and it is why snow country has a bright pale horizon while the same
+ * atmosphere over dark ground does not.
+ *
+ * It was 0.30, with a note that 0.55 "bleached the Rayleigh blue out of the
+ * whole dome".  That was true when the scattering column was shared from the
+ * *green* channel across all three: sharing green under-weights the blue where
+ * the column is thin, so the (spectrally flatter) ground term arrived at the
+ * zenith with nothing to compete against.  With the column evaluated per
+ * channel the blue reaches the zenith at 2.3× the green, and the geometric
+ * value is affordable — measured top-of-frame stays at S ≥ 0.5.
+ */
+const GROUND_VIEW_FACTOR = 0.52;
+
+/**
  * The camera, in three constants.  These are the only numbers in this file that
  * are not pure atmospheric physics, and each stands for a real thing a
  * photographer does when shooting snow.  They were fitted offline against
@@ -236,15 +263,61 @@ const GROUND_LIT_FRACTION = 0.46;
  * sky as *seen*, never to the sky as a *light source*: the environment probe
  * compiles with it disabled, so the fill stays physical.
  *
- * `SKY_CALIBRATION` — a single scale on sky radiance.  It stands in for the two
- * things this renderer cannot trace: the terrain that occludes the low sky from
- * a point inside a cirque (a large share of the hemispherical irradiance), and
- * the absence of true global illumination.  What that terrain reflects back is
- * returned explicitly by `BOUNCE_VIEW_FACTOR` below.
+ * `SKY_TERRAIN_OCCLUSION` — the terrain that hides the low sky from a point
+ * inside a cirque.  This used to be a single `SKY_CALIBRATION` applied to sky
+ * radiance itself, i.e. to the dome, the aerial perspective *and* the fill, and
+ * that is a category error: occlusion is a property of the **hemisphere over a
+ * surface**, not of the radiance along a ray.  A camera looking at the sky over
+ * the ridgeline sees the whole sky; the snow at its feet does not.  Applying the
+ * cirque factor to the camera path is what left the visible sky ~1.5 stops under
+ * §12 while the fill was correct, so it is now applied only where it belongs —
+ * to the irradiance that drives the ambient, the bounce and the IBL probe.
  */
 const WHITE_BALANCE = 0.90;
-const POLARISER = 0.80;
-const SKY_CALIBRATION = 0.65;
+/**
+ * A circular polariser removes up to this fraction of the polarised component.
+ *
+ * It was 0.80, which at our abeam sun sits the filter's null exactly on the
+ * down-fall-line view: Rayleigh single scattering is ~99% polarised at 90° from
+ * the sun, so 0.80 removed **74%** of the radiance from the whole forward sky
+ * and left the top of frame at `#172E4C` (L 43) against §12's `#0F4C8E`–
+ * `#2A64A6` (L 57–88).  It also concentrated the frame's chroma into that one
+ * dark, very saturated mass — measured cool high-chroma share 17–18% against
+ * the 1.5–6% of checklist 33.  0.45 is a real filter at a realistic angle: it
+ * still deepens the sky by a stop and a half where the polarisation is strong,
+ * and the top of frame measures S 0.57 against the 0.45 floor.
+ */
+const POLARISER = 0.45;
+/** Cirque occlusion of the sky hemisphere — irradiance only, never radiance. */
+const SKY_TERRAIN_OCCLUSION = 0.65;
+
+/**
+ * The boundary-layer band: blowing snow and ice-crystal haze along the skyline.
+ *
+ * `ART_DIRECTION.md` §5.3 item 3 asks for exactly this and calls it "both
+ * physically right and a massive believability win"; `CONFIG.world.windSpeed`
+ * = 4.2 m/s from 292° is comfortably above the ~3 m/s threshold for lifting dry
+ * surface snow off an exposed crest, and every low-level view in the basin
+ * therefore looks through kilometres of it.  Optically it is a saturated layer
+ * of the same 0.86-albedo ice grains the ground is made of, so its radiance is
+ * a fraction of the snowfield's own (`groundColor`), tinted a little further
+ * toward the skylight that dominates its illumination.
+ *
+ * It is what makes an alpine horizon *bright*.  Single scattering alone lands
+ * the antisolar horizon at a warm grey `#7D8C91` (L 137) because at tau_G ~ 6
+ * the saturated column converges on the chromaticity of a beam that has been
+ * through 5.4 air masses; §12 asks for `#C2D4EA` (L 208, B/R 1.21).  No
+ * plausible multiple-scattering term closes a gap that size — measured, an
+ * order-of-magnitude sweep on `MS_STRENGTH` moves the horizon by 14 levels —
+ * because the missing radiance is not air, it is *suspended snow*.
+ *
+ * The falloff is in the view ray's zenith **sine**, so the layer is optically
+ * thick along the skyline and gone by ~12° up, which is the vertical structure
+ * checklist 21 asks for and the reason it cannot flatten the zenith.
+ */
+const HORIZON_BAND_STRENGTH = 1.0;
+const HORIZON_BAND_SCALE = 0.075;          // sin(4.3°) e-folding
+const HORIZON_BAND_TINT = [0.85, 0.95, 1.20];
 
 /**
  * Fraction of a surface's hemisphere filled by the surrounding snowfield.
@@ -313,9 +386,13 @@ const WEATHER = {
     deckSky: 0.02,
     deckCover: 0.06,
     deckAltitude: 3600,
-    cirrus: 0.34,
-    lenticular: 0.85,
-    ridgeBank: 0.42,
+    // Thin high cirrus and the nor'west lens are decoration; §5.4's ridge-level
+    // bank is the one that earns its keep ("a huge believability contributor"),
+    // so the budget moves there.  A bluebird morning carries a wisp of cirrus,
+    // not a sky full of streaks.
+    cirrus: 0.20,
+    lenticular: 0.30,
+    ridgeBank: 0.85,
     sunTransmission: 1.0,
     haze: 8.0e-5,
     hazeScaleHeight: 250,
@@ -570,6 +647,8 @@ const PHASE_MEAN = 1 / (4 * Math.PI);
  * @param {object} opts.weather       one of the WEATHER presets
  * @param {number} [opts.groundAlbedo]
  * @param {number} [opts.mieG]
+ * @param {number} [opts.msStrength]  override for `MS_STRENGTH` (calibration)
+ * @param {number} [opts.groundView]  override for the ground view factor
  */
 export function buildAtmosphereTables(opts) {
   const eyeAlt = opts.eyeAltitude;
@@ -578,6 +657,7 @@ export function buildAtmosphereTables(opts) {
   const groundAlbedo = opts.groundAlbedo ?? 0.82;
   const albedoRGB = snowAlbedoRGB(groundAlbedo);
   const mieG = opts.mieG ?? 0.76;
+  const msStrength = opts.msStrength ?? MS_STRENGTH;
 
   const betaMieScat = BETA_MIE * w.turbidity;
   const betaMieExt = betaMieScat / MIE_SINGLE_ALBEDO;
@@ -587,9 +667,16 @@ export function buildAtmosphereTables(opts) {
   const im = new Float32Array(LUT_N * 3);
   const ia = new Float32Array(LUT_N);
   const iaTint = [1.0, 1.0, 1.0];
-  // Column of scattering mass per direction, reused by the multiple-scatter pass.
-  const massR = new Float32Array(LUT_N);
-  const massM = new Float32Array(LUT_N);
+  // Column of scattering mass per direction, reused by the multiple-scatter
+  // pass.  Held **per channel**: the quantity the isotropic source has to be
+  // weighted by is ∫ T_c(s)·β_scat,c(s) ds, and β_B is 5.7× β_R.  Sharing the
+  // green column across all three (what this used to do) is wrong at both ends
+  // of the gradient — it under-weights the blue where the column is thin (the
+  // zenith, which is where the deep §1.4 blue has to come from) and it
+  // over-weights it where the column is saturated (the horizon, which then
+  // cannot desaturate toward the pale blue-white §12 measures).
+  const massR = new Float32Array(LUT_N * 3);
+  const massM = new Float32Array(LUT_N * 3);
 
   // --- Direct-beam transmittance down to the camera ----------------------
   const sunT = [0, 0, 0];
@@ -609,7 +696,7 @@ export function buildAtmosphereTables(opts) {
     let tau0 = 0, tau1 = 0, tau2 = 0;
     let accR0 = 0, accR1 = 0, accR2 = 0;
     let accM0 = 0, accM1 = 0, accM2 = 0;
-    let mR = 0, mM = 0;
+    const mR = [0, 0, 0], mM = [0, 0, 0];
 
     // Quadratic step distribution: dense near the camera, where the air is thick.
     for (let k = 0; k < STEPS; k++) {
@@ -647,14 +734,18 @@ export function buildAtmosphereTables(opts) {
       accM1 += tv1 * ts1 * betaMieScat * wm * tint[1];
       accM2 += tv2 * ts2 * betaMieScat * wm * tint[2];
 
-      mR += tv1 * BETA_RAYLEIGH[1] * wr;
-      mM += tv1 * betaMieScat * wm;
+      mR[0] += tv0 * BETA_RAYLEIGH[0] * wr;
+      mR[1] += tv1 * BETA_RAYLEIGH[1] * wr;
+      mR[2] += tv2 * BETA_RAYLEIGH[2] * wr;
+      mM[0] += tv0 * betaMieScat * wm;
+      mM[1] += tv1 * betaMieScat * wm;
+      mM[2] += tv2 * betaMieScat * wm;
     }
 
     const o = i * 3;
     ir[o] = accR0; ir[o + 1] = accR1; ir[o + 2] = accR2;
     im[o] = accM0; im[o + 1] = accM1; im[o + 2] = accM2;
-    massR[i] = mR; massM[i] = mM;
+    for (let c = 0; c < 3; c++) { massR[o + c] = mR[c]; massM[o + c] = mM[c]; }
   }
 
   // --- Hemispherical irradiance of the current tables ---------------------
@@ -707,29 +798,40 @@ export function buildAtmosphereTables(opts) {
   // fills the lower hemisphere (attenuated, and shrinking with altitude), the
   // sky fills the upper.  J_ms = beta_scatter * meanRadiance, so this is the
   // quantity the isotropic source needs — not the sum of the two.
-  // `GROUND_VIEW` is the *effective* solid-angle share of the snowfield seen
-  // from a typical scattering point, not the geometric half-sphere: the column
-  // that matters for the sky's colour reaches tens of kilometres up, and from
-  // there the ground subtends progressively less and is seen through more and
-  // more air.  At 0.55 (the geometric value) the bounce term dominated the
-  // isotropic source and, being spectrally flat, bleached the Rayleigh blue out
-  // of the whole dome — measured B/R at the top of frame fell to 1.2–1.8
-  // against §1.4's 4.7 floor.  The albedo is now spectral as well, so what is
-  // left of the bounce is itself blue-biased rather than neutral white.
-  const GROUND_VIEW = 0.30;
+  // See `GROUND_VIEW_FACTOR`.
+  const GROUND_VIEW = opts.groundView ?? GROUND_VIEW_FACTOR;
   for (let c = 0; c < 3; c++) {
     const horizontal = sunT[c] * sunUp + E[c];
     const groundRadiance = (albedoRGB[c] * horizontal) / Math.PI;
     const skyRadiance = E[c] / Math.PI;
     src[c] = 0.5 * groundRadiance * GROUND_VIEW + 0.5 * skyRadiance;
   }
-  const series = MS_STRENGTH * w.msGain;
+  // A single multiply is the *first* order only.  Each scattering event returns
+  // a further `msStrength` of what the previous one delivered (the medium is
+  // very nearly conservative — ice-free air absorbs only in the ozone band —
+  // and the 0.86-albedo snowfield underneath returns most of what reaches it),
+  // so the orders form a geometric series and the closed form is the sum, not
+  // its first term.
+  //
+  // Be clear about what this is and is not worth, because the next person to
+  // look at a too-dark horizon will reach for it first: measured, sweeping
+  // `MS_STRENGTH` from 0 to 0.65 moves the horizon by **14 sRGB levels** and
+  // the zenith by 6.  The isotropic source is anchored to the eye's own
+  // hemispherical irradiance, which is two orders of magnitude below the
+  // saturated radiance of a grazing column, so no setting of it can carry a
+  // horizon.  What carries the horizon is `HORIZON_BAND_STRENGTH`.  This term's
+  // real job is the *spectrum*: it is the only part of the model that is
+  // spectrally flatter than Rayleigh, and without it the sky irradiance that
+  // fills every shadow comes out at B/R 5+ instead of B/R 4.3.
+  const k = clamp01(msStrength * w.msGain);
+  const series = k / (1 - Math.min(k, 0.92));
   for (let i = 0; i < LUT_N; i++) {
     const o = i * 3;
-    const mass = massR[i] + massM[i];
     // Folded through the Rayleigh phase: divide by its spherical mean so the
     // energy of the isotropic term survives the multiplication in the shader.
-    for (let c = 0; c < 3; c++) ir[o + c] += (mass * src[c] * series) / PHASE_MEAN;
+    for (let c = 0; c < 3; c++) {
+      ir[o + c] += ((massR[o + c] + massM[o + c]) * src[c] * series) / PHASE_MEAN;
+    }
   }
 
   E = integrateSkyIrradiance();
@@ -816,6 +918,7 @@ export function buildAtmosphereTables(opts) {
  *   [5].xyz sun beam colour                         [5].w  disc softness (rad)
  *   [6].xyz isotropic (cloud deck) tint             [6].w  polariser strength
  *   [7].xyz solar irradiance reaching the ground    [7].w  aureole radiance
+ *   [8].xyz horizon-band radiance                   [8].w  band scale (sin)
  *
  * sohoSkyR[i] = ( Rayleigh integral .xyz, isotropic deck radiance .w )
  * sohoSkyM[i] = ( Mie integral .xyz, unused .w )
@@ -825,7 +928,7 @@ const ATMO_GLSL = /* glsl */ `
 #define SOHO_ATMO
 #define SOHO_LUT_N ${LUT_N}
 
-uniform vec4 sohoAtmo[ 8 ];
+uniform vec4 sohoAtmo[ 9 ];
 uniform vec4 sohoSkyR[ SOHO_LUT_N ];
 uniform vec4 sohoSkyM[ SOHO_LUT_N ];
 
@@ -880,6 +983,28 @@ float sohoPolariser( float c, float mu ) {
 	#endif
 }
 
+/**
+ * Radiance of the boundary-layer band — blowing snow and ice-crystal haze along
+ * the skyline (ART_DIRECTION §5.3.3).  Falls off in the zenith *sine*, so it is
+ * optically thick along the horizon and gone by ~12 deg up.  Clamped at and
+ * below the horizontal because a ray that points down leaves the layer through
+ * the ground, not through its top: the correct value there is the value at
+ * grazing, and clamping is also what makes a surface at infinite distance below
+ * the eye line converge on the horizon rather than on a ground-blocked table
+ * entry (see sohoAerialPerspective).
+ */
+vec3 sohoHorizonBand( vec3 dir ) {
+	float h = exp( - max( dir.y, 0.0 ) / max( sohoAtmo[ 8 ].w, 1e-3 ) );
+	// Ice crystals forward-scatter hard (§3.3: g = 0.72–0.89 for real crystal
+	// habits), so the band is markedly brighter looking down-sun than up-sun.
+	// This is the only sun-relative structure the *low* sky has, and it is what
+	// checklist 24 measures on the three presets that look 90 deg off the sun
+	// and therefore see none of the Mie aureole: without it their centre column
+	// is a pure vertical ramp with no inflection anywhere.
+	float c = max( dot( dir, sohoAtmo[ 0 ].xyz ), 0.0 );
+	return sohoAtmo[ 8 ].xyz * h * ( 0.88 + 0.75 * c * c );
+}
+
 /** Full-path sky radiance for a world-space view direction. */
 vec3 sohoSkyRadiance( vec3 dir ) {
 	vec4 sr, sm;
@@ -887,7 +1012,8 @@ vec3 sohoSkyRadiance( vec3 dir ) {
 	float c = dot( dir, sohoAtmo[ 0 ].xyz );
 	return sr.xyz * sohoPhaseR( c ) * sohoPolariser( c, dir.y )
 		+ sm.xyz * sohoPhaseM( c, sohoAtmo[ 3 ].y )
-		+ sr.w * sohoAtmo[ 6 ].xyz;
+		+ sr.w * sohoAtmo[ 6 ].xyz
+		+ sohoHorizonBand( dir );
 }
 
 /**
@@ -931,10 +1057,21 @@ vec3 sohoAerialPerspective( vec3 color, vec3 worldPos, vec3 camPos ) {
 	vec3 betaExt = betaR + vec3( betaM + betaH );
 	vec3 T = exp( - betaExt * d );
 
+	// The far-field target is sampled at max( dir.y, 0 ).
+	//
+	// Below the horizontal the sky tables hold a ray that strikes the planet a
+	// short way out, so their in-scatter integral collapses toward zero — and a
+	// surface fading toward *that* fades toward black.  That is the dark band
+	// that appears between the near ground and a far range whenever the far
+	// range sits below the eye line, and at a 4 deg depression it reads as a
+	// lake in the middle of a snowfield.  It is also geometrically wrong: a
+	// fragment cannot be both infinitely distant and below the horizontal, so
+	// the correct asymptote for any downward ray is the horizon itself.
+	float muSky = max( dir.y, 0.0 );
 	vec4 sr, sm;
-	sohoSampleTables( dir.y, sr, sm );
+	sohoSampleTables( muSky, sr, sm );
 	float c = dot( dir, sohoAtmo[ 0 ].xyz );
-	float pR = sohoPhaseR( c ) * sohoPolariser( c, dir.y );
+	float pR = sohoPhaseR( c ) * sohoPolariser( c, muSky );
 	float pM = sohoPhaseM( c, sohoAtmo[ 3 ].y );
 
 	// --- Near field: the exact single-scattering solution for a slab of the
@@ -960,7 +1097,8 @@ vec3 sohoAerialPerspective( vec3 color, vec3 worldPos, vec3 camPos ) {
 	// on exactly what the dome draws in the same direction.  That equality is
 	// what removes the band at the ridge/sky boundary and the "peaks paler than
 	// the sky" artefact, and it holds by construction rather than by tuning.
-	vec3 sky = sr.xyz * pR + sm.xyz * pM + sr.w * sohoAtmo[ 6 ].xyz;
+	vec3 sky = sr.xyz * pR + sm.xyz * pM + sr.w * sohoAtmo[ 6 ].xyz
+		+ sohoHorizonBand( dir );
 
 	// Quadratic crossfade: pure slab solution while the path is optically thin,
 	// pure sky once it is thick.  Quadratic (not linear) so the near field is
@@ -983,12 +1121,15 @@ vec3 sohoAerialPerspective( vec3 color, vec3 worldPos, vec3 camPos ) {
 	// here, so it is asserted instead: past a few tenths of an optical depth in
 	// the blue, a surface may not out-radiate the sky along the same ray.
 	//
-	// The gate is on **blue** extinction, which is 5.7x the red, so it stays at
-	// exactly zero inside ~10 km.  The near and mid field are therefore
-	// completely untouched — this cannot flatten the near-field contrast that
-	// checklist 17 measures, and it only ever removes radiance the atmosphere
-	// should already have removed.
-	float veil = smoothstep( 0.22, 0.62, 1.0 - T.b );
+	// The gate is on **blue** extinction, which is 5.7x the red.  It used to
+	// open at 0.22, which on the basin floor is ~3.5 km and on a dry crest ~5 km
+	// — i.e. it never engaged on any ridge in the frame, since every failing
+	// ridge measured sits at 1.5–8 km.  0.03 → 0.24 starts biting at ~1 km,
+	// is half applied by 3 km and complete by ~6 km, which is the range §12
+	// legislates colours for (#9CAECB at 2-6 km, #A9BCD6 beyond 12 km) and
+	// is still nowhere near the near field checklist 17 measures: at 400 m the
+	// gate is 0.00 and at 900 m it is 0.06.
+	float veil = smoothstep( 0.03, 0.24, 1.0 - T.b );
 	return mix( result, min( result, sky * 0.98 ), veil );
 }
 #endif
@@ -1064,9 +1205,133 @@ uniform vec3 sohoBounceOccluded;
   C.lights_fragment_begin = src;
 }
 
+/**
+ * Replace three's directional PCF filter.
+ *
+ * r185's `SHADOWMAP_TYPE_PCF` takes five Vogel-disk taps at a **fixed** radius,
+ * rotated per pixel by interleaved gradient noise.  Both halves of that are
+ * wrong for this scene:
+ *
+ *  - the per-pixel rotation is a screen-space hash, so it stamps a stationary
+ *    one-pixel cross-hatch across every shadowed region — measured as a
+ *    frame-wide 2x2 Bayer delta of -0.176 luma concentrated inside shadow, and
+ *    on a uniform white snowfield there is nothing to hide it behind;
+ *  - a fixed radius cannot produce penumbra growth (checklist 13).  At a 10.6
+ *    deg sun the same filter renders a 2 m contact shadow and a 43 m tower
+ *    shadow with identical edge hardness, and five taps over a one-texel disk
+ *    on a 0.14 m texel is what makes a shadow edge scallop into visible 45/90
+ *    deg staircase segments.
+ *
+ * The replacement is a fixed golden-angle disk (deterministic, world-stable, no
+ * screen-space hash anywhere) whose radius is chosen per fragment from a
+ * four-tap *depth probe*: taps taken with the comparison depth pulled toward
+ * the light by `sohoShadow.x` only register blockers further away than that,
+ * so the fraction of the neighbourhood that is shadowed by something distant
+ * falls straight out with no depth fetch — which matters, because a
+ * `sampler2DShadow` cannot return a depth and true PCSS is therefore off the
+ * table without changing the renderer's shadow-map type.
+ *
+ * The other half is **receiver-plane depth bias**: the kernel offsets are
+ * depth-corrected along the receiver's own gradient, computed from the screen
+ * derivatives of the shadow coordinate.  §4.4 asks for normal-offset rather
+ * than constant depth bias precisely because at grazing incidence the depth
+ * across one texel varies by texel/tan(10.6 deg) = 5.4 texels' worth; carrying
+ * that in a constant bias costs 5.4x its own size again in lateral shadow
+ * displacement (peter-panning), while the receiver-plane term is exact and
+ * costs nothing anywhere.
+ */
+function installSoftShadows(C) {
+  let src = C.shadowmap_pars_fragment;
+
+  // 1. The receiver-plane gradient has to be taken in *uniform* control flow —
+  //    the filter itself lives inside `if ( frustumTest )`, and screen
+  //    derivatives inside a non-uniform branch are undefined.
+  const needleFrustum = 'bool inFrustum = shadowCoord.x >= 0.0 && shadowCoord.x <= 1.0'
+    + ' && shadowCoord.y >= 0.0 && shadowCoord.y <= 1.0;';
+  // Located by landmark rather than by exact text: the published build strips
+  // the comments and reflows the whitespace of the authored chunk.
+  const tail = ') * 0.2;';
+  const ign = src.indexOf('float phi = interleavedGradientNoise');
+  const at = ign === -1 ? -1 : src.lastIndexOf('vec2 texelSize = vec2( 1.0 ) / shadowMapSize;', ign);
+  const endRaw = at === -1 ? -1 : src.indexOf(tail, at);
+  if (at === -1 || endRaw === -1 || src.indexOf(needleFrustum) === -1) {
+    console.warn(
+      '[sky] could not locate three\'s PCF filter in shadowmap_pars_fragment; '
+      + 'shadows keep the stock 5-tap noise-rotated kernel (expect the '
+      + 'screen-door dither and no penumbra growth).',
+    );
+    return;
+  }
+  const end = endRaw + tail.length;
+
+  const body = /* glsl */ `
+				vec2 texelSize = vec2( 1.0 ) / shadowMapSize;
+				vec2 dz = sohoDz;
+				float rWide = shadowRadius * SOHO_PCF_WIDE * texelSize.x;
+
+				// Penumbra probe.  A tap is only counted when the blocker sits
+				// more than sohoShadow.x (a fixed world distance, expressed in
+				// depth units) in front of the receiver, so this is exactly
+				// "how much of the neighbourhood is shadowed by something far
+				// away" — which is the quantity the penumbra width scales with.
+				float deep = 0.0;
+				for ( int i = 0; i < 4; i ++ ) {
+					vec2 o = vogelDiskSample( i, 4, 0.0 ) * rWide;
+					deep += 1.0 - texture( shadowMap, vec3(
+						shadowCoord.xy + o,
+						shadowCoord.z - sohoShadow.x + dot( o, dz )
+					) );
+				}
+				deep *= 0.25;
+
+				float radius = mix( shadowRadius * SOHO_PCF_NEAR * texelSize.x, rWide, deep );
+
+				// Fixed golden-angle disk: deterministic, identical every frame,
+				// and anchored to the shadow map rather than to the screen.
+				shadow = 0.0;
+				for ( int i = 0; i < SOHO_PCF_TAPS; i ++ ) {
+					vec2 o = vogelDiskSample( i, SOHO_PCF_TAPS, 0.0 ) * radius;
+					shadow += texture( shadowMap, vec3(
+						shadowCoord.xy + o,
+						shadowCoord.z + dot( o, dz )
+					) );
+				}
+				shadow /= float( SOHO_PCF_TAPS );`;
+
+  src = src.slice(0, at) + body + src.slice(end);
+  src = src.replace(needleFrustum, `vec2 sohoDz = sohoReceiverPlane( shadowCoord.xyz, shadowMapSize );
+			${needleFrustum}`);
+  src = src.replace('#ifdef USE_SHADOWMAP', `#ifdef USE_SHADOWMAP
+
+	/** x: probe depth offset, in depth units, for SOHO_SHADOW_PROBE metres. */
+	uniform vec4 sohoShadow;
+	#define SOHO_PCF_TAPS 10
+	#define SOHO_PCF_NEAR 1.0
+	#define SOHO_PCF_WIDE 3.6
+
+	/**
+	 * d(depth)/d(uv) for the receiver plane, from the screen derivatives of the
+	 * shadow coordinate.  Clamped, because across a silhouette edge the two
+	 * halves of the quad sit on different surfaces and the solve blows up.
+	 */
+	vec2 sohoReceiverPlane( vec3 sc, vec2 mapSize ) {
+		vec3 sdx = dFdx( sc );
+		vec3 sdy = dFdy( sc );
+		float det = sdx.x * sdy.y - sdx.y * sdy.x;
+		if ( abs( det ) < 1e-12 ) return vec2( 0.0 );
+		vec2 dz = vec2(
+			sdy.y * sdx.z - sdx.y * sdy.z,
+			sdx.x * sdy.z - sdy.x * sdx.z
+		) / det;
+		float lim = 24.0 / max( mapSize.x, 1.0 );
+		return clamp( dz, vec2( - lim ), vec2( lim ) );
+	}`);
+  C.shadowmap_pars_fragment = src;
+}
+
 /** The one shared uniform payload every material in the scene points at. */
 const AP_UNIFORMS = {
-  sohoAtmo: { value: new Float32Array(8 * 4) },
+  sohoAtmo: { value: new Float32Array(9 * 4) },
   sohoSkyR: { value: new Float32Array(LUT_N * 4) },
   sohoSkyM: { value: new Float32Array(LUT_N * 4) },
 };
@@ -1081,7 +1346,18 @@ const AP_UNIFORMS = {
  */
 const BOUNCE_UNIFORMS = {
   sohoBounceOccluded: { value: new THREE.Color(0, 0, 0) },
+  /** x: the penumbra probe distance in shadow-map depth units. */
+  sohoShadow: { value: new THREE.Vector4(0, 0, 0, 0) },
 };
+
+/**
+ * How far in front of a receiver a blocker has to be before its shadow is
+ * treated as a far one and filtered wide.  A 1.8 m rider casts 9.6 m at this
+ * sun, so 5 m keeps the shadow under the board and the board's own contact
+ * shadow crisp while the far half of the same shadow — and everything cast by
+ * a 8 m lift mast — softens, which is the growth checklist 13 measures.
+ */
+const SHADOW_PROBE_METRES = 5.0;
 
 /**
  * Replace three's fog chunks with a physically-based aerial-perspective term.
@@ -1123,6 +1399,7 @@ function installAerialPerspective() {
   const C = THREE.ShaderChunk;
 
   installOccludedBounce(C);
+  installSoftShadows(C);
 
   C.fog_pars_vertex = /* glsl */ `
 #ifdef USE_FOG
@@ -1231,6 +1508,7 @@ uniform vec4 uCloud;          // cirrus, deckCover, lenticular, time
 uniform vec4 uCloudWind;      // windTowardXZ, cirrusSpeed, deckSpeed
 uniform vec4 uCloudGeom;      // cirrusAltitude, deckAltitude, eyeAltitude, clearness
 uniform vec3 uGroundColor;    // snowfield bounce radiance (linear)
+uniform float uSkyGain;       // 1 for the dome; cirque occlusion for the probe
 uniform vec4 uLens[ 4 ];      // lenticular lobes: direction.xyz, angular half-width
 uniform vec4 uLensShape[ 4 ]; // thinness, tilt, density, seed
 
@@ -1327,14 +1605,18 @@ void main() {
 			// carry (compounded by a 10.5:1 second octave, so 40:1 in total) is
 			// what made it read as motion blur.
 			vec2 al = vec2( dot( flow, wind ), dot( flow, vec2( -wind.y, wind.x ) ) );
-			al.x *= 0.55;
+			// Down to ~1.25:1 along the flow, from 2:1 (and 40:1 before that).
+			// Anything more anisotropic than this, applied to a thin high layer
+			// over a clean sky, does not read as cirrus — it reads as diagonal
+			// scratches on the lens, which is what the round-6 frames show.
+			al.x *= 0.80;
 			float n = sohoFbm( al * 0.5 );
-			float streak = sohoFbm( al * vec2( 0.55, 1.45 ) + 3.1 );
+			float streak = sohoFbm( al * vec2( 0.75, 1.15 ) + 3.1 );
 			// Sparser than it was.  A bluebird morning carries *some* high cirrus
 			// (§1.4's "bluebird with high cloud" row), but the top of frame still
 			// has to measure S >= 0.45, and cloud that covers most of the upper
 			// sky cannot deliver that whatever colour it is.
-			float d = smoothstep( 0.72 - 0.30 * uCloud.x, 0.90, n * 0.65 + streak * 0.45 );
+			float d = smoothstep( 0.80 - 0.26 * uCloud.x, 0.96, n * 0.65 + streak * 0.45 );
 			d *= fade * uCloud.x;
 			// Ice cloud forward-scatters hard: a bright silver edge toward the sun.
 			float silver = 1.0 + 2.6 * pow( max( cosSun, 0.0 ), 14.0 );
@@ -1344,7 +1626,7 @@ void main() {
 			// rendered every streak as clipped white and was, on its own, a large
 			// part of why the top of frame measured desaturated.
 			vec3 cirrusCol = zenithRad * 1.35 + sohoAtmo[ 7 ].xyz * 0.075 * silver;
-			col = mix( col, cirrusCol, clamp( d, 0.0, 0.80 ) );
+			col = mix( col, cirrusCol, clamp( d, 0.0, 0.55 ) );
 		}
 	}
 
@@ -1363,21 +1645,19 @@ void main() {
 		vec2 q = vec2( dot( dir, tX ), dot( dir, tY ) ) / dz;
 		float ti = uLensShape[ i ].y;
 		vec2 qr = vec2( q.x * cos( ti ) - q.y * sin( ti ), q.x * sin( ti ) + q.y * cos( ti ) );
-		vec2 e = vec2( qr.x / halfW, qr.y / ( halfW * uLensShape[ i ].x ) );
-		float body = 1.0 - smoothstep( 0.30, 1.0, length( e ) );
-		if ( body <= 0.0 ) continue;
-		// Break the perfect ellipse so it does not read as a decal.
+		// Break the ellipse *before* the falloff, not after it.
 		//
-		// The remap window matters more than the noise does.  A narrow window
-		// (this was 0.10 -> 0.55) turns a soft radial falloff into a near-binary
-		// edge: the whole transition collapses into ~4% of the lobe radius and
-		// the result reads as a UFO decal with a razor boundary (tell #36).
-		// Widening it to 0.02 -> 0.95 spreads the same falloff over ~15% of the
-		// radius, and a second, higher-frequency wobble octave breaks the
-		// remaining contour so no part of the rim is ever a clean arc.
-		float wob = sohoFbm( qr * 13.0 + uLensShape[ i ].w + wind * time * 0.004 ) * 0.62
-			+ sohoFbm( qr * 31.0 + uLensShape[ i ].w * 1.7 ) * 0.38;
-		body = smoothstep( 0.02, 0.95, body * ( 0.55 + 0.80 * wob ) );
+		// Widening the remap window was not enough: a smoothstep applied to a
+		// radially symmetric field can only ever produce a conic contour, and a
+		// conic contour in the sky reads as a decal however soft its gradient is
+		// — which is why round 1's razor-cut wedge came back in round 6 as a
+		// hard-edged elliptical lozenge (tell #36 both times).  Modulating the
+		// *radius* the falloff is measured against, at two non-harmonic scales,
+		// means no part of the rim is ever an arc of anything.
+		float wob = sohoFbm( qr * 5.0 + uLensShape[ i ].w + wind * time * 0.004 ) * 0.60
+			+ sohoFbm( qr * 17.0 + uLensShape[ i ].w * 1.7 ) * 0.40;
+		vec2 e = vec2( qr.x / halfW, qr.y / ( halfW * uLensShape[ i ].x ) );
+		float body = 1.0 - smoothstep( 0.12, 1.0, length( e ) * ( 0.55 + 0.95 * wob ) );
 		if ( body <= 0.0 ) continue;
 		// Shading: hot rim on the sun side, underside filled by snow bounce.
 		vec2 sunQ = normalize( vec2( dot( sunDir, tX ), dot( sunDir, tY ) ) + vec2( 1e-4 ) );
@@ -1390,7 +1670,7 @@ void main() {
 		vec3 lit = sohoAtmo[ 7 ].xyz * 0.11 * ( 0.35 + 0.85 * rim );
 		vec3 shade = mix( uGroundColor * 0.55, zenithRad * 1.15, 0.55 );
 		vec3 lensCol = mix( lit + shade * 0.55, shade * 0.72, updown );
-		col = mix( col, lensCol, clamp( body * amt, 0.0, 0.88 ) );
+		col = mix( col, lensCol, clamp( body * amt, 0.0, 0.60 ) );
 	}
 	#endif
 
@@ -1418,6 +1698,12 @@ void main() {
 			col = mix( col, deckCol, clamp( d, 0.0, 0.985 ) );
 		}
 	}
+
+	// The sky as a *light source* is occluded by the cirque wall; the sky as a
+	// *view* is not.  One uniform, set to 1 on the dome and to the occlusion on
+	// the environment probe, so the two cannot drift apart.  The snowfield that
+	// stands in front of the occluded sky is added right below.
+	col *= uSkyGain;
 
 	#ifdef SOHO_ENV
 		// Lower hemisphere: the snowfield.  Faded through the horizon band so
@@ -1480,18 +1766,35 @@ uniform vec3 uGroundColor;
 
 ${ATMO_GLSL}
 
-/** Density of the bank at a point in card space, 0..1. */
+/**
+ * Density of the bank at a point in card space, 0..1.
+ *
+ * The shape must never be an ellipse.  A clean radial falloff, however soft,
+ * still terminates on a smooth conic and reads as a lozenge pasted on the sky
+ * (tell #36) — the round-1 "razor vertical cut" and its round-6 replacement,
+ * "one hard-edged elliptical grey lozenge", are the same defect twice.  So the
+ * radius the falloff is measured against is itself modulated by noise, at two
+ * scales: a low frequency that makes each bank a different, lopsided outline,
+ * and a higher one that keeps any 20-degree arc of the rim from being smooth.
+ * The falloff then runs over ~55% of the radius, which at these card sizes is
+ * 150–400 m of dissolve, matching §5.4's "edges that dissolve over 50–150 m"
+ * at the near bank and more at the far ones.
+ */
 float sohoBankDensity( vec2 uv, float seed, float time ) {
 	vec2 p = uv * 1.35 + vec2( seed, seed * 1.7 ) + vec2( time * 0.0035, time * -0.0018 );
 	vec4 a = texture2D( uNoise, p );
+	vec4 b = texture2D( uNoise, p * 2.63 + 0.41 );
+	float n = a.r * 0.46 + a.g * 0.22 + b.b * 0.19 + b.a * 0.13;
 	vec2 q = uv * 2.0 - 1.0;
-	// Radial falloff, with the base feathered far harder than the top so the
-	// card dissolves before it can show an edge against a slope, and the top
-	// feathered too so a bank never presents a flat horizontal lid.
-	float radial = 1.0 - smoothstep( 0.15, 1.0, length( q * vec2( 0.85, 1.15 ) ) );
-	float base = smoothstep( -1.0, -0.05, q.y );
-	float lid = 1.0 - smoothstep( 0.25, 1.0, q.y );
-	return clamp( ( a.r * 1.5 - 0.52 ) * 2.2, 0.0, 1.0 ) * radial * base * lid;
+	float warp = a.g * 0.55 + b.b * 0.45;
+	float r = length( q * vec2( 0.85, 1.15 ) ) * ( 0.62 + 0.78 * warp );
+	// Base feathered far harder than the top so the card dissolves before it
+	// can show an edge against a slope; the lid feathered too so a bank never
+	// presents a flat horizontal top.
+	float radial = 1.0 - smoothstep( 0.10, 0.98, r );
+	float base = smoothstep( -1.0, -0.02, q.y );
+	float lid = 1.0 - smoothstep( 0.10, 0.95, q.y );
+	return clamp( ( n * 1.55 - 0.50 ) * 1.7, 0.0, 1.0 ) * radial * base * lid;
 }
 
 void main() {
@@ -1500,11 +1803,7 @@ void main() {
 	vec4 b = texture2D( uNoise, p * 2.63 + 0.41 );
 	float n = a.r * 0.46 + a.g * 0.22 + b.b * 0.19 + b.a * 0.13;
 
-	vec2 q = vBankUv * 2.0 - 1.0;
-	float radial = 1.0 - smoothstep( 0.15, 1.0, length( q * vec2( 0.85, 1.15 ) ) );
-	float base = smoothstep( -1.0, -0.05, q.y );
-	float lid = 1.0 - smoothstep( 0.25, 1.0, q.y );
-	float alpha = clamp( ( n * 1.5 - 0.52 ) * 2.2, 0.0, 1.0 ) * radial * base * lid * uOpacity;
+	float alpha = sohoBankDensity( vBankUv, vSeed, uTime ) * uOpacity;
 	if ( alpha < 0.004 ) discard;
 
 	// ---- three-tap light march ------------------------------------------
@@ -1735,6 +2034,7 @@ export class Sky {
       uniforms: Object.assign({
         uInvProjection: { value: new THREE.Matrix4() },
         uCamRotation: { value: new THREE.Matrix3() },
+        uSkyGain: { value: 1.0 },
       }, this._sharedUniforms, this._cloudUniforms),
       vertexShader: DOME_VERT,
       fragmentShader: SKY_FRAG,
@@ -1826,10 +2126,15 @@ export class Sky {
     // `REFERENCE_ANALYSIS.md` calls cloud dissolving into the slope one of the
     // largest believability contributors there is.  The cards are taller than
     // they were, so the feathered lower half sits inside the terrain.
+    //
+    // The two near banks now sit *below* the 1865 m crest rather than level
+    // with it, so a ridgeline reliably cuts through them instead of passing
+    // under a mesa, and they are denser and fewer — §5.4 asks for "one or two
+    // cloud banks", not a scattering of pillows.
     const banks = [
-      { r: 2400, theta: 165, spread: 55, y: 1770, n: 14, w: 420, h: 260 },
-      { r: 5200, theta: -110, spread: 40, y: 1840, n: 10, w: 700, h: 330 },
-      { r: 9000, theta: 55, spread: 46, y: 1910, n: 10, w: 1100, h: 400 },
+      { r: 2200, theta: 165, spread: 42, y: 1735, n: 16, w: 430, h: 250 },
+      { r: 4800, theta: -108, spread: 34, y: 1800, n: 12, w: 720, h: 320 },
+      { r: 9500, theta: 55, spread: 46, y: 1905, n: 8, w: 1150, h: 380 },
     ];
     let total = 0;
     for (const b of banks) total += b.n;
@@ -1971,8 +2276,10 @@ export class Sky {
     const beamLuma = Math.max(lum3(beam), 1e-3);
 
     // Pack the vec3 tables into the vec4 uniform arrays (w = isotropic deck),
-    // applying the white balance and the sky calibration in one pass.
-    const skyScale = cfg.skyIntensityScale ?? SKY_CALIBRATION;
+    // applying the white balance and the sky calibration in one pass.  The
+    // tables carry the *unoccluded* sky, because that is what a camera ray
+    // sees; the cirque occlusion is applied further down, to irradiance only.
+    const skyScale = cfg.skyIntensityScale ?? 1.0;
     const sR = skyScale * wb[0], sG = skyScale * wb[1], sB = skyScale * wb[2];
     const R = AP_UNIFORMS.sohoSkyR.value;
     const M = AP_UNIFORMS.sohoSkyM.value;
@@ -2007,10 +2314,14 @@ export class Sky {
     this.irradiance.direct = E;
 
     // --- Ambient -----------------------------------------------------------
+    // The cirque occlusion belongs here and nowhere else: a snow surface inside
+    // the bowl sees only the sky above the ridgeline, and what stands in front
+    // of the rest is the snowfield, which is returned separately as the bounce.
+    const skyOcc = clamp01(cfg.skyOcclusion ?? SKY_TERRAIN_OCCLUSION);
     const sky = [
-      tables.skyIrradiance[0] * sR,
-      tables.skyIrradiance[1] * sG,
-      tables.skyIrradiance[2] * sB,
+      tables.skyIrradiance[0] * sR * skyOcc,
+      tables.skyIrradiance[1] * sG * skyOcc,
+      tables.skyIrradiance[2] * sB * skyOcc,
     ];
     const skyLuma = Math.max(1e-5, lum3(sky));
     const amax = Math.max(sky[0], sky[1], sky[2], 1e-5);
@@ -2103,6 +2414,18 @@ export class Sky {
     // clamped disc value, so it thins out correctly under a cloud deck.
     a[31] = E * (cfg.aureoleScale ?? 1.1);
 
+    // Boundary-layer band (blowing snow / ice haze along the skyline).  Its
+    // radiance is a fraction of the snowfield's own — it *is* the snowfield,
+    // suspended — pushed a little further toward the skylight that lights it,
+    // at constant luminance so the strength and the hue stay separable.
+    const bandK = Math.max(0, cfg.horizonBandStrength ?? HORIZON_BAND_STRENGTH);
+    const bt = cfg.horizonBandTint ?? HORIZON_BAND_TINT;
+    const btNorm = bandK / Math.max(1e-4, lum3(bt));
+    a[32] = this.groundColor.r * bt[0] * btNorm;
+    a[33] = this.groundColor.g * bt[1] * btNorm;
+    a[34] = this.groundColor.b * bt[2] * btNorm;
+    a[35] = Math.max(1e-3, cfg.horizonBandScale ?? HORIZON_BAND_SCALE);
+
     // --- Clouds ------------------------------------------------------------
     const cu = this._cloudUniforms;
     cu.uCloud.value.set(w.cirrus, w.deckCover, w.lenticular, this._time);
@@ -2155,11 +2478,13 @@ export class Sky {
     const depol = lerp(0.22, 1.0, smoothstep(0.0, 0.42, mu));
     const pol = 1 - a[27] * ((1 - cosT * cosT) / (1 + cosT * cosT)) * depol;
     const iso = R[i0 * 4 + 3] * (1 - k) + R[i1 * 4 + 3] * k;
+    const band = Math.exp(-Math.max(mu, 0) / Math.max(a[35], 1e-3))
+      * (0.88 + 0.75 * Math.max(cosT, 0) ** 2);
     const out = [0, 0, 0];
     for (let c = 0; c < 3; c++) {
       const ir = R[i0 * 4 + c] * (1 - k) + R[i1 * 4 + c] * k;
       const im = M[i0 * 4 + c] * (1 - k) + M[i1 * 4 + c] * k;
-      out[c] = ir * pr * pol + im * pm + iso * a[24 + c];
+      out[c] = ir * pr * pol + im * pm + iso * a[24 + c] + a[32 + c] * band;
     }
     return out;
   }
@@ -2186,7 +2511,10 @@ export class Sky {
     if (!this._envScene) {
       const geo = new THREE.SphereGeometry(90, 48, 32);
       const mat = new THREE.ShaderMaterial({
-        uniforms: Object.assign({}, this._sharedUniforms, this._cloudUniforms),
+        uniforms: Object.assign(
+          { uSkyGain: { value: 1.0 } },
+          this._sharedUniforms, this._cloudUniforms,
+        ),
         vertexShader: ENV_VERT,
         fragmentShader: SKY_FRAG,
         defines: { SOHO_ENV: '' },
@@ -2197,9 +2525,16 @@ export class Sky {
         toneMapped: false,   // the probe stores linear radiance, not display values
       });
       this._envScene = new THREE.Scene();
+      this._envUniforms = mat.uniforms;
       this._envMesh = new THREE.Mesh(geo, mat);
       this._envMesh.frustumCulled = false;
       this._envScene.add(this._envMesh);
+    }
+
+    if (this._envUniforms) {
+      this._envUniforms.uSkyGain.value = clamp01(
+        this._cfg.skyOcclusion ?? SKY_TERRAIN_OCCLUSION,
+      );
     }
 
     const prevTarget = renderer.getRenderTarget();
@@ -2253,7 +2588,16 @@ export class Sky {
     if (!light || !camera || !light.visible) return;
 
     const cfg = this._cfg;
-    const far = cfg.shadowDistance ?? 120;
+    // 120 m covered the rider and nothing else.  A lift tower 150 m up the line
+    // sat outside the fit, was culled from the shadow frustum and cast no
+    // shadow at all — four of them stand on open snow in `hero-basin` under a
+    // 10.6 deg sun, each owing a 43 m shadow (§2.1), and the frame had none.
+    // `CONFIG.render.csmCascades` declares the shadowed range as 900 m; without
+    // real cascades this is the largest slice a single 4096 map can carry and
+    // still resolve the rider's own shadow (0.14 m texels, so a 9.6 m rider
+    // shadow is ~66 texels long), and the receiver-scaled filter above is what
+    // keeps the coarser texel from reading as a staircase.
+    const far = cfg.shadowDistance ?? 240;
     const near = Math.max(camera.near, 0.05);
 
     // Minimal bounding sphere of the frustum slice [near, far], in view space.
@@ -2328,12 +2672,29 @@ export class Sky {
     // scaled by tunables so the look can be dialled without touching the
     // derivation; the defaults are the values that measured clean on the shipped
     // terrain at a 10.5° sun.
+    //
+    // Both scales are halved against the values that measured clean at a 120 m
+    // fit, because the fit is now 240 m and `texel` has doubled: the absolute
+    // world bias is therefore unchanged, which is the conservative choice — the
+    // acne headroom is exactly what it was.  What is genuinely new is the
+    // receiver-plane depth bias inside the filter (see `installSoftShadows`),
+    // which carries the *kernel's* share of the slope exactly, so none of it
+    // has to be paid for twice in a constant that costs 5.4x its own size in
+    // peter-panning at this sun angle.
     const sinAlt = Math.max(0.12, Math.abs(L.y));
-    const nbScale = cfg.shadowNormalBiasScale ?? 3.6;
-    const nbMax = cfg.shadowNormalBiasMax ?? 0.30;
-    const dbScale = cfg.shadowDepthBiasScale ?? 1.1;
+    const nbScale = cfg.shadowNormalBiasScale ?? 1.8;
+    const nbMax = cfg.shadowNormalBiasMax ?? 0.28;
+    const dbScale = cfg.shadowDepthBiasScale ?? 0.55;
     light.shadow.normalBias = clamp(texel * nbScale, 0.02, nbMax);
-    light.shadow.bias = -clamp(texel * dbScale / sinAlt, 0.05, 1.2) / (cam.far - cam.near);
+    const depthRange = Math.max(1e-3, cam.far - cam.near);
+    light.shadow.bias = -clamp(texel * dbScale / sinAlt, 0.05, 1.2) / depthRange;
+
+    // The penumbra probe, in the same normalised depth units the shadow
+    // coordinate carries.  An orthographic shadow camera makes that a pure
+    // scale, so a fixed world distance is a fixed depth offset everywhere.
+    BOUNCE_UNIFORMS.sohoShadow.value.set(
+      (cfg.shadowProbeMetres ?? SHADOW_PROBE_METRES) / depthRange, 0, 0, 0,
+    );
   }
 
   /* -------------------------------------------------------------- *
