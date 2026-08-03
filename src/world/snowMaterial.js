@@ -1274,7 +1274,17 @@ const SNOW_SURFACE = /* glsl */ `
 
 	#ifdef USE_TRACK_MAP
 		// The trench is a real depression: 16 cm down, with a 6 cm displaced lip.
-		float trkH = trkLip * 0.06 - trkTrench * 0.16;
+		//
+		// Same Nyquist rule as the foliation: the relief comes from screen
+		// derivatives of a 15.6 cm-texel map, and once the pixel footprint
+		// approaches the texel size each texel boundary fires its own
+		// derivative spike — the track turns into a dotted line of beads
+		// (round-4 RT probe: the stamped texture itself is perfectly
+		// continuous). Fade the relief out by footprint; the albedo and
+		// compaction terms are plain bilinear lookups and carry the track at
+		// distance on their own.
+		float trkFade = 1.0 - smoothstep( 0.10, 0.38, sohoFootprint / 0.156 );
+		float trkH = ( trkLip * 0.06 - trkTrench * 0.16 ) * trkFade;
 		nW = sohoPerturb( nW, dFdx( sohoWP ), dFdy( sohoWP ), dFdx( trkH ), dFdy( trkH ) );
 	#endif
 
