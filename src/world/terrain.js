@@ -433,10 +433,20 @@ export class Terrain {
     // centre gap, so a straight glide is never cliffed out.
     f.bluffs = [[-560, -300], [-140, -20], [300, 520]].map(([x0, x1]) => {
       const pts = [];
-      const steps = Math.max(3, Math.round((x1 - x0) / 60));
+      // 60 m control spacing left the shortest band with FOUR points, and a
+      // big-amplitude sine over four points is a perfect triangle — the
+      // terrain map renders the three bands as geometric glyphs (a triangle,
+      // an M, a bar), and the wide shots read them as engraved scars. A real
+      // escarpment meanders at two scales; 24 m posts resolve both.
+      const steps = Math.max(6, Math.round((x1 - x0) / 24));
+      const phase = bluffRng() * 6.28;
       for (let i = 0; i <= steps; i++) {
         const x = lerp(x0, x1, i / steps);
-        pts.push([x, -140 - 80 * (0.5 + 0.5 * Math.sin(i * 1.7 + bluffRng() * 6)) + bluffRng.range(-14, 14)]);
+        const u = i / steps;
+        const meander = 0.5
+          + 0.33 * Math.sin(u * 8.7 + phase)
+          + 0.17 * Math.sin(u * 21.3 + phase * 2.31 + 1.4);
+        pts.push([x, -140 - 80 * Math.min(1, Math.max(0, meander)) + bluffRng.range(-6, 6)]);
       }
       return {
         pts,
@@ -1412,7 +1422,14 @@ export class Terrain {
         // Signed cross-slope offset: downhill of the line is −Z-ish.
         const side = (x - P.x) * -P.tz + (z - P.z) * P.tx;
         const t = clamp01((side + faceW * 0.5) / faceW);
-        const drop = b.height * along * (1 - t);
+        // The drop must RECOVER to grade past a talus bench, not run to the
+        // bounding-box edge: applied unrecovered, every texel downhill of the
+        // line inside the box carried the full step, and the box boundary
+        // etched a literal rectangle into the field (visible on the terrain
+        // map as a frame under each band).
+        const below = Math.max(0, -side - faceW * 0.5);
+        const recover = 1 - smoothstep(faceW * 1.0 + 8, faceW * 3.0 + 36, below);
+        const drop = b.height * along * (1 - t) * recover;
         H[k] -= drop;
         if (Math.abs(side) < faceW * 0.75) {
           const m = Math.round(255 * along * (1 - smoothstep(faceW * 0.4, faceW * 0.75, Math.abs(side))));
