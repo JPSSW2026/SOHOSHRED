@@ -1231,14 +1231,29 @@ const SNOW_SURFACE = /* glsl */ `
 	float folA = sin( folC * ( 6.2831853 / uFoliationSpacing ) );
 	float folB = sin( folC * ( 6.2831853 / ( uFoliationSpacing * 7.3 ) ) + 1.7 );
 	vec3 folT = uFoliationN - nW * dot( nW, uFoliationN );
-	float folFade = 1.0 - smoothstep( 0.22, 0.85, sohoFootprint / uFoliationSpacing );
-	// The coarse platy band is 7.3x the fine spacing but is still only ~0.6 m,
-	// which is well under a pixel on a bluff seen from 400 m.  Without its own
-	// footprint fade it aliases into a hard 1-px checkerboard across every rock
-	// band in a wide shot, so it gets the same treatment at its own scale.
-	float folFadeB = 1.0 - smoothstep( 0.22, 0.85, sohoFootprint / ( uFoliationSpacing * 7.3 ) );
+	// Nyquist-honest fades. These are sines of fixed WORLD period: once the
+	// pixel footprint passes half that period the sample points cannot carry
+	// the wave, and what comes out is not "faint banding", it is a MOIRE - a
+	// beat between the sine and the pixel grid at a much longer wavelength.
+	// The old fade (0.22 -> 0.85 of the period) still passed ~50% amplitude at
+	// 0.53 periods per pixel, i.e. it faded the band out through a regime
+	// where every remaining percent was pure alias. Because the band's phase
+	// is dot(P, foliationN), the moire's crests run along the bedding strike
+	// on every slope - which is contour-parallel - and that is exactly the
+	// corduroy that survived nine geometry-side ablations (FINDINGS_R3).
+	// Amplitude must reach zero BEFORE footprint = period/2, with margin for
+	// the rasteriser's 2x2 derivative quads: gone by 0.4 periods per pixel.
+	float folFade = 1.0 - smoothstep( 0.12, 0.40, sohoFootprint / uFoliationSpacing );
+	float folFadeB = 1.0 - smoothstep( 0.12, 0.40, sohoFootprint / ( uFoliationSpacing * 7.3 ) );
 	folB *= folFadeB;
-	nW = normalize( nW + folT * ( ( folA * 0.18 * folFade + folB * 0.24 ) * rockF ) );
+	// Bedding shows on INTACT outcrop, not on scree: broken rock has no shared
+	// foliation phase, so a coherent band across a 30-degree talus slope is a
+	// geological impossibility (and reads as corduroy). The shader cannot see
+	// the surface classification, but steepness is an honest proxy - schist
+	// only stands as outcrop above its talus angle, so full banding below
+	// nY 0.57 (55 deg, the bluff faces) fading to none by nY 0.72 (44 deg).
+	float folSteep = smoothstep( 0.72, 0.57, sohoWN.y );
+	nW = normalize( nW + folT * ( ( folA * 0.18 * folFade + folB * 0.24 ) * rockF * folSteep ) );
 
 	#ifdef USE_TRACK_MAP
 		// The trench is a real depression: 16 cm down, with a 6 cm displaced lip.
