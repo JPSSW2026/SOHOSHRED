@@ -572,6 +572,48 @@ export class Terrain {
     return this._farHeightRaw(x, z);
   }
 
+  /**
+   * The ridge-chain skeleton for the range wall: four concentric arcs of
+   * crest line at increasing radius and height, each spanning most of the
+   * horizon with deliberate gaps (cols and low saddles) so sky shows
+   * through. Farther chains are taller — stacked rows with parallax, the
+   * reference's defining structure. Deterministic from the world seed.
+   */
+  _buildRidgeChains() {
+    const rng = makeRng(this._seed('ridge-chains'));
+    const chains = [];
+    // Tall chains NEAR (8.5-15 km): the reference ranges subtend 4-8 deg,
+    // which at wall distance needs the big amplitude close, not far. The
+    // outer chains add the stacked-row parallax behind the gaps.
+    const spec = [
+      { R: 8800,  amp: 1120, base: 940, sector: [-150, 150], hw: 2100 },
+      { R: 11500, amp: 1360, base: 900, sector: [-170, 170], hw: 2500 },
+      { R: 15000, amp: 1540, base: 860, sector: [-160, 175], hw: 2900 },
+      { R: 20500, amp: 1700, base: 820, sector: [-175, 178], hw: 3300 },
+    ];
+    for (const sp of spec) {
+      const pts = [];
+      const stepDeg = 7;
+      for (let a = sp.sector[0]; a <= sp.sector[1]; a += stepDeg) {
+        const t = a * DEG;
+        const rr = sp.R + rng.range(-1300, 1300);
+        pts.push([Math.sin(t) * rr, -Math.cos(t) * rr]);
+      }
+      const cum = [0], segLen = [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const L = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+        segLen.push(L); cum.push(cum[i] + L);
+      }
+      chains.push({
+        pts, cum, segLen, length: cum[cum.length - 1],
+        halfWidth: sp.hw, amp: sp.amp, base: sp.base,
+        peakCount: Math.max(8, Math.round(cum[cum.length - 1] / 1900)),
+        phase: rng() * 6.283, fluteLambda: 820 + rng.range(-140, 140),
+      });
+    }
+    return chains;
+  }
+
   _farHeightRaw(x, z) {
     if (!this._sky) this._sky = this._skyline();
     const r = Math.hypot(x, z);
@@ -610,19 +652,61 @@ export class Terrain {
       fbm2(this.simFar, x / 9200 + 3.3, z / 9200 - 6.1, { octaves: 2 }) * 0.5 + 0.5,
     );
     h += (ridged2(this.simFar, x / 2600 + 7.7, z / 2600 - 3.1, { octaves: 3, sharpness: 1.4 }) - 0.40)
-      * 420 * wall * massif;
+      * 240 * wall * massif;
     // Flute wavelength must stay resolvable by the backdrop's 100-180 m
     // far posts: 420 m at 105 m amplitude aliased into a picket-fence comb.
     h += (ridged2(this.simFar, x / 900 - 11.3, z / 900 + 5.9, { octaves: 2, sharpness: 1.3 }) - 0.45)
       * 70 * smoothstep(5000, 9000, r);
+
+    // Ridge chains — the majesty system. Isotropic ridged noise makes
+    // ramparts and, amplified, palisade artifacts; real ranges are CHAINS:
+    // coherent crest lines with peaks strung along them, steep clean faces
+    // falling away, and spur-and-couloir fluting phased along the crest.
+    // Because each chain is an analytic distance field to a polyline, its
+    // faces are smooth at any sampling rate — the structure survives the
+    // vertical scale the reference photography demands.
+    if (!this._chains) this._chains = this._buildRidgeChains();
+    for (const ch of this._chains) {
+      // Closest segment on the chain (few segments; brute force is fine).
+      let best = 1e18, bs = 0, bt = 0;
+      const pts = ch.pts;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const ax = pts[i][0], az = pts[i][1];
+        const bx = pts[i + 1][0], bz = pts[i + 1][1];
+        const abx = bx - ax, abz = bz - az;
+        const tt = clamp01(((x - ax) * abx + (z - az) * abz) / (abx * abx + abz * abz));
+        const qx = ax + abx * tt, qz = az + abz * tt;
+        const dd = (x - qx) * (x - qx) + (z - qz) * (z - qz);
+        if (dd < best) { best = dd; bs = i; bt = tt; }
+      }
+      const d = Math.sqrt(best);
+      if (d > ch.halfWidth * 2.2) continue;
+      // Crest height at this station: peaks strung along the chain.
+      const s01 = (ch.cum[bs] + bt * ch.segLen[bs]) / ch.length;
+      const peaks = Math.sin(s01 * Math.PI * ch.peakCount + ch.phase) * 0.5 + 0.5;
+      // Serration: sub-summits and notches along the crest, seeded noise so
+      // no two peaks match. Without it the chains read as rounded loaves.
+      const serrN = this.simFar.noise2D(s01 * 41.0 + ch.phase, ch.phase * 7.3)
+        + 0.5 * this.simFar.noise2D(s01 * 117.0 - ch.phase, ch.phase * 3.1);
+      const crest = ch.base + ch.amp * (0.42 + 0.50 * Math.pow(peaks, 1.6) + 0.14 * serrN);
+      // Cross profile: sharp crest, faces easing into the plain. Exponent
+      // 1.35 gives 35-45 deg upper faces that hold snow with rocky bands —
+      // the reference geometry.
+      const fall = Math.pow(clamp01(1 - d / (ch.halfWidth * 2.2)), 1.35);
+      // Spur fluting, phased ALONG the crest so runnels run down the faces.
+      const flute = 1 + 0.16 * Math.sin(s01 * ch.length / ch.fluteLambda * 6.283 + d * 0.0011)
+        * clamp01(d / 500);
+      const hc = lerp(h, crest, fall) + ch.amp * 0.16 * (flute - 1) * fall;
+      if (hc > h) h = hc;
+    }
 
     // Named skyline elements. max(), not sum() — mountains do not add.
     //
     // A Gaussian cannot be serrated, and a rounded white lozenge on the
     // horizon is the one thing a distant massif must never read as. Each peak
     // therefore carries ridged detail *inside its own mask*: sub-summits,
-    // notches and a broken crest line, faded out with the same g that raises
-    // the peak so it never leaks onto the surrounding plain.
+    // notches and a broken crest line, faded out with the same g that never
+    // leaks onto the surrounding plain.
     for (const p of this._sky) {
       const dx = x - p.x, dz = z - p.z;
       const u = (dx * p.cs + dz * p.sn) / p.elong;

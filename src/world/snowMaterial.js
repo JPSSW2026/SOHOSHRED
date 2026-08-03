@@ -1304,11 +1304,17 @@ const SNOW_SURFACE = /* glsl */ `
 		+ vec3( 0.772, 0.776, 0.788 ) * sfGroom
 		+ vec3( 0.470, 0.535, 0.615 ) * sfIce;
 	albedo *= uAlbedoScale;
-	albedo *= 1.0 + ( tMc.z - 0.5 ) * 0.10 * f4;                 // broad breakup
-	albedo *= 1.0 - tG1.z * 0.045 * f1;                          // micro cavity
-	albedo *= 1.0 + ( tDr.z - 0.5 ) * 0.07 * sastrugiW * f3;     // scoured crests
-	albedo *= 1.0 + sin( cordPhase ) * 0.038 * cordAmp;          // corduroy +-4%
-	albedo *= 1.0 - tMc.w * 0.06 * f4 * smoothstep( 0.30, 0.70, tDr.w ); // old scars
+	// Every planar-projected albedo modulation fades with the same footprint
+	// envelope as the detail normals. Left unfaded, these XZ textures stretch
+	// into vertical curtain streaks on every steep far face - the persistent
+	// smear bands on the range wall. (Computed here because the detail
+	// section's rockFade is declared later in the shader.)
+	float texFade = 1.0 - smoothstep( 0.30, 1.10, sohoFootprint * 20.0 / uRockScale );
+	albedo *= 1.0 + ( tMc.z - 0.5 ) * 0.10 * f4 * texFade;       // broad breakup
+	albedo *= 1.0 - tG1.z * 0.045 * f1 * texFade;                // micro cavity
+	albedo *= 1.0 + ( tDr.z - 0.5 ) * 0.07 * sastrugiW * f3 * texFade; // scoured crests
+	albedo *= 1.0 + sin( cordPhase ) * 0.038 * cordAmp * texFade; // corduroy +-4%
+	albedo *= 1.0 - tMc.w * 0.06 * f4 * texFade * smoothstep( 0.30, 0.70, tDr.w ); // old scars
 	albedo *= 1.0 - trkTrench * 0.15;
 	albedo *= 1.0 + trkLip * 0.05;
 	albedo *= 1.0 + snowLip * 0.05;                              // drift lip at the rock edge
@@ -1324,6 +1330,10 @@ const SNOW_SURFACE = /* glsl */ `
 	#else
 		vec3 rockAlb = rockA;
 	#endif
+	// Same rule for the rock pack itself: at wall distance a stretched texel
+	// column is a streak; flatten to the pack's mean and let N.L + aerial
+	// carry the form.
+	rockAlb = mix( rockAlb, vec3( 0.52, 0.50, 0.47 ), 1.0 - texFade );
 	rockAlb *= uRockTint;
 	rockAlb *= 1.0 + folA * 0.16 * folFade + folB * 0.10;
 	rockAlb = mix( rockAlb, rockAlb * vec3( 1.20, 1.00, 0.76 ), saturate( folB * 0.6 + 0.35 ) * 0.30 );
