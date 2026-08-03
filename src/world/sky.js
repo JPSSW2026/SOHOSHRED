@@ -1225,6 +1225,15 @@ uniform vec3 sohoBounceOccluded;
 			// shadow lookup, and it tracks the PCF kernel exactly.
 			sohoSunVis = dot( directLight.color, vec3( 1.0 ) )
 				/ max( dot( directionalLight.color, vec3( 1.0 ) ), 1e-6 );
+			// Beyond the shadow slice the map reports "lit" for everything, so
+			// gating the bounce on map visibility alone floods every
+			// geometric-terminator lee face in the mid/far field with neutral
+			// snow bounce — measured by round 4 as shadows that are both too
+			// bright (fill 0.58-0.66 vs the 0.55 ceiling) and grey (B/R
+			// 1.05-1.19 vs the 1.20 law). A face tilted away from the sun also
+			// faces away from the sunlit snowfield that produces the bounce,
+			// so the same wrap that shades the surface gates its bounce.
+			sohoSunVis *= smoothstep( -0.04, 0.18, dot( geometryNormal, directLight.direction ) );
 		#endif`);
   src = src.replace(needleAmbient,
     'vec3 irradiance = getAmbientLightIrradiance( ambientLightColor )'
