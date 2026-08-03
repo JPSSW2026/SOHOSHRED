@@ -957,6 +957,20 @@ export class Rider {
     }
   }
 
+  /**
+   * Regular stance, left foot forward.
+   *
+   * The stance is not a pose detail, it is the rider's handedness, and it has
+   * to be present at rest: a duck-stance rider's hips and chest sit rotated
+   * toward the nose all the time, leading with the front shoulder, and the
+   * head carries the rest of the way to face travel. Without this base yaw
+   * the twist channel is zero at neutral, the body faces square across the
+   * board, and the silhouette reads as goofy (or as nothing) from most
+   * angles. Board +Z is the nose; a positive yaw about +Y carries the LEFT
+   * side of the body toward it, which is what "regular" means.
+   */
+  static STANCE_YAW = { hips: 0.30, chest: 0.55, head: 0.85 };
+
   _defaultState() {
     return {
       position: new THREE.Vector3(), velocity: new THREE.Vector3(),
@@ -1099,13 +1113,13 @@ export class Rider {
     hips.position.x = Math.sin(A.incline) * (0.30 + 0.18 * A.absorb) * live;
     hips.position.z = (A.tuck * -0.02) + (s.pitch || 0) * 0.06;
     hips.rotation.z = A.incline * 0.45 * live + crash * 0.9;
-    hips.rotation.y = A.twist * 0.35;
+    hips.rotation.y = Rider.STANCE_YAW.hips + A.twist * 0.35;
     hips.rotation.x = A.tuck * 0.30 + A.absorb * 0.12 + crash * 0.5;
 
     // ---- Spine / chest ----------------------------------------------
     B.spine.rotation.z = A.incline * 0.28 * live;
     B.spine.rotation.x = A.tuck * 0.22 + A.absorb * 0.10;
-    B.chest.rotation.y = A.twist * 0.62;
+    B.chest.rotation.y = (Rider.STANCE_YAW.chest - Rider.STANCE_YAW.hips) + A.twist * 0.62;
     B.chest.rotation.z = A.incline * 0.20 * live - crash * 0.6;
     B.chest.rotation.x = -A.tuck * 0.10 + A.absorb * 0.16 + crash * 0.7;
 
@@ -1114,8 +1128,8 @@ export class Rider {
     // turn, never at their own board. The helmet is built facing board +Z, so
     // an unrotated head bone already looks over the front shoulder; the twist
     // channel only leads or trails that.
-    B.neck.rotation.y = -A.twist * 0.30;
-    B.head.rotation.y = -A.twist * 0.45 + (s.grounded ? 0 : (s.airRotation || 0) * 0.05);
+    B.neck.rotation.y = (Rider.STANCE_YAW.head - Rider.STANCE_YAW.chest) * 0.45 - A.twist * 0.30;
+    B.head.rotation.y = (Rider.STANCE_YAW.head - Rider.STANCE_YAW.chest) * 0.55 - A.twist * 0.45 + (s.grounded ? 0 : (s.airRotation || 0) * 0.05);
     B.head.rotation.x = clamp(-0.12 - A.tuck * 0.25 + A.absorb * 0.1, -0.5, 0.3) + crash * 0.4;
     B.head.rotation.z = -A.incline * 0.18 * live;
 
