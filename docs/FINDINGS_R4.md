@@ -132,3 +132,13 @@ photography), and warm/cool split lighting on the wall faces.
 Also this round: bindings slimmed 20-30%, signal red locked (hotter base
 + 0.055 same-hue emissive floor), far-face classification threshold
 eases 44->38 deg beyond 6 km.
+
+## Majesty pass (ridge chains) — commit above
+
+Wall structure is now analytic crest-line chains (peaks, serration, spur
+flutes, stacked rows). Confirmed remaining artifact: vertical sliver bands
+START AT THE 8 km STITCH FAN (192->768 1:4 fan triangles, interpolated
+normals). Fix candidates: two-stage 1:2 fans, or move the fan inward to
+~4 km where relief is nil. Wall tops still wash pale - aerial crossfade at
+15+ km; consider per-chain contrast preservation. Sky-horizon milk band
+also pending (zenith saturation item).
