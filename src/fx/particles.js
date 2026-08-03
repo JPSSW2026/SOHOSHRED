@@ -323,7 +323,7 @@ export class ParticleFX {
   emitSpray(position, direction, intensity) {
     if (!this.dynamic || intensity <= 0.001) return;
     const rng = this._rng;
-    const n = Math.min(Math.floor(intensity * 26), 40);
+    const n = Math.min(Math.floor(intensity * 42), 64);
     const t = this._time;
 
     this._fwd.copy(direction).setY(0);
@@ -347,6 +347,8 @@ export class ParticleFX {
       const back = -(0.1 + rng() * 0.5) * intensity * 2.4;
       const sign = intensity > 0 ? 1 : -1;
 
+      // Small and many reads as thrown snow mist; the previous 2–6.5 cm
+      // sprites at low counts read as individual white balls.
       this.dynamic.spawn(
         px, py, pz,
         this._right.x * side * sign + this._fwd.x * back + (rng() - 0.5) * 1.2,
@@ -354,9 +356,31 @@ export class ParticleFX {
         this._right.z * side * sign + this._fwd.z * back + (rng() - 0.5) * 1.2,
         t,
         0.55 + rng() * 1.15 * intensity,
-        0.020 + rng() * 0.045,
+        0.014 + rng() * 0.028,
         1.4 + rng() * 1.4,
         0, rng() * 100, 0.9 + rng() * 0.35, (rng() - 0.5) * 4,
+      );
+    }
+
+    // The wall itself. Individual crystals never aggregate into the opaque
+    // sheet the reference footage shows — that sheet is unresolved mist, and
+    // it has to be drawn as what it is: a handful of large, slow, soft puffs
+    // underneath the bright chunks. High drag so they hang and billow.
+    const nPuff = Math.min(Math.ceil(n * 0.3), 18);
+    for (let i = 0; i < nPuff; i++) {
+      const along = (rng() - 0.5) * 1.0;
+      this.dynamic.spawn(
+        position.x + this._fwd.x * along + this._right.x * (rng() - 0.2) * 0.3,
+        position.y + 0.05 + rng() * 0.15,
+        position.z + this._fwd.z * along + this._right.z * (rng() - 0.2) * 0.3,
+        this._right.x * (0.4 + rng() * 0.5) * intensity * 5.0 + (rng() - 0.5) * 0.8,
+        (0.5 + rng() * 0.9) * intensity * 3.2,
+        this._right.z * (0.4 + rng() * 0.5) * intensity * 5.0 + (rng() - 0.5) * 0.8,
+        t,
+        0.7 + rng() * 1.1 * intensity,
+        0.16 + rng() * 0.26,
+        3.2 + rng() * 2.0,
+        2, rng() * 100, 0.72 + rng() * 0.2, (rng() - 0.5) * 2,
       );
     }
   }
@@ -378,7 +402,7 @@ export class ParticleFX {
         direction.z * (1.5 + rng() * 3.0) + (rng() - 0.5) * 2.2,
         t,
         1.1 + rng() * 1.9,
-        0.045 + rng() * 0.075,
+        0.030 + rng() * 0.050,
         0.85 + rng() * 0.7,
         1, rng() * 100, 0.95 + rng() * 0.3, (rng() - 0.5) * 3,
       );
@@ -461,7 +485,9 @@ export class ParticleFX {
     // board is moving sideways through the snow.
     const spray = clamp01(s.sprayIntensity || 0);
     if (spray > 0.02) {
-      this._sprayDebt += spray * 46 * dt;
+      // 46/s at full intensity was a trickle: a spray wall needs hundreds of
+      // sprites in the air at once against a 2600 pool with ~2 s lifetimes.
+      this._sprayDebt += spray * 170 * dt;
       if (this._sprayDebt >= 1) {
         const count = Math.floor(this._sprayDebt);
         this._sprayDebt -= count;

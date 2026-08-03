@@ -362,10 +362,15 @@ export class BoardPhysics {
       s.pitch = damp(s.pitch, targetPitch, 9, h);
     }
 
+    // A hard clean carve throws the biggest wall of the lot — the edge is
+    // shearing snow along the whole contact length — so edge load dominates
+    // and saturates early: at 10 m/s with the edge at 90% of its grip budget
+    // the old weights produced 0.24 and thirteen alive particles, which is a
+    // dusting, not a spray shot.
     s.sprayIntensity = clamp01(
       props.spray * (
-        Math.abs(s.lateralSpeed) * 0.11 +
-        s.edgeLoad * smoothstep(3, 14, s.speed) * 0.55 +
+        Math.abs(s.lateralSpeed) * 0.14 +
+        s.edgeLoad * smoothstep(3, 9, s.speed) * 1.10 +
         (s.sinkDepth / Math.max(P.powderDepth, 1e-3)) * smoothstep(4, 20, s.speed) * 0.45
       ),
     );
