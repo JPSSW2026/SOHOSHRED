@@ -2019,17 +2019,22 @@ export class Props {
     this.torField = this._field('tor', this.rockMat, this.geo.tor, {
       useColor: true, shadowLevels: 3, cullAngular: 0.0022,
     });
+    // Cull ordering is load-bearing: the drift collars (below) must outlive
+    // the rocks they skirt, or every distant rock sheds its collar and reads
+    // as a chip sitting ON the snow — the round-3 "talus confetti" tell. The
+    // small-rubble angular thresholds are also raised outright: a 6 px pale
+    // fleck on a crest at 800 m carries no geology, only noise.
     this.outcropField = this._field('outcrop', this.rockMat, this.geo.outcrop, {
-      useColor: true, shadowLevels: 3, cullAngular: 0.0026,
+      useColor: true, shadowLevels: 3, cullAngular: 0.0040,
     });
     this.blockField = this._field('block', this.rockMat, this.geo.block, {
-      useColor: true, shadowLevels: 2, cullAngular: 0.0040,
+      useColor: true, shadowLevels: 2, cullAngular: 0.0060,
     });
     // The collar casts: a 1 m mound under a 10.6° sun lays down a 5 m shadow
     // bar, and that bar is most of what tells the viewer the rock is *in* the
     // snow rather than pasted on it. Only the near LOD writes to the map.
     this.driftField = this._field('rock-drift', this.snowMat, this.geo.drift, {
-      castShadow: true, receiveShadow: true, shadowLevels: 1, cullAngular: 0.0050,
+      castShadow: true, receiveShadow: true, shadowLevels: 1, cullAngular: 0.0034,
     });
 
     const rng = makeRng(this._seed('rock'));
