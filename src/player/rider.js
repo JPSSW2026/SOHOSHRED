@@ -34,14 +34,22 @@
  *
  * Two orientation facts drive the whole build and are easy to get wrong:
  *
- *   - **Board-local +Z is the nose, +X is the toe edge.** Both the stance and
+ *   - **Board-local +Z is the nose, −X is the toe edge.** Both the stance and
  *     the shoulder line therefore run along **Z**, not X. A rig with the hips
  *     split along Z and the shoulders split along X is a skier wearing a
  *     snowboard, and it is the difference between a silhouette that reads as
  *     "snowboarder" at 30 m and one that reads as a shop mannequin.
  *   - **The head faces +Z** (down the board, down the fall line) while the
- *     chest faces roughly +X. That 80-odd degrees of separation is free once
+ *     chest faces roughly −X. That 80-odd degrees of separation is free once
  *     the shoulders are anchored along Z, and it is what makes the pose read.
+ *
+ *     The toe edge being −X is not arbitrary — it is what makes the rider
+ *     REGULAR. The chest faces the toes, so with the nose at +Z a chest facing
+ *     +X puts the anatomical right side toward the nose (goofy) and a chest
+ *     facing −X puts the left side toward the nose (regular, left foot
+ *     forward). The first build had the toe edge at +X and no amount of yaw
+ *     could un-mirror it: the stance handedness is fixed the moment those two
+ *     axes are chosen.
  *
  * Every limb is a **closed** lathe with rounded end domes that overrun the
  * joint. An open-ended tube shows its bright interior the moment a joint bends
@@ -71,7 +79,13 @@ const DIM = {
   edgeBand: 0.005,
 
   stanceWidth: 0.55,
-  /** Duck stance: front foot open, back foot slightly negative. */
+  /**
+   * Binding angles, measured the way real ones are: from the board's
+   * TRANSVERSE axis. 0° is a boot pointing straight across the deck at the
+   * toe edge; +15° opens the front foot toward the nose, −6° closes the back
+   * foot slightly toward the tail. Boots run across a snowboard, not along
+   * it — along it is a skier.
+   */
   frontAngle: THREE.MathUtils.degToRad(15),
   backAngle: THREE.MathUtils.degToRad(-6),
 
@@ -98,7 +112,11 @@ const DIM = {
  */
 const BOARD_LIFT = 0.004;
 
-/** Grab points on the board, in board-local space. */
+/**
+ * Grab points on the board, in board-local space. The x column is written
+ * toe-positive — the toe edge is board −X, and the arm solve negates on
+ * application — so "indy grabs the toe edge" stays legible as a positive x.
+ */
 const GRABS = {
   //            [x (toe+), z (nose+)]   which hand
   indy:      { point: [ 0.13, -0.22], hand: 'back',  tweak: [0.10, -0.05, 0.02] },
@@ -713,23 +731,33 @@ export class Rider {
       const mount = bone(`binding${tag}`, boardPivot, 0, deckTop, zPos);
       mount.rotation.y = angle;
 
-      part(new THREE.BoxGeometry(0.135, 0.020, 0.30), M.binding, mount, 0, 0.010, 0);
-      // Heelcup + highback.
-      const hb = part(new THREE.BoxGeometry(0.128, 0.20, 0.026), M.binding, mount, 0, 0.115, -0.118);
+      // The binding hardware is authored with the boot's long axis on local
+      // +Z, then the whole plate is yawed −90° so that axis lands ACROSS the
+      // deck with the toes at −X (the toe edge) and the highback on the heel
+      // edge at +X. The mount bone itself carries only the stance angle, so
+      // the leg IK targets stay a pure "0° = straight across" convention.
+      const plate = new THREE.Object3D();
+      plate.rotation.y = -Math.PI * 0.5;
+      mount.add(plate);
+
+      part(new THREE.BoxGeometry(0.135, 0.020, 0.30), M.binding, plate, 0, 0.010, 0);
+      // Heelcup + highback — behind the boot, which after the plate yaw is
+      // the heel edge of the board.
+      const hb = part(new THREE.BoxGeometry(0.128, 0.20, 0.026), M.binding, plate, 0, 0.115, -0.118);
       hb.rotation.x = -0.20;
-      part(new THREE.BoxGeometry(0.132, 0.062, 0.028), M.binding, mount, 0, 0.040, -0.116);
+      part(new THREE.BoxGeometry(0.132, 0.062, 0.028), M.binding, plate, 0, 0.040, -0.116);
       // Mounting disc.
-      trim(new THREE.CylinderGeometry(0.052, 0.052, 0.008, 14), M.binding, mount, 0, 0.023, 0);
+      trim(new THREE.CylinderGeometry(0.052, 0.052, 0.008, 14), M.binding, plate, 0, 0.023, 0);
 
       // Ankle and toe straps: real arcs over the boot, with ratchet buckles and
       // ladder tails on the toe side.
-      const ankle = trim(new THREE.TorusGeometry(0.072, 0.013, 6, 14, 2.5), M.rubber, mount, 0, 0.052, -0.010);
+      const ankle = trim(new THREE.TorusGeometry(0.072, 0.013, 6, 14, 2.5), M.rubber, plate, 0, 0.052, -0.010);
       ankle.rotation.set(Math.PI * 0.5, 0, Math.PI * 0.5 - 1.25);
-      const toe = trim(new THREE.TorusGeometry(0.062, 0.011, 6, 14, 2.4), M.rubber, mount, 0, 0.036, 0.098);
+      const toe = trim(new THREE.TorusGeometry(0.062, 0.011, 6, 14, 2.4), M.rubber, plate, 0, 0.036, 0.098);
       toe.rotation.set(Math.PI * 0.5, 0, Math.PI * 0.5 - 1.20);
-      trim(new THREE.BoxGeometry(0.030, 0.022, 0.036), M.buckle, mount, 0.070, 0.062, -0.010);
-      trim(new THREE.BoxGeometry(0.026, 0.018, 0.032), M.buckle, mount, 0.062, 0.044, 0.098);
-      trim(new THREE.BoxGeometry(0.010, 0.052, 0.020), M.rubber, mount, -0.070, 0.040, -0.010);
+      trim(new THREE.BoxGeometry(0.030, 0.022, 0.036), M.buckle, plate, 0.070, 0.062, -0.010);
+      trim(new THREE.BoxGeometry(0.026, 0.018, 0.032), M.buckle, plate, 0.062, 0.044, 0.098);
+      trim(new THREE.BoxGeometry(0.010, 0.052, 0.020), M.rubber, plate, -0.070, 0.040, -0.010);
     }
 
     /* --- rider ------------------------------------------------------ */
@@ -761,22 +789,23 @@ export class Rider {
     // and gave the rider a skier's chest on a snowboarder's stance.
     torso.scale.x = 0.74;
 
-    // Construction: a chest panel seam, the main zip up the front (+X, which
+    // Construction: a chest panel seam, the main zip up the front (−X, which
     // is the way the chest faces), and a chest pocket with its own zip. The
     // zip and the pocket are lathe panels sharing the torso's own profile, so
-    // they hug the barrel instead of sinking into it at the belly.
+    // they hug the barrel instead of sinking into it at the belly. Lathe φ=0
+    // is +Z and φ=π/2 is +X, so the front of the chest is φ = −π/2.
     const seam = trim(new THREE.TorusGeometry(0.174, 0.0055, 6, 24), M.shellDark, chest, 0, 0.145, 0);
     seam.rotation.x = Math.PI * 0.5;
     seam.scale.x = 0.74;
     const HP = Math.PI * 0.5;
     const zip = trim(
-      limbPanel(DIM.chestLength, 0.148, 0.176, 1.06, 0.005, HP - 0.105, 0.21, 0.06, 0.92),
+      limbPanel(DIM.chestLength, 0.148, 0.176, 1.06, 0.005, -HP - 0.105, 0.21, 0.06, 0.92),
       M.shellDark, chest, 0, DIM.chestLength, 0,
     );
     zip.scale.x = 0.74;
-    trim(new THREE.BoxGeometry(0.014, 0.024, 0.016), M.buckle, chest, 0.133, 0.056, 0);
+    trim(new THREE.BoxGeometry(0.014, 0.024, 0.016), M.buckle, chest, -0.133, 0.056, 0);
     const pocket = trim(
-      limbPanel(DIM.chestLength, 0.148, 0.176, 1.06, 0.006, HP - 0.86, 0.46, 0.22, 0.44),
+      limbPanel(DIM.chestLength, 0.148, 0.176, 1.06, 0.006, 0.40 - HP, 0.46, 0.22, 0.44),
       M.shellDark, chest, 0, DIM.chestLength, 0,
     );
     pocket.scale.x = 0.74;
@@ -785,7 +814,7 @@ export class Rider {
     part(new THREE.CylinderGeometry(0.056, 0.064, DIM.neckLength + 0.03, 10), M.shellDark, neck, 0, DIM.neckLength * 0.45, 0);
     // Collar / hood bunched behind the neck — a silhouette detail that reads
     // even at 30 m and covers the neck-to-helmet junction from behind.
-    const hood = part(new THREE.SphereGeometry(0.098, 12, 10), M.shellDark, chest, -0.070, DIM.chestLength * 0.96, 0);
+    const hood = part(new THREE.SphereGeometry(0.098, 12, 10), M.shellDark, chest, 0.070, DIM.chestLength * 0.96, 0);
     hood.scale.set(0.70, 0.78, 1.05);
 
     const head = bone('head', neck, 0, DIM.neckLength, 0);
@@ -865,9 +894,11 @@ export class Rider {
       const hand = bone(`hand${side}`, fa, 0, -DIM.foreArm, 0);
       const mitt = part(new THREE.SphereGeometry(0.060, 12, 10), M.glove, hand, 0, -0.048, 0.004);
       mitt.scale.set(0.82, 1.30, 1.05);
-      // A thumb, so the glove is a glove rather than a ball on a stick.
-      const thumb = part(new THREE.CapsuleGeometry(0.020, 0.036, 3, 7), M.glove, hand, sx * 0.030, -0.042, 0.030);
-      thumb.rotation.set(0.5, 0, -sx * 0.5);
+      // A thumb, so the glove is a glove rather than a ball on a stick. It
+      // sits on the chest side (−X) of the mitt — the side of a relaxed
+      // hanging hand a viewer actually sees.
+      const thumb = part(new THREE.CapsuleGeometry(0.020, 0.036, 3, 7), M.glove, hand, -0.030, -0.042, 0.030);
+      thumb.rotation.set(0.5, 0, sx * 0.5);
       const knuckle = trim(new THREE.BoxGeometry(0.052, 0.030, 0.070), M.rubber, hand, 0, -0.086, 0.006);
       knuckle.rotation.x = 0.12;
     }
@@ -897,13 +928,20 @@ export class Rider {
       const gaiter = part(new THREE.CylinderGeometry(0.086, 0.076, 0.11, 12), M.pants, shin, 0, -DIM.shinLength + 0.055, 0);
 
       const bt = bone(`boot${side}`, shin, 0, -DIM.shinLength, 0);
-      const bootMesh = part(new THREE.BoxGeometry(0.108, DIM.bootHeight, 0.245), M.boot, bt, 0, -DIM.bootHeight * 0.45, 0.015);
+      // The boot bone is slaved to the binding mount's orientation by the IK,
+      // and the mount's convention is "0° = straight across the deck". The
+      // boot geometry is authored toe-along-local-+Z, so the same −90° yaw
+      // the binding plate gets puts the toe on the toe edge.
+      const foot = new THREE.Object3D();
+      foot.rotation.y = -Math.PI * 0.5;
+      bt.add(foot);
+      const bootMesh = part(new THREE.BoxGeometry(0.108, DIM.bootHeight, 0.245), M.boot, foot, 0, -DIM.bootHeight * 0.45, 0.015);
       bootMesh.name = `bootMesh${tag}`;
-      part(new THREE.BoxGeometry(0.114, 0.024, 0.252), M.sole, bt, 0, -DIM.bootHeight * 0.94, 0.015);
-      part(new THREE.CylinderGeometry(0.074, 0.080, 0.11, 10), M.boot, bt, 0, 0.030, -0.010);
+      part(new THREE.BoxGeometry(0.114, 0.024, 0.252), M.sole, foot, 0, -DIM.bootHeight * 0.94, 0.015);
+      part(new THREE.CylinderGeometry(0.074, 0.080, 0.11, 10), M.boot, foot, 0, 0.030, -0.010);
       // BOA dial + a lace band, outboard so the camera sees them.
-      trim(new THREE.CylinderGeometry(0.017, 0.017, 0.012, 12), M.buckle, bt, 0.056, 0.028, 0.020).rotation.z = Math.PI * 0.5;
-      trim(new THREE.BoxGeometry(0.112, 0.012, 0.030), M.rubber, bt, 0, -0.012, 0.098);
+      trim(new THREE.CylinderGeometry(0.017, 0.017, 0.012, 12), M.buckle, foot, 0.056, 0.028, 0.020).rotation.z = Math.PI * 0.5;
+      trim(new THREE.BoxGeometry(0.112, 0.012, 0.030), M.rubber, foot, 0, -0.012, 0.098);
     }
 
     /* --- contact darkening ------------------------------------------- */
@@ -958,18 +996,15 @@ export class Rider {
   }
 
   /**
-   * Regular stance, left foot forward.
-   *
-   * The stance is not a pose detail, it is the rider's handedness, and it has
-   * to be present at rest: a duck-stance rider's hips and chest sit rotated
-   * toward the nose all the time, leading with the front shoulder, and the
-   * head carries the rest of the way to face travel. Without this base yaw
-   * the twist channel is zero at neutral, the body faces square across the
-   * board, and the silhouette reads as goofy (or as nothing) from most
-   * angles. Board +Z is the nose; a positive yaw about +Y carries the LEFT
-   * side of the body toward it, which is what "regular" means.
+   * Base body yaw, radians from "square across the board" (chest on −X, the
+   * toe edge). A duck-stance rider's hips and chest sit rotated toward the
+   * nose all the time, leading with the front shoulder, and the head carries
+   * the rest of the way to face travel. With the toe edge on −X, a positive
+   * yaw about +Y rotates the chest from −X toward +Z — toward the nose — so
+   * these are positive. (The handedness itself — regular, left foot forward —
+   * comes from the axes, not from these values: see the class comment.)
    */
-  static STANCE_YAW = { hips: 0.30, chest: 0.55, head: 0.85 };
+  static STANCE_YAW = { hips: 0.30, chest: 0.55 };
 
   _defaultState() {
     return {
@@ -1064,10 +1099,15 @@ export class Rider {
     // turn to balance centripetal acceleration. The angle is not a style
     // choice — it is atan(a_lat / g), so a 2 g carve is a 63° lean and the
     // pose falls out of the physics for free.
+    // Sign convention: physics +edgeAngle digs the +X (heel) rail and turns
+    // the board toward +X, so a positive incline — mass carried toward +X —
+    // is leaning INTO that turn. Both terms therefore carry edgeAngle's own
+    // sign. In the air, +roll lifts the heel rail, so the toe rail meets the
+    // snow first and the body pre-leans toe-ward: the opposite sign.
     const inclineTarget = s.grounded
-      ? clamp(Math.atan2((s.gForce - 1) * 9.81 * Math.sign(-(s.edgeAngle || 0)), 9.81), -0.85, 0.85)
-        + (s.edgeAngle || 0) * -0.42
-      : (s.roll || 0) * 0.5;
+      ? clamp(Math.atan2((s.gForce - 1) * 9.81 * Math.sign(s.edgeAngle || 0), 9.81), -0.85, 0.85)
+        + (s.edgeAngle || 0) * 0.42
+      : (s.roll || 0) * -0.5;
     A.incline = damp(A.incline, inclineTarget, 9, dt);
 
     // Absorption: legs compress under load and extend when light. This is the
@@ -1086,7 +1126,10 @@ export class Rider {
 
     // Counter-rotation: the upper body leads the turn and the hips follow,
     // which is what separates a snowboarder from a skier in silhouette.
-    A.twist = damp(A.twist, clamp(-(s.edgeAngle || 0) * 0.55 + (s.slipAngle || 0) * 0.5, -0.7, 0.7), 8, dt);
+    // +edgeAngle turns the board toward +X and +twist adds +yaw, so the edge
+    // term shares edgeAngle's sign; the slip term counter-rotates against a
+    // washing tail.
+    A.twist = damp(A.twist, clamp((s.edgeAngle || 0) * 0.55 - (s.slipAngle || 0) * 0.5, -0.7, 0.7), 8, dt);
 
     const crash = A.crash;
     const live = 1 - crash;
@@ -1112,7 +1155,7 @@ export class Rider {
     // Lean the mass across the board to balance the carve.
     hips.position.x = Math.sin(A.incline) * (0.30 + 0.18 * A.absorb) * live;
     hips.position.z = (A.tuck * -0.02) + (s.pitch || 0) * 0.06;
-    hips.rotation.z = A.incline * 0.45 * live + crash * 0.9;
+    hips.rotation.z = A.incline * 0.45 * live - crash * 0.9;
     hips.rotation.y = Rider.STANCE_YAW.hips + A.twist * 0.35;
     hips.rotation.x = A.tuck * 0.30 + A.absorb * 0.12 + crash * 0.5;
 
@@ -1120,16 +1163,18 @@ export class Rider {
     B.spine.rotation.z = A.incline * 0.28 * live;
     B.spine.rotation.x = A.tuck * 0.22 + A.absorb * 0.10;
     B.chest.rotation.y = (Rider.STANCE_YAW.chest - Rider.STANCE_YAW.hips) + A.twist * 0.62;
-    B.chest.rotation.z = A.incline * 0.20 * live - crash * 0.6;
+    B.chest.rotation.z = A.incline * 0.20 * live + crash * 0.6;
     B.chest.rotation.x = -A.tuck * 0.10 + A.absorb * 0.16 + crash * 0.7;
 
     // ---- Head -------------------------------------------------------
-    // A rider looks where they are going: down the fall line and into the
-    // turn, never at their own board. The helmet is built facing board +Z, so
-    // an unrotated head bone already looks over the front shoulder; the twist
-    // channel only leads or trails that.
-    B.neck.rotation.y = (Rider.STANCE_YAW.head - Rider.STANCE_YAW.chest) * 0.45 - A.twist * 0.30;
-    B.head.rotation.y = (Rider.STANCE_YAW.head - Rider.STANCE_YAW.chest) * 0.55 - A.twist * 0.45 + (s.grounded ? 0 : (s.airRotation || 0) * 0.05);
+    // A rider looks where they are going: down the fall line, never at their
+    // own board. The helmet geometry faces local +Z — already the nose when
+    // every ancestor yaw is zero — but the chest above it carries STANCE_YAW
+    // plus most of the twist, so the neck and head unwind nearly all of that
+    // to hold the face on travel. The ~25% of twist they deliberately leave
+    // in is the head leading the turn.
+    B.neck.rotation.y = -Rider.STANCE_YAW.chest * 0.55 - A.twist * 0.30;
+    B.head.rotation.y = -Rider.STANCE_YAW.chest * 0.65 - A.twist * 0.45 + (s.grounded ? 0 : (s.airRotation || 0) * 0.05);
     B.head.rotation.x = clamp(-0.12 - A.tuck * 0.25 + A.absorb * 0.1, -0.5, 0.3) + crash * 0.4;
     B.head.rotation.z = -A.incline * 0.18 * live;
 
@@ -1181,11 +1226,11 @@ export class Rider {
 
     // The knee pole: the direction the knee is displaced toward. A rider's
     // knees break the way their toes point, and in any stance that is
-    // dominantly across the deck toward the toe edge — board +X — not toward
+    // dominantly across the deck toward the toe edge — board −X — not toward
     // the nose. Getting this axis wrong is what makes procedural riders look
     // like they have their legs on backwards.
     const dir = this._ikDir.copy(p).normalize();
-    const pole = this._ikPole.set(1, 0, 0);
+    const pole = this._ikPole.set(-1, 0, 0);
     pole.addScaledVector(dir, -pole.dot(dir));
     if (pole.lengthSq() < 1e-8) {
       pole.set(0, 0, 1).addScaledVector(dir, -dir.z);
@@ -1237,8 +1282,9 @@ export class Rider {
    * Two axes, and both are board-relative rather than body-relative, which is
    * what lets the grab table be written in board coordinates:
    *
-   *   `swingX` — upper-arm rotation.z; +ve carries the hand toward **+X**, the
-   *              toe edge, which is the way the chest faces.
+   *   `swingT` — toe-ward swing, kept toe-positive to match the grab table's
+   *              x column and applied as rotation.z = −swingT, because the toe
+   *              edge (the way the chest faces) is board **−X**.
    *   `alongZ` — upper-arm rotation.x; +ve carries the hand toward **−Z**, the
    *              tail. The front arm therefore wants a negative value.
    *
@@ -1261,13 +1307,16 @@ export class Rider {
       // nose, one over the tail — held slightly ahead of the chest, with a
       // slow idle sway so a stationary rider is not a mannequin.
       const sway = Math.sin(t * 1.7 + sx) * 0.05 * clamp01(1 - s.speed / 12);
-      let alongZ = -front * (0.52 + A.absorb * 0.14 - A.tuck * 0.30 + A.twist * front * 0.30) + sway;
-      let swingX = 0.30 + A.incline * 0.35 + A.absorb * 0.16 + sway * 0.4;
+      // `A.incline` is heel-positive (+X), so the toe-ward arm swing that
+      // balances a lean carries a negative incline coefficient; likewise the
+      // twist term here, because +twist yaws the body heel-ward.
+      let alongZ = -front * (0.52 + A.absorb * 0.14 - A.tuck * 0.30 - A.twist * front * 0.30) + sway;
+      let swingT = 0.30 - A.incline * 0.35 + A.absorb * 0.16 + sway * 0.4;
       let elbow = 0.55 + A.absorb * 0.35 + A.tuck * 0.75;
 
       // Crashed riders throw their arms up and out.
       alongZ = lerp(alongZ, -front * 1.05, A.crash);
-      swingX = lerp(swingX, 0.95, A.crash);
+      swingT = lerp(swingT, 0.95, A.crash);
       elbow = lerp(elbow, 1.5, A.crash);
 
       // Grab: whichever hand the trick calls for reaches the deck point.
@@ -1281,7 +1330,7 @@ export class Rider {
         // deck, so the shoulder drops the arm and only leans it toe- or
         // heel-ward by the amount the grab point calls for.
         alongZ = lerp(alongZ, -(grab.point[1] + (grab.tweak[1] || 0)) * 0.80, blend);
-        swingX = lerp(swingX, 0.10 + grab.point[0] * 1.1, blend);
+        swingT = lerp(swingT, 0.10 + grab.point[0] * 1.1, blend);
         // A grab is a *reach*, so the elbow opens rather than closing: folding
         // it to 1.8 rad threw the forearm out sideways at chest height, which
         // is the opposite of the shape the trick has.
@@ -1289,13 +1338,15 @@ export class Rider {
       } else if (grab && blend > 0.001) {
         // The other arm goes up and out — the tweak that sells the trick.
         alongZ = lerp(alongZ, -front * 0.95, blend * 0.7);
-        swingX = lerp(swingX, 0.15, blend * 0.7);
+        swingT = lerp(swingT, 0.15, blend * 0.7);
         elbow = lerp(elbow, 0.40, blend * 0.7);
       }
 
+      // Toe-ward is −X, so the toe-positive swing and the elbow bend both
+      // apply negated: positive rotation.z carries a hanging arm toward +X.
       ua.rotation.x = damp(ua.rotation.x, alongZ, 12, dt);
-      ua.rotation.z = damp(ua.rotation.z, swingX, 12, dt);
-      fa.rotation.z = damp(fa.rotation.z, elbow, 12, dt);
+      ua.rotation.z = damp(ua.rotation.z, -swingT, 12, dt);
+      fa.rotation.z = damp(fa.rotation.z, -elbow, 12, dt);
     }
   }
 

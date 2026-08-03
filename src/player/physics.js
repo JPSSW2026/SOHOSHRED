@@ -419,7 +419,12 @@ export class BoardPhysics {
       // wider, and the difference is dumped into a skid that scrubs speed.
       const hold = ratio > 1 ? 1 / ratio : 1;
       s.sliding = ratio > 1.06 || absLat > 2.6;
-      s.heading += carveRate * hold * h * Math.sign(1);
+      // The dug edge chooses the turn: positive inclination digs the +X rail
+      // and arcs the board toward it (+yaw), negative digs the toe rail and
+      // arcs the other way. `carveRate` alone is unsigned in edge, so without
+      // this factor both edges would turn the same direction — with the body
+      // leaning the wrong way half the time.
+      s.heading += carveRate * hold * h * Math.sign(incl);
 
       // Lateral grip: the edge drives sideways velocity out of the board.
       // This is what makes a carve track instead of drift.
