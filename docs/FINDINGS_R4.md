@@ -142,3 +142,32 @@ normals). Fix candidates: two-stage 1:2 fans, or move the fan inward to
 ~4 km where relief is nil. Wall tops still wash pale - aerial crossfade at
 15+ km; consider per-chain contrast preservation. Sky-horizon milk band
 also pending (zenith saturation item).
+
+## The sliver-band investigation — evidence table (carry into next session)
+
+The pale vertical-sliver band at the wall base (2-7 km, full width):
+
+FALSIFIED by ablation: chain wobble folding (smooth wobble, no change);
+hard-max creases (smooth-max, no change); serration amplitude (tamed, no
+change); discrete rock/windpack id flip (continuous-only, no change);
+vertex-colour schist tint strength (capped 0.18, no change); stitch-fan
+position (8 km -> 4 km, no change); classification eps (24 -> 130, no
+change); albedo-modulation streaking (texFade, no change on the band);
+BACKDROP_INNER gap (2400 -> 1900, no change); backdrop normal eps.
+
+ESTABLISHED: band is part of the terrain-backdrop mesh (backdrop-off
+removes it); visible under a plain white override (geometry/normals, not
+snowMaterial); PRE-DATES the ridge chains (visible at 8e71713 and, in
+hindsight, in every capture back to r10 - the critics' "cutout rock
+shards"); analytic field smooth along radial and angular scans at probe
+resolutions.
+
+NEXT ATTACK (fresh context): render the backdrop with MeshNormalMaterial
+and in wireframe, cropped to the band - one probe each; the fin geometry
+will identify itself immediately. Prime suspect: crease lines of the
+ridged2(x/3800) sharpness-1.25 noise running radially through the 2-7 km
+log-ring zone.
+
+OPERATIONAL LESSON (cost: nearly lost a session of work): NEVER
+stash-drop to bisect - commit WIP first, bisect in a separate worktree.
+Recovery was only possible via git fsck unreachable-commit archaeology.
