@@ -1319,6 +1319,15 @@ const SNOW_SURFACE = /* glsl */ `
 	rockAlb = mix( rockAlb, rockAlb * vec3( 1.20, 1.00, 0.76 ), saturate( folB * 0.6 + 0.35 ) * 0.30 );
 	rockAlb *= 1.0 - moat * 0.24;
 
+	// Sub-resolution snow dusting. Past a couple hundred metres a "rock"
+	// pixel is a mixed pixel — bare schist, lichen, spindrift and clinging
+	// snow the geometry cannot resolve — and real distant scree reads as
+	// grey-on-white, not ink-on-white. The round-4 ablation (props hidden,
+	// sun shadows off, blobs unchanged) pinned the wide-shot "floating dark
+	// smudges" on exactly this un-dusted classify albedo.
+	float rockDust = smoothstep( 220.0, 750.0, sohoDist ) * 0.52;
+	rockAlb = mix( rockAlb, albedo, rockDust );
+
 	diffuseColor.rgb *= mix( albedo, rockAlb, rockF );
 
 	// ---- roughness ----

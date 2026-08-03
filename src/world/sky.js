@@ -1095,9 +1095,9 @@ vec3 sohoAerialPerspective( vec3 color, vec3 worldPos, vec3 camPos ) {
 	// luminance rather than scaling channels post-hoc, so the exposure and
 	// the horizon calibration are untouched.
 	float hazeLum = dot( hazeSource, vec3( 0.2126, 0.7152, 0.0722 ) );
-	vec3 hazeBlue = hazeLum * vec3( 0.740, 0.868, 1.115 );
+	vec3 hazeBlue = hazeLum * vec3( 0.718, 0.862, 1.138 );
 	float hazeBR = hazeSource.b / max( hazeSource.r, 1e-6 );
-	hazeSource = mix( hazeBlue, hazeSource, smoothstep( 1.08, 1.32, hazeBR ) );
+	hazeSource = mix( hazeBlue, hazeSource, smoothstep( 1.22, 1.48, hazeBR ) );
 	vec3 J = sohoAtmo[ 7 ].xyz * ( scatterR + vec3( scatterM ) )
 		+ hazeSource * scatterH;
 	vec3 local = ( J / max( betaExt, vec3( 1e-12 ) ) ) * ( 1.0 - T )

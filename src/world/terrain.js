@@ -2260,7 +2260,12 @@ export class Terrain {
     // parallel terrace bands the round-3 critics measured at 1–3 km. Their
     // gradient comes from the box-mip pyramid instead (see _buildHeightMips).
     const fromGrid = s >= this.cell;
-    const fromMip = s >= this.cell * 4 && this.heightMips;
+    // Down to the 2×-cell ring: the round-4 sun-height ablation showed the
+    // "floating dark smudge" blobs at 200–800 m are the geometric terminator
+    // of drift rolls, polygon-edged because the 4–8 m rings' point-sampled
+    // normals alias it. The base ring keeps exact-field normals for crisp
+    // near-field drift shading.
+    const fromMip = s >= this.cell * 2 && this.heightMips;
     const grad = { hx: 0, hz: 0 };
     for (let j = 0; j <= N; j++) {
       const z = cz + (j - N * 0.5) * s;

@@ -210,7 +210,15 @@ async function boot() {
       const comp = CONFIG.render.shotExposure?.[preset.name];
       if (comp) engine.renderer.toneMappingExposure = CONFIG.render.exposure * comp;
 
-      // Render one more frame so the new camera pose is what gets captured.
+      // Render TWO frames at the new camera pose. `apply` teleports the
+      // camera, and the motion-blur pass reprojects against the previous
+      // frame's matrices — one rendered frame after a teleport therefore
+      // carries a full-frame velocity smear. The first tick establishes the
+      // new pose in the history; the second is the clean frame that gets
+      // captured. Every still in rounds 1–3 was shipped with that smear,
+      // which is where the "milky foreground" and the smudged mid-field
+      // partly came from.
+      engine.tick(1 / 60);
       engine.tick(1 / 60);
 
       engine.renderer.toneMappingExposure = base;
