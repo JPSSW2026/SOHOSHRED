@@ -584,6 +584,9 @@ export class Terrain {
     const ax = Math.sin(vt), az = -Math.cos(vt);
     const perp = Math.abs(-x * az + z * ax);
     h -= 300 * Math.exp(-((perp / 1100) ** 2)) * smoothstep(1300, 4600, r);
+    // Datum for the far-field vertical exaggeration below: everything added
+    // after this line is "relief".
+    const hRegional = h;
 
     // Range-scale ridged structure, faded in so it never disturbs the seam.
     const nAmp = 260 * smoothstep(1200, 4200, r);
@@ -633,6 +636,19 @@ export class Terrain {
         ph += p.h * 0.18 * g * p.serr * (rd - 0.45);
       }
       if (ph > h) h = ph;
+    }
+
+    // Cinematic vertical exaggeration of the far field. Geographic truth
+    // puts a 2400 m summit at 20 km at ~2° of elevation — a sliver. The
+    // reference photography that defines the identity is telephoto-
+    // compressed, and matching its FEEL in a wide game lens needs the far
+    // relief amplified the way every mountain game amplifies it. Positive
+    // relief above the regional base scales up to 2.2× by 13 km; valleys
+    // are left alone so the cols and gaps stay low and the sky still shows
+    // through between massifs.
+    const relief = h - hRegional;
+    if (relief > 0) {
+      h = hRegional + relief * lerp(1, 1.6, smoothstep(6000, 13000, r));
     }
 
     // Earth curvature: 53 m of drop at 26 km is the difference between a
@@ -2592,7 +2608,9 @@ export class Terrain {
         // reach 2 km at 15 km out, and smoothing gradients over that erases
         // the 900 m avalanche flutes the angular posts can perfectly resolve.
         const spacing = Math.max(8, r * (Math.PI * 2 / AN));
-        const eps = Math.max(30, spacing * 0.6);
+        // Floor at 120 m: sub-post eps turns the amplified far relief into
+        // per-post normal jitter that shades as vertical prism columns.
+        const eps = Math.max(120, spacing * 0.6);
         const hx = (this._heightAt(x + eps, z) - this._heightAt(x - eps, z)) / (2 * eps);
         const hz = (this._heightAt(x, z + eps) - this._heightAt(x, z - eps)) / (2 * eps);
         const inv = 1 / Math.sqrt(hx * hx + hz * hz + 1);
