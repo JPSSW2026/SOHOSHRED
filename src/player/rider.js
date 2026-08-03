@@ -885,19 +885,25 @@ export class Rider {
       joint(0.086, M.shellDark, sh);
 
       const ua = bone(`upperArm${side}`, sh, 0, 0, 0);
-      part(limbGeometry(DIM.upperArm, 0.070, 0.058, 1.06, 12, 0.9, 0.95), M.shell, ua);
+      part(limbGeometry(DIM.upperArm, 0.078, 0.064, 1.14, 12, 0.95, 1.0), M.shell, ua);
       // Shoulder-yoke seam and a bicep panel seam.
       const yoke = trim(new THREE.TorusGeometry(0.070, 0.005, 6, 16), M.shellDark, ua, 0, -0.062, 0);
       yoke.rotation.x = Math.PI * 0.5;
 
-      joint(0.062, M.shell, ua, 0, -DIM.upperArm, 0);
+      // Elbow: not a ball bearing — a squashed bunch of sleeve fabric that
+      // stays inside both sleeve domes at every bend.
+      const elbow = joint(0.068, M.shellDark, ua, 0, -DIM.upperArm, 0);
+      elbow.scale.y = 0.78;
       const fa = bone(`foreArm${side}`, ua, 0, -DIM.upperArm, 0);
-      part(limbGeometry(DIM.foreArm, 0.056, 0.046, 1.04, 12, 0.95, 0.9), M.shellDark, fa);
+      part(limbGeometry(DIM.foreArm, 0.064, 0.053, 1.10, 12, 1.0, 0.95), M.shellDark, fa);
       // Cuff tab at the wrist.
       const cuff = trim(new THREE.TorusGeometry(0.050, 0.008, 6, 16), M.rubber, fa, 0, -DIM.foreArm + 0.012, 0);
       cuff.rotation.x = Math.PI * 0.5;
 
       const hand = bone(`hand${side}`, fa, 0, -DIM.foreArm, 0);
+      // Wrist bridge: the cuff-to-mitt junction opened a visible gap whenever
+      // the arm extended (round-4 critic catch).
+      joint(0.048, M.glove, hand, 0, -0.006, 0);
       const mitt = part(new THREE.SphereGeometry(0.060, 12, 10), M.glove, hand, 0, -0.048, 0.004);
       mitt.scale.set(0.82, 1.30, 1.05);
       // A thumb, so the glove is a glove rather than a ball on a stick. It
@@ -914,7 +920,7 @@ export class Rider {
       const sz = side === 'F' ? 1 : -1;
       const hip = bone(`hip${side}`, hips, 0, 0, sz * DIM.hipWidth * 0.55);
       const thigh = bone(`thigh${side}`, hip, 0, 0, 0);
-      part(limbGeometry(DIM.thighLength, 0.108, 0.084, 1.10, 14, 0.85, 0.95), M.pants, thigh);
+      part(limbGeometry(DIM.thighLength, 0.114, 0.092, 1.14, 14, 0.95, 1.0), M.pants, thigh);
       // Cargo pocket flap on the outer thigh.
       const cargo = trim(new THREE.BoxGeometry(0.014, 0.092, 0.084), M.pants, thigh, 0.104, -0.20, 0);
       cargo.rotation.z = -0.06;
@@ -924,9 +930,10 @@ export class Rider {
       // Knee ball. Two tapered tubes that merely touch at a point read as a
       // break in the leg the instant the knee bends; an overlapping ball never
       // can.
-      joint(0.088, M.pants, thigh, 0, -DIM.thighLength, 0);
+      const knee = joint(0.094, M.pants, thigh, 0, -DIM.thighLength, 0);
+      knee.scale.y = 0.80;
       const shin = bone(`shin${side}`, thigh, 0, -DIM.thighLength, 0);
-      part(limbGeometry(DIM.shinLength, 0.080, 0.064, 1.05, 14, 0.95, 0.6), M.pants, shin);
+      part(limbGeometry(DIM.shinLength, 0.088, 0.072, 1.10, 14, 1.0, 0.6), M.pants, shin);
       // Knee panel seam below the joint (the one above rides on the thigh).
       const kneeSeam = trim(new THREE.TorusGeometry(0.082, 0.0055, 6, 18), M.pants, shin, 0, -0.060, 0);
       kneeSeam.rotation.x = Math.PI * 0.5;

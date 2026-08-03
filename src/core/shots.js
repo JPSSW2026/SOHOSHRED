@@ -280,6 +280,16 @@ function launch(ctx, up = 5.4, airTime = 0.62, grab = 'indy') {
   st.airHeight = up * airTime * 0.5;
   st.speed = st.velocity.length();
   ride(ctx, { grab, crouch: 0.55 });
+  // The grab pose blends in at ~9/s and the capture frame is two ticks after
+  // launch — without pre-warming, every "air trick" frame showed a dead
+  // A-pose drop with the board dead-level. Set the animation channels to
+  // their mid-trick values directly and tweak the board off level, which is
+  // what a grabbed air actually looks like.
+  const an = ctx.rider?._an;
+  if (an) { an.grabBlend = 1; an.tuck = 0.85; an.absorb = 0.4; }
+  if (ctx.rider) ctx.rider._grab = grab;
+  st.roll = 0.34;
+  st.pitch = -0.12;
   if (ctx.tricks) {
     ctx.tricks.current = {
       name: null, rotation: 0, flip: 0, grab, grabTime: airTime,
