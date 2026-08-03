@@ -590,6 +590,21 @@ export class Terrain {
     h += (ridged2(this.simFar, x / 3800, z / 3800, { octaves: 4, sharpness: 1.25 }) - 0.42) * nAmp;
     h += fbm2(this.simFar, x / 1500, z / 1500, { octaves: 3 }) * 40 * smoothstep(1100, 2600, r);
 
+    // The range wall. The user's identity reference is four-to-six stacked
+    // rows of serrated, fully snow-clad ranges filling the top third of a
+    // mid-slope frame — the named skyline peaks alone leave open plain
+    // between them and the horizon reads as a low band. Two extra ridged
+    // systems fill the stack: 2.6 km rows (the between-massif ranges) and a
+    // 420 m corrugation that gives every far face the avalanche-flute
+    // shading the reference wall is textured with.
+    const wall = smoothstep(6000, 11000, r);
+    h += (ridged2(this.simFar, x / 2600 + 7.7, z / 2600 - 3.1, { octaves: 3, sharpness: 1.4 }) - 0.40)
+      * 420 * wall;
+    // Flute wavelength must stay resolvable by the backdrop's 100-180 m
+    // far posts: 420 m at 105 m amplitude aliased into a picket-fence comb.
+    h += (ridged2(this.simFar, x / 900 - 11.3, z / 900 + 5.9, { octaves: 2, sharpness: 1.3 }) - 0.45)
+      * 70 * smoothstep(5000, 9000, r);
+
     // Named skyline elements. max(), not sum() — mountains do not add.
     //
     // A Gaussian cannot be serrated, and a rounded white lozenge on the
@@ -607,7 +622,7 @@ export class Terrain {
       let ph = lerp(h, p.h, g);
       if (p.serr > 0 && g > 0.015) {
         const rd = ridged2(this.simFar, dx / p.sw, dz / p.sw, { octaves: 3, sharpness: 1.6 });
-        ph += p.h * 0.10 * g * p.serr * (rd - 0.45);
+        ph += p.h * 0.18 * g * p.serr * (rd - 0.45);
       }
       if (ph > h) h = ph;
     }
@@ -2403,7 +2418,10 @@ export class Terrain {
       const hx = (this._heightAt(x + eps, z) - this._heightAt(x - eps, z)) / (2 * eps);
       const hz = (this._heightAt(x, z + eps) - this._heightAt(x, z - eps)) / (2 * eps);
       const sDeg = Math.atan(Math.hypot(hx, hz)) / DEG;
-      rb = clamp01((sDeg - 32) / 18);
+      // Deep-winter identity (user's reference call): the surrounding ranges
+      // are snow-clad to the crests, with bare rock only on genuinely
+      // unholdable aretes. 32° was exposing rock across whole mid-slopes.
+      rb = clamp01((sDeg - 44) / 14);
       id = rb > 0.5 ? S_ROCK : S_WINDPACK;
     }
 
@@ -2540,20 +2558,19 @@ export class Terrain {
         const vi = offs[k] + a;
         let y = this._heightAt(x, z) - BACKDROP_SINK;
         if (skirt) y -= 1500;                    // drop the rim below the horizon
-        // Same anti-aliasing rule as the coarse clipmap rings: gradient from
-        // the mip matched to this ring's own post spacing, not from point
-        // samples of the full-detail field.
-        const spacing = Math.max(8, r * (Math.PI * 2 / AN), r * (1 - 1 / growth));
-        const grad = { hx: 0, hz: 0 };
-        let hx, hz;
-        if (this.heightMips) {
-          this._mipGradient(x, z, Math.max(spacing, 8), grad);
-          hx = grad.hx; hz = grad.hz;
-        } else {
-          const eps = Math.max(60, r * 0.01);
-          hx = (this._heightAt(x + eps, z) - this._heightAt(x - eps, z)) / (2 * eps);
-          hz = (this._heightAt(x, z + eps) - this._heightAt(x, z - eps)) / (2 * eps);
-        }
+        // Anti-aliased like the clipmap rings, but analytically: the box-mip
+        // pyramid only covers the playable box, and sampling it edge-clamped
+        // from 2–22 km out (an earlier revision did) returns the box-border
+        // gradient for every backdrop vertex — the whole range wall shaded as
+        // one flat streak. Wide central differences of the analytic far field
+        // at the ring's own spacing are the correct low-pass out here.
+        // eps from the ANGULAR post spacing only: the log-spaced radial gaps
+        // reach 2 km at 15 km out, and smoothing gradients over that erases
+        // the 900 m avalanche flutes the angular posts can perfectly resolve.
+        const spacing = Math.max(8, r * (Math.PI * 2 / AN));
+        const eps = Math.max(30, spacing * 0.6);
+        const hx = (this._heightAt(x + eps, z) - this._heightAt(x - eps, z)) / (2 * eps);
+        const hz = (this._heightAt(x, z + eps) - this._heightAt(x, z - eps)) / (2 * eps);
         const inv = 1 / Math.sqrt(hx * hx + hz * hz + 1);
         const p = vi * 3;
         pos[p] = x; pos[p + 1] = y; pos[p + 2] = z;

@@ -315,7 +315,7 @@ const SKY_TERRAIN_OCCLUSION = 0.65;
  * thick along the skyline and gone by ~12° up, which is the vertical structure
  * checklist 21 asks for and the reason it cannot flatten the zenith.
  */
-const HORIZON_BAND_STRENGTH = 1.0;
+const HORIZON_BAND_STRENGTH = 0.55;
 const HORIZON_BAND_SCALE = 0.075;          // sin(4.3°) e-folding
 const HORIZON_BAND_TINT = [0.85, 0.95, 1.20];
 
@@ -335,7 +335,11 @@ const HORIZON_BAND_TINT = [0.85, 0.95, 1.20];
  * total can now carry §4.1's full magnitude without flooding every shadow with
  * neutral light.
  */
-const BOUNCE_VIEW_FACTOR = 0.24;
+// Round 5 measured shadow fill at 0.55-0.66 against the reference envelope
+// 0.22-0.55, with the neutral bounce drowning the blue sky fill (LAW 2) and
+// lighting the rider's jacket from below like a lamp. 0.18 lands fill
+// mid-envelope while the sky term keeps the blue.
+const BOUNCE_VIEW_FACTOR = 0.18;
 
 /**
  * How much of that bounce is *occluded by the same geometry that occludes the
@@ -394,7 +398,10 @@ const WEATHER = {
     lenticular: 0.30,
     ridgeBank: 0.85,
     sunTransmission: 1.0,
-    haze: 8.0e-5,
+    // 8e-5 was an optical depth of 1.2 over the 15 km to the range wall -
+    // the identity reference (bone-dry post-frontal NZ bluebird) keeps full
+    // flute contrast at that distance, which needs tau well under 0.5.
+    haze: 2.6e-5,
     hazeScaleHeight: 250,
     aerosolTint: [1.0, 0.98, 0.95],
     msGain: 1.0,
@@ -1154,7 +1161,11 @@ vec3 sohoAerialPerspective( vec3 color, vec3 worldPos, vec3 camPos ) {
 	vec3 skyUp = sru.xyz * sohoPhaseR( cu ) * sohoPolariser( cu, muUp )
 		+ smu.xyz * sohoPhaseM( cu, sohoAtmo[ 3 ].y )
 		+ sru.w * sohoAtmo[ 6 ].xyz + sohoHorizonBand( dirUp );
-	vec3 skyRef = min( sky, skyUp ) * 0.965;
+	// Sunlit snow ranges ARE brighter than the horizon sky behind them — the
+	// identity reference shows it plainly — so the guard only trims gross
+	// violations (>10% over the darker of the two sky samples), not the
+	// physical brightness of a snow wall in sun.
+	vec3 skyRef = min( sky, skyUp ) * 1.10;
 
 	float veil = smoothstep( 0.03, 0.24, 1.0 - T.b );
 	return mix( result, min( result, skyRef ), veil );

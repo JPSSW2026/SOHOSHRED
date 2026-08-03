@@ -126,7 +126,18 @@ export const CONFIG = {
     windSpeed: 4.2, // m/s
     windDirection: 292, // degrees, from the north-west (the prevailing NW flow)
     temperature: -6.5, // degC — cold enough that the snow stays dry
-    visibility: 42000, // m
+    // The Cardrona identity reference is a bone-dry NZ winter bluebird: the
+    // range wall reads with full flute contrast at 15-40 km. 42 km haze
+    // flattened it to a pale band.
+    visibility: 110000, // m
+  },
+
+  /** Sky / atmosphere overrides (sky.js reads this as its cfg). */
+  sky: {
+    // The identity reference keeps bold flute shading on the range wall at
+    // 15-40 km; full-strength in-scatter washed the wall to a pale band.
+    // The paler-than-sky clamp still runs, so LAW-2/checklist-19 hold.
+    aerialStrength: 0.74,
   },
 
   /** Terrain extent and resolution. */

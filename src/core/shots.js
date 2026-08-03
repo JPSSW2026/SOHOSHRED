@@ -220,6 +220,27 @@ function sunComposedLook(ctx, o) {
  * Drop the rider at a named terrain spawn with an initial speed down the fall
  * line, so a short settle produces a rider that is actually riding.
  */
+/**
+ * Drop the rider onto the fall line at an arbitrary point — for the shot
+ * lines that are not named spawns, like the sunlit steep flank the demo and
+ * the spray shot use. Heading is straight down the local gradient.
+ */
+function dropAt(ctx, x, z, speed = 0) {
+  const t = ctx.terrain;
+  const p = ctx.physics;
+  if (!t || !p) return null;
+  const n = t.getNormal(x, z, v(0, 1, 0));
+  const heading = Math.atan2(n.x, n.z);
+  const pos = v(x, t.getHeight(x, z), z);
+  p.reset(pos, heading);
+  if (speed && p.state) {
+    const fwd = v(Math.sin(heading), 0, Math.cos(heading));
+    p.state.speed = speed;
+    p.state.velocity.copy(fwd).multiplyScalar(speed);
+  }
+  return { position: pos, heading };
+}
+
 function dropIn(ctx, spawnName, speed = 0) {
   const t = ctx.terrain;
   const p = ctx.physics;
@@ -345,7 +366,10 @@ export const SHOTS = [
     description: 'Low, close on the board throwing a spray wall.',
     settle: 6.0,
     prepare(ctx) {
-      dropIn(ctx, 'broadway-gate', 16);
+      // The spray shot needs edge LOAD, and the 8° gate plateau cannot
+      // deliver it — round 5 photographed a dry board there. The sunlit 28°
+      // powder flank (the demo line) loads the edge properly.
+      dropAt(ctx, 450, 600, 13);
       ride(ctx, { steer: 0 });
       freeCam(ctx);
     },
