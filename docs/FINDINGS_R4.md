@@ -112,3 +112,23 @@ still gives it away structurally. Consensus queue, next session:
 Range-wall v1 shipped (see commit aa7bf84 + follow-up); remaining wall
 polish: shaded serrated sections ghost cyan (inscatter-dominated), backdrop
 stitch seams at steep flank edges, flute shading subtle at 15 km+.
+
+## Range-wall status after the user feedback round
+
+Shipped: massif clustering, 450 m wall rings (log rings had left 2-4 km
+radial gaps - the "featureless curtain" cause), steep-far-face rock
+classification (kills XZ-planar snow streaking), 1.6x far relief
+exaggeration, 120 m gradient smoothing floor.
+
+Attempted and reverted: 2.2x exaggeration + 1536 posts + 300 m rings =
+prism-palisade artifacts (per-post normal jitter on amplified gradients).
+
+NEXT for majesty (needs a dedicated session): a purpose-built ridge-and-
+spur skeleton generator for the wall band (drainage-consistent ridgelines
+with spurs, not isotropic ridged noise), telephoto-style shot framing for
+vista presets (longer lens compresses perspective like the reference
+photography), and warm/cool split lighting on the wall faces.
+
+Also this round: bindings slimmed 20-30%, signal red locked (hotter base
++ 0.055 same-hue emissive floor), far-face classification threshold
+eases 44->38 deg beyond 6 km.
