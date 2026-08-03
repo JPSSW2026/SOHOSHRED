@@ -544,7 +544,14 @@ function buildSlabStack(rng, opt = {}) {
   let ox = 0, oz = 0;
   for (let i = 0; i < slabs; i++) {
     const u = slabs > 1 ? i / (slabs - 1) : 0;
-    const sc = lerp(1, taper, u) * rng.range(0.9, 1.07);
+    // Non-monotonic width. A strict taper makes every slab concentrically
+    // smaller than the one below, so each ledge is a complete ring - and
+    // since up-facing ledges load snow, the tor renders as a stack of white
+    // annuli: the wedding cake every critique called "cuboids" and "dice".
+    // Real schist stacks are not concentric: the variance here is wide enough
+    // that a slab is regularly WIDER than its neighbour below, which turns
+    // ring-ledges into one-sided ledges and adds undercut shadows.
+    const sc = lerp(1, taper, u) * rng.range(0.80, 1.22);
     ox += rng.range(-step, step);
     oz += rng.range(-step, step);
     const yA = i / slabs;
@@ -1810,9 +1817,9 @@ export class Props {
     ];
 
     this.geo = {
-      tor: lod({ seed: this._seed('geo.tor'), slabs: 5, sides: 6, taper: 0.66, jag: 0.30, flatten: 0.55, step: 0.10 }),
-      outcrop: lod({ seed: this._seed('geo.outcrop'), slabs: 4, sides: 7, taper: 0.80, jag: 0.24, flatten: 0.48, step: 0.13 }),
-      block: lod({ seed: this._seed('geo.block'), slabs: 3, sides: 5, taper: 0.72, jag: 0.34, flatten: 0.70, step: 0.08 }),
+      tor: lod({ seed: this._seed('geo.tor'), slabs: 5, sides: 6, taper: 0.70, jag: 0.30, flatten: 0.55, step: 0.20 }),
+      outcrop: lod({ seed: this._seed('geo.outcrop'), slabs: 4, sides: 7, taper: 0.84, jag: 0.24, flatten: 0.48, step: 0.24 }),
+      block: lod({ seed: this._seed('geo.block'), slabs: 3, sides: 5, taper: 0.76, jag: 0.34, flatten: 0.70, step: 0.16 }),
       drift: [
         { geometry: buildDriftMound(14, 3, 1.6), angular: 0.030 },
         { geometry: buildDriftMound(8, 2, 1.6), angular: 0.0 },
