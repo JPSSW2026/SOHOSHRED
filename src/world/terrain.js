@@ -2528,7 +2528,24 @@ export class Terrain {
       const w = minLam > 0 ? smoothstep(minLam * 0.85, minLam * 1.35, lam) : 1;
       if (w <= 0.001) continue;
       const jit = sim.noise2D(a0 / (lam * 7) + ph, c0 / (lam * 11));
-      const s = c0 / lam + jit * 0.5;
+
+      // Cross-jointing. Schist faces are cut by joint sets roughly normal to
+      // the bedding, and the plates *step* across them: a plate does not run
+      // unbroken along a 300 m frontage, it is offset every few metres by a
+      // fracture. Without this the bands are perfectly parallel and perfectly
+      // continuous, which is precisely the venetian-blind read - and it is a
+      // read the sampling limit cannot explain, because at 3.8 m the band sits
+      // at 7.6 samples per wavelength, well inside the grid. The artefact was
+      // never aliasing; the model was simply too regular to be rock.
+      const jSeed = Math.floor(a0 / 7.5 + sim.noise2D(a0 / 23, c0 / 31) * 1.6);
+      const jOff = sim.noise2D(jSeed * 13.7 + ph, 4.2) * 0.5;
+
+      // Bed thickness is not constant either. Modulating amplitude over ~17 m
+      // means some plates stand proud, some are nearly flush, and the eye
+      // stops finding a period in them.
+      const ampMod = 0.55 + 0.45 * sim.noise2D(a0 / 17 + ph, c0 / 19);
+
+      const s = c0 / lam + jit * 0.5 + jOff;
       const fr = s - Math.floor(s);
       // Sharp lip, sloping back: plates break, they do not undulate. C1 at
       // both ends of the cycle — a raw sawtooth's harmonic tail aliases
@@ -2536,7 +2553,7 @@ export class Terrain {
       const tri = fr < FOL_LIP
         ? smoothstep(0, FOL_LIP, fr)
         : 1 - smoothstep(FOL_LIP, 1, fr);
-      d += (tri - 0.5) * amp * w;
+      d += (tri - 0.5) * amp * w * ampMod;
     }
     return d;
   }
@@ -2582,7 +2599,7 @@ export class Terrain {
       // foliation (snowMaterial.createRockMaterial, `uFoliationSpacing`),
       // where they are evaluated at pixel rate and mip-filtered. Left in the
       // table so the model stays complete — `_foliationRelief` fades them.
-      bands: [[3.8, 0.44, 0], [0.6, 0.20, 13.7], [0.15, 0.07, 31.1]],
+      bands: [[3.8, 0.30, 0], [0.6, 0.20, 13.7], [0.15, 0.07, 31.1]],
     };
 
     const COL_STEP = 1.25;    // metres along the bluff frontage
