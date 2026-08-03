@@ -83,3 +83,32 @@ Consensus blockers, in planned attack order:
    Needs a probe before any fix.
 8. **Talus confetti / air-trick floating shard / snow-detail box rock** —
    props conform + distance cull. NOT yet applied.
+
+---
+
+# Round-5 verdicts (r12): 5.5 / 3.5 / 4.6 / 4.5 / 4.0 — avg 4.4, still 9/9 blind
+
+One critic conceded "ridge-backlight and hero-basin would survive a
+lighting-only comparison" — tone/lighting parity is close; frame identity
+still gives it away structurally. Consensus queue, next session:
+
+1. RIDER (all five critics, #1): joints still read proud, upper arms render
+   pale instead of shell-orange (sleeve colour-blocking), jacket belly glowed
+   from bounce (BOUNCE_VIEW_FACTOR cut shipped, verify), air-trick grab hand
+   floats ~20 cm off the deck.
+2. Near-shadow blue: B/R 1.06-1.10 vs 1.20 law. Bounce cut helps; remaining
+   suspect is PCF leak under thin casters (tracks/sastrugi never reach umbra).
+3. Mid-field shadow slats within the 520 m slice: receiver-distance-scaled
+   PCF + cascade blend + normal-offset bias.
+4. Prop chips still float at crests in west-spur/ridge-backlight (300-600 m,
+   inside cull range): need surface conform/sink; ALSO verify rockMat
+   actually receives the aerial injection — critics measured full-contrast
+   chips at km range.
+5. close-spray: r12 predates the steep-line move; re-verify spray density at
+   the capture instant on the new line.
+6. Sky zenith saturation below colour script (wash partly from per-setup
+   exposure comps).
+
+Range-wall v1 shipped (see commit aa7bf84 + follow-up); remaining wall
+polish: shaded serrated sections ghost cyan (inscatter-dominated), backdrop
+stitch seams at steep flank edges, flute shading subtle at 15 km+.
