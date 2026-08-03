@@ -375,9 +375,33 @@ export const SHOTS = [
   {
     name: 'air-trick',
     description: 'Rider mid-air off a natural rollover, backlit.',
-    settle: 7.0,
-    prepare(ctx) { dropIn(ctx, 'bowl-entry', 18); gameCam(ctx, 'cinematic'); },
-    apply(ctx) { launch(ctx, 5.8, 0.66, 'melon'); },
+    // 7 s of settle ground the run down to walking pace before the launch —
+    // the HUD read 5 km/h under a trick. 3 s keeps real speed into the pop.
+    settle: 3.0,
+    prepare(ctx) { dropIn(ctx, 'bowl-entry', 16); gameCam(ctx, 'cinematic'); },
+    apply(ctx) {
+      launch(ctx, 5.8, 0.66, 'melon');
+      // The cinematic chase cam leads the rider by several metres, which put
+      // the airborne rider half out of the top of frame with the trick
+      // readout dead-centre. Frame it deliberately instead: a low station
+      // ahead and to the side, looking back up, so the grab silhouettes
+      // against sky with the landing slope entering at the bottom of frame.
+      const st = ctx.physics?.state;
+      const cam = ctx.camera;
+      if (!st) return;
+      ctx.player?.camera?.setMode?.('free');
+      cam.fov = 44;
+      const fwd = v(Math.sin(st.heading), 0, Math.cos(st.heading));
+      const right = v(fwd.z, 0, -fwd.x);
+      cam.position.copy(st.position)
+        .addScaledVector(fwd, 6.5)
+        .addScaledVector(right, -3.2)
+        .add(v(0, -1.2, 0));
+      const floor = gh(ctx, cam.position.x, cam.position.z) + 0.5;
+      if (cam.position.y < floor) cam.position.y = floor;
+      cam.lookAt(st.position.x, st.position.y + 0.75, st.position.z);
+      cam.updateProjectionMatrix();
+    },
   },
   {
     name: 'snow-detail',
