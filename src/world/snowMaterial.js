@@ -432,8 +432,17 @@ function bakeSnowDrift(size, seed) {
       const u = (x / size) * P;
       const v = (y / size) * P;
 
-      // Meander the ridge lines so they are not dead-straight combs.
-      const warp = tileFbm(u * 0.5, v * 2, 4, 16, 3, seed + 31) * 0.55;
+      // Meander the ridge lines so they are not dead-straight combs — but
+      // gently. The old warp varied at ~0.7 m ACROSS wind with +/-0.75 m of
+      // displacement, so every crest zigzagged through its own wavelength and
+      // the whole field read as pen scribbles rather than as wind forms. Real
+      // sastrugi crests wander over metres, by a fraction of their spacing.
+      const warp = tileFbm(u * 0.5, v * 0.6, 4, 5, 3, seed + 31) * 0.26
+        // Slow phase drift, half a wavelength over ~4 m: without it every
+        // crest sits at exactly n x 1.375 m, and once the meander was tamed
+        // the field organised into ladder rungs - rows of dashes on a strict
+        // grid. Real spacing varies bed to bed.
+        + tileFbm(u * 0.25, v * 0.5, 2, 4, 2, seed + 77) * 0.55;
       // Sastrugi occur in patches, elongated 4:1 downwind.
       const patch = clamp01(tileFbm(u * 0.5, v * 2, 4, 16, 4, seed + 13) * 1.3 + 0.42);
       // Ridge segments have finite length: an anisotropic cellular field breaks
@@ -443,8 +452,12 @@ function bakeSnowDrift(size, seed) {
 
       // Wavelength ≈ 1.375 m (spec: 0.35–2.2 m).
       const t = frac(u + warp);
-      // Riser occupies 6% of the wavelength → 0.2 m over 0.082 m ≈ 68°.
-      const riser = smoothstep(0, 0.06, t);
+      // Riser widened 0.06 -> 0.16 of the wavelength. At 6% the scarp is an
+      // 8 cm hairline whose entire height gradient lands in ~4 texels: under
+      // raking light that is a thin dark STROKE, which is most of why the
+      // macro frame read as scribbles. 16% is still a distinct steep face
+      // (~40 deg) but its gradient is a shaded form, not a line.
+      const riser = smoothstep(0, 0.16, t);
       const tail = Math.pow(1 - t, 1.25);
       const saw = riser * tail;
 
@@ -454,14 +467,18 @@ function bakeSnowDrift(size, seed) {
 
       const sastrugi = saw * patch * segMask;
       const drift = 0.62 * dune2 + 0.38 * (1 - dune);
-      h[i] = sastrugi * 0.68 + drift * 0.32;
+      h[i] = sastrugi * 0.55 + drift * 0.45;
 
       const o = i * 4;
-      data[o + 2] = byte(clamp01(sastrugi * 1.4));
+      data[o + 2] = byte(clamp01(sastrugi * 1.05));
       data[o + 3] = byte(clamp01(drift * 0.72 + sastrugi * 0.42));
     }
   }
-  encodeGradient(h, size, 0.90, data, 0);
+  // 0.90 -> 0.50: REFERENCE_ANALYSIS's headline is that the shipped game's
+  // snow is deliberately smooth and that surface texture is a distant fifth
+  // in what sells the frame - over-texturing is itself a tell. The forms stay;
+  // they whisper instead of drawing on the snow.
+  encodeGradient(h, size, 0.50, data, 0);
   return data;
 }
 
