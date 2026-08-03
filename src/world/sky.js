@@ -1088,6 +1088,16 @@ vec3 sohoAerialPerspective( vec3 color, vec3 worldPos, vec3 camPos ) {
 	// is skylight rather than direct beam — which is exactly why alpine valley
 	// haze reads blue while coastal haze reads milky grey (§5.1).
 	vec3 hazeSource = mix( sohoAtmo[ 7 ].xyz, sohoAtmo[ 4 ].xyz * sunLum, sohoAtmo[ 3 ].w );
+	// LAW 2 floor. However neutral the sun/ambient mix comes out, valley haze
+	// is lit by a blue sky and may not scatter grey: round 3 measured hazed
+	// shadowed snow at B/R 1.05–1.15 against the law's 1.20 minimum, which is
+	// the milky-distance tell (#32). Hue-floor the source at the same
+	// luminance rather than scaling channels post-hoc, so the exposure and
+	// the horizon calibration are untouched.
+	float hazeLum = dot( hazeSource, vec3( 0.2126, 0.7152, 0.0722 ) );
+	vec3 hazeBlue = hazeLum * vec3( 0.740, 0.868, 1.115 );
+	float hazeBR = hazeSource.b / max( hazeSource.r, 1e-6 );
+	hazeSource = mix( hazeBlue, hazeSource, smoothstep( 1.08, 1.32, hazeBR ) );
 	vec3 J = sohoAtmo[ 7 ].xyz * ( scatterR + vec3( scatterM ) )
 		+ hazeSource * scatterH;
 	vec3 local = ( J / max( betaExt, vec3( 1e-12 ) ) ) * ( 1.0 - T )
@@ -1129,8 +1139,25 @@ vec3 sohoAerialPerspective( vec3 color, vec3 worldPos, vec3 camPos ) {
 	// legislates colours for (#9CAECB at 2-6 km, #A9BCD6 beyond 12 km) and
 	// is still nowhere near the near field checklist 17 measures: at 400 m the
 	// gate is 0.00 and at 900 m it is 0.06.
+	// The reference the clamp compares against is NOT the sky along the
+	// fragment's own ray: a crest sits a fraction of a degree below the sky
+	// the viewer reads it against, and the sky gradient brightens toward the
+	// horizon fast enough that "≤ sky along own ray" still leaves the ridge
+	// measurably paler than the sky above it (round 3: backdrop L187 under
+	// sky L177). Sample the sky ~2° above the ray as well and clamp to the
+	// darker of the two, so the ridge/sky boundary always darkens downward.
+	vec4 sru, smu;
+	float muUp = min( muSky + 0.035, 1.0 );
+	sohoSampleTables( muUp, sru, smu );
+	vec3 dirUp = normalize( vec3( dir.x, dir.y + 0.035, dir.z ) );
+	float cu = dot( dirUp, sohoAtmo[ 0 ].xyz );
+	vec3 skyUp = sru.xyz * sohoPhaseR( cu ) * sohoPolariser( cu, muUp )
+		+ smu.xyz * sohoPhaseM( cu, sohoAtmo[ 3 ].y )
+		+ sru.w * sohoAtmo[ 6 ].xyz + sohoHorizonBand( dirUp );
+	vec3 skyRef = min( sky, skyUp ) * 0.965;
+
 	float veil = smoothstep( 0.03, 0.24, 1.0 - T.b );
-	return mix( result, min( result, sky * 0.98 ), veil );
+	return mix( result, min( result, skyRef ), veil );
 }
 #endif
 `;
@@ -2607,9 +2634,14 @@ export class Sky {
     // subject: when the rider is near the lens (chase, portrait) it stays
     // tight and sharp, and in landscape framings - where no rider shadow is
     // on screen to protect - it opens to the full declared range.
+    // The ceiling was 900 m; round 3 showed that past ~500 m the map mostly
+    // renders artefacts — the coarse-LOD facet steps shadow each other into
+    // quantised terrace bands, and small casters (tors, talus) stretch into
+    // caster-less ink smudges under the 10.6° sun. 520 m keeps every shadow
+    // that reads as belonging to something; beyond it, N·L carries the field.
     const riderPos = this.ctx?.physics?.state?.position;
     const riderD = riderPos ? camera.position.distanceTo(riderPos) : 1e9;
-    const far = cfg.shadowDistance ?? clamp(riderD * 2.2, 280, 900);
+    const far = cfg.shadowDistance ?? clamp(riderD * 2.2, 280, 520);
     const near = Math.max(camera.near, 0.05);
 
     // Minimal bounding sphere of the frustum slice [near, far], in view space.
