@@ -128,8 +128,15 @@ const MICRO_CAP = 0.045;
  */
 const FOL_LIP = 0.42;
 
-/** Where the backdrop shell begins, and how far the box-edge blend runs. */
-const BACKDROP_INNER = 2400;
+/**
+ * Where the backdrop shell begins. Must start INSIDE the clipmap's on-axis
+ * edge (half = 2048 m), not just inside its diagonal reach: at 2400 there
+ * was a 350 m on-axis band covered by neither surface, and the clipmap's
+ * outer skirt hung exposed in it - the bright vertical-sliver band at the
+ * wall base that outlived six other explanations. The white-material probe
+ * settled it.
+ */
+const BACKDROP_INNER = 1900;
 const FAR_BLEND = 280;
 /** Sink the backdrop slightly so the clipmap always wins in the overlap band. */
 const BACKDROP_SINK = 6;
@@ -594,9 +601,19 @@ export class Terrain {
     for (const sp of spec) {
       const pts = [];
       const stepDeg = 7;
+      // The radial wobble must be SMOOTH along the arc. Independent per-
+      // vertex jitter comparable to the vertex spacing folds the polyline
+      // back on itself, and the closest-point arc position then JUMPS
+      // between distant segments - measured as a 368 m cliff in a single
+      // 20 m step at 13.7 km. Two slow sinusoids plus small jitter keep the
+      // chain meandering without ever folding.
+      const ph1 = rng() * 6.283, ph2 = rng() * 6.283;
       for (let a = sp.sector[0]; a <= sp.sector[1]; a += stepDeg) {
         const t = a * DEG;
-        const rr = sp.R + rng.range(-1300, 1300);
+        const rr = sp.R
+          + 750 * Math.sin(a * 0.045 + ph1)
+          + 420 * Math.sin(a * 0.113 + ph2)
+          + rng.range(-160, 160);
         pts.push([Math.sin(t) * rr, -Math.cos(t) * rr]);
       }
       const cum = [0], segLen = [];
@@ -667,9 +684,15 @@ export class Terrain {
     // vertical scale the reference photography demands.
     if (!this._chains) this._chains = this._buildRidgeChains();
     for (const ch of this._chains) {
-      // Closest segment on the chain (few segments; brute force is fine).
-      let best = 1e18, bs = 0, bt = 0;
+      // Per-SEGMENT evaluation with a max-union. Closest-point-only picks one
+      // arc station, and wherever a meander brings two stations' influence
+      // zones together the chosen station JUMPS across the medial axis — the
+      // probe measured 200-370 m cliffs in single 20 m steps. Each segment's
+      // contribution is continuous in (x, z), and the max of continuous
+      // functions is continuous, so the union has no cliffs anywhere.
       const pts = ch.pts;
+      const reach = ch.halfWidth * 2.2;
+      const reach2 = reach * reach;
       for (let i = 0; i < pts.length - 1; i++) {
         const ax = pts[i][0], az = pts[i][1];
         const bx = pts[i + 1][0], bz = pts[i + 1][1];
@@ -677,27 +700,26 @@ export class Terrain {
         const tt = clamp01(((x - ax) * abx + (z - az) * abz) / (abx * abx + abz * abz));
         const qx = ax + abx * tt, qz = az + abz * tt;
         const dd = (x - qx) * (x - qx) + (z - qz) * (z - qz);
-        if (dd < best) { best = dd; bs = i; bt = tt; }
+        if (dd > reach2) continue;
+        const d = Math.sqrt(dd);
+        const s01 = (ch.cum[i] + tt * ch.segLen[i]) / ch.length;
+        const peaks = Math.sin(s01 * Math.PI * ch.peakCount + ch.phase) * 0.5 + 0.5;
+        // Serration stays subordinate to the peak envelope: +-350 m at 1 km
+        // wavelength rendered as a picket fence of columns. Real sub-summits
+        // are +-6% of the massif at 3+ km spacing.
+        const serrN = this.simFar.noise2D(s01 * 41.0 + ch.phase, ch.phase * 7.3);
+        const crest = ch.base + ch.amp * (0.44 + 0.50 * Math.pow(peaks, 1.6) + 0.06 * serrN);
+        const fall = Math.pow(clamp01(1 - d / reach), 1.35);
+        const flute = 1 + 0.16 * Math.sin(s01 * ch.length / ch.fluteLambda * 6.283 + d * 0.0011)
+          * clamp01(d / 500);
+        const hc = lerp(h, crest, fall) + ch.amp * 0.16 * (flute - 1) * fall;
+        // Smooth max, not hard max: the hard union creases wherever two
+        // segment surfaces cross, and the normal probe straddling a crease
+        // flips per post - rendered as a picket fence across the wall.
+        // Pairwise quadratic smooth-max rounds every crease at ~40 m.
+        const dh = h - hc;
+        h = 0.5 * (h + hc + Math.sqrt(dh * dh + 6400));
       }
-      const d = Math.sqrt(best);
-      if (d > ch.halfWidth * 2.2) continue;
-      // Crest height at this station: peaks strung along the chain.
-      const s01 = (ch.cum[bs] + bt * ch.segLen[bs]) / ch.length;
-      const peaks = Math.sin(s01 * Math.PI * ch.peakCount + ch.phase) * 0.5 + 0.5;
-      // Serration: sub-summits and notches along the crest, seeded noise so
-      // no two peaks match. Without it the chains read as rounded loaves.
-      const serrN = this.simFar.noise2D(s01 * 41.0 + ch.phase, ch.phase * 7.3)
-        + 0.5 * this.simFar.noise2D(s01 * 117.0 - ch.phase, ch.phase * 3.1);
-      const crest = ch.base + ch.amp * (0.42 + 0.50 * Math.pow(peaks, 1.6) + 0.14 * serrN);
-      // Cross profile: sharp crest, faces easing into the plain. Exponent
-      // 1.35 gives 35-45 deg upper faces that hold snow with rocky bands —
-      // the reference geometry.
-      const fall = Math.pow(clamp01(1 - d / (ch.halfWidth * 2.2)), 1.35);
-      // Spur fluting, phased ALONG the crest so runnels run down the faces.
-      const flute = 1 + 0.16 * Math.sin(s01 * ch.length / ch.fluteLambda * 6.283 + d * 0.0011)
-        * clamp01(d / 500);
-      const hc = lerp(h, crest, fall) + ch.amp * 0.16 * (flute - 1) * fall;
-      if (hc > h) h = hc;
     }
 
     // Named skyline elements. max(), not sum() — mountains do not add.
@@ -2522,7 +2544,13 @@ export class Terrain {
       // at a fixed 24 m scale gives a classification that is a property of the
       // mountain rather than of whichever LOD ring happens to be drawing it.
       e = 0.5;
-      const eps = 24;
+      // 24 m sampling made the slope estimate noisy at post scale, so
+      // adjacent backdrop posts flickered rock/snow across the threshold
+      // band - rendered as the vertical stripe bands at the wall's base
+      // that survived three other "fixes". Sample at the same 130 m scale
+      // the wall normals smooth over: classification must not carry finer
+      // detail than shading.
+      const eps = 130;
       const hx = (this._heightAt(x + eps, z) - this._heightAt(x - eps, z)) / (2 * eps);
       const hz = (this._heightAt(x, z + eps) - this._heightAt(x, z - eps)) / (2 * eps);
       const sDeg = Math.atan(Math.hypot(hx, hz)) / DEG;
@@ -2535,7 +2563,15 @@ export class Terrain {
       const r2 = Math.hypot(x, z);
       const thresh = lerp(44, 38, smoothstep(4000, 9000, r2));
       rb = clamp01((sDeg - thresh) / 13);
-      id = rb > 0.5 ? S_ROCK : S_WINDPACK;
+      // NEVER flip the discrete class out here (per-vertex id flips band).
+      // And cap the far rockiness itself: slopes cross the threshold twice
+      // per flute, and at full strength each crossing painted a white-to-
+      // schist-brown stripe — the picket fence that survived five geometry
+      // "fixes" (the white-material probe proved the geometry clean; the
+      // vertex-colour path was the painter). Deep winter wants far rock as
+      // a subordinate darkening in the flutes, not full schist.
+      rb *= lerp(1, 0.18, smoothstep(2500, 6500, r2));
+      id = S_WINDPACK;
     }
 
     // Pack the class index into snowMaterial's documented vec4 layout
@@ -2641,7 +2677,11 @@ export class Terrain {
     // which is exactly the "featureless ice curtain" the user called out.
     // Log spacing inside 8 km (the seam band needs it), then fixed 450 m
     // rings across the wall so every ridge row gets real geometry.
-    const AN_NEAR = 192, AN_FAR = 768, FAR_R = 8000;
+    // The 192->768 stitch fan sits at FAR_R, and its long thin triangles
+    // interpolate normals into vertical slivers wherever there is relief.
+    // 4 km is rolling near-plain - the fan is invisible there - and the
+    // whole wall band then runs at uniform 768-post resolution.
+    const AN_NEAR = 192, AN_FAR = 768, FAR_R = 4000;
     const WALL_STEP = 450;
     const RN_LOG = 22;
     const radii = [];
