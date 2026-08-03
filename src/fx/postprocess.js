@@ -188,6 +188,32 @@ const TUNE = {
     fNumberOpen: 2.6,
     /** §7.2: cinematic/macro may open up to 2% of frame height. */
     cinematicMaxBlur: 0.020,
+    /**
+     * THE FAR SIDE OF FOCUS IS NOT THE NEAR SIDE — and `maxBlur` is a near-side
+     * number.
+     *
+     * §7.2 reads: "near-focus softening only within ~1.5 m of the lens, and a
+     * very slight far softening beyond ~60 m … never bokeh the mountain."
+     * One cap could not express that. With a single cap the thin-lens CoC
+     * saturates a few focus-distances out and then stays saturated all the way
+     * to the horizon, so every pixel past ~3× the focus distance — the far
+     * ridge, the backdrop skyline, the cloud bank — was blurred by the same
+     * disc. On the cinematic presets (34–38° lens, f/2.6, focus locked on a
+     * rider 3–12 m away) that is a background CoC of 1.5–6 px at 720p, which is
+     * precisely the tilt-shift/miniature tell of checklist item 51, and it also
+     * eats the far-field detail that item 17's σ ratio is measured on.
+     *
+     * So the far side gets its own ceiling, sized to stay at or under one pixel
+     * of radius at the 1280×720 capture size (0.0012 · 720 = 0.9 px, 1.3 px at
+     * 1080p). That is "very slight" and it is not bokeh. Cinematic gets a
+     * little more room, still sub-2 px, because a hero shot may show a hint of
+     * separation — but never enough to soften a ridge line.
+     *
+     * The cap only binds away from the focal plane, so the transition through
+     * focus stays continuous: at z == focus the CoC is zero on both sides.
+     */
+    farMaxBlur: 0.0012,
+    cinematicFarMaxBlur: 0.0020,
     /** Any lens longer than this reads as cinematic/macro. */
     cinematicFovDeg: 40,
     focusLambda: 6.0,
@@ -226,6 +252,36 @@ const TUNE = {
     subjectInner: 0.10,
     subjectOuter: 0.34,
     subjectFloor: 0.25,
+    /**
+     * Depth mask (§7.3: "blur must not be applied to the sky … or you get a
+     * smeared sun"). The sky dome itself never writes depth, so it already
+     * reads as the far plane and is excluded — but the world does not end at
+     * the sky dome. `CONFIG.terrain.backdropRadius` puts a real skyline shell
+     * at 26 km while `camera.far` is 40 km, so the entire distant horizon was
+     * classified as *geometry* and received the full camera-reprojection
+     * velocity. Camera translation gives a 26 km ridge exactly zero parallax;
+     * everything it was getting came from rotation, i.e. a whole-frame pan
+     * smear, which §7.3 calls out as the failure mode of camera-only blur and
+     * which showed up as directional streaking across the far ridge and the
+     * high cloud.
+     *
+     * Velocity therefore fades to zero over [start, end] metres. 1.5 km is
+     * past the LOD'd playable terrain and deep into the aerial-perspective
+     * haze, so nothing that carries near-field detail is affected: this only
+     * removes smear from surfaces that are, optically, at infinity.
+     */
+    farFadeStart: 1500,
+    farFadeEnd: 5000,
+    /**
+     * The reprojection measures displacement over one *simulation* step, so a
+     * long frame would produce a proportionally longer smear. §7.3 fixes the
+     * exposure instead: a 180° shutter at 60 fps is 1/120 s no matter how long
+     * the frame took. The shutter is scaled by `refFrameTime / dt`, clamped so
+     * it can only ever shorten the smear — a hitch must never paint a
+     * screen-long streak, and at the harness's fixed 1/60 step this is exactly
+     * a no-op.
+     */
+    refFrameTime: 1 / 60,
   },
 
   /**
@@ -239,6 +295,32 @@ const TUNE = {
     power: [1.020, 1.000, 0.980],
     saturation: 1.08,
     shadowSaturation: 1.14,
+    /**
+     * Extreme-highlight desaturation, and how far up the curve it starts.
+     *
+     * Film and AgX both bleach the top of the range toward white, and the
+     * finish pass used to reproduce that with a 35% pull starting at L = 0.75.
+     * On a normal scene that is invisible. On *this* scene it is a global
+     * desaturation in disguise: a bluebird snow frame is 70% white, its median
+     * output luma sits at 0.55–0.80 and the snow-only presets put nearly every
+     * pixel above 0.75 — so the ramp was stripping a third of the chroma from
+     * the whole picture, exactly on the frames that measured mean saturation
+     * 0.074/0.080 against a [0.18, 0.36] requirement (checklist item 5).
+     *
+     * §7.6 is explicit that the grade may only make single-digit-percent moves
+     * and that the colour has to come from the lighting. So the pull is cut to
+     * 12% and the knee raised to 0.86, which is above sunlit snow (§1.1 puts
+     * the sunlit sample at 0xDC–0xFA, i.e. 0.86–0.98, so only its very top and
+     * the sun/glint cores are touched) and below the rolloff knee at 0.94.
+     * AgX has already done the real highlight bleach before this pass runs;
+     * this is the last few percent on top of it, not a second helping.
+     *
+     * The move is exactly luminance-preserving — `mix(vec3(L), g, sat)` leaves
+     * `dot(g, LUMA)` untouched — so it cannot shift exposure, the p99.9 luma or
+     * the pure-white pixel count. It only returns chroma.
+     */
+    highlightDesat: 0.12,
+    highlightDesatKnee: 0.86,
     /**
      * Highlight rolloff — an exponential shoulder that asymptotes to
      * `rolloffCeiling` and so can never produce a clipped plateau
@@ -547,12 +629,14 @@ uniform float uShutter;       // 0.5 == a 180 degree shutter
 uniform float uVelMaxPx;
 uniform vec2  uSubjectUv;
 uniform vec3  uSubjectMask;   // (inner, outer, floor)
+uniform vec2  uMbFar;         // (fadeStart, fadeEnd) metres — infinity mask
 #endif
 
 #ifdef USE_DOF
 uniform float uCocGain;       // A * f / ( sensorH * ( S - f ) )
 uniform float uFocus;         // S, metres
-uniform float uMaxCoc;        // fraction of frame height
+uniform float uMaxCoc;        // near side, fraction of frame height
+uniform float uMaxCocFar;     // far side, fraction of frame height
 #endif
 
 varying vec2 vUv;
@@ -579,6 +663,12 @@ void main() {
       float sr = length( ( vUv - uSubjectUv ) * vec2( uAspect, 1.0 ) );
       vel *= mix( uSubjectMask.z, 1.0, smoothstep( uSubjectMask.x, uSubjectMask.y, sr ) );
 
+      // Depth mask: anything optically at infinity (the 26 km backdrop shell,
+      // the far ridge) has no translational parallax, so all it can receive is
+      // a pan smear. §7.3 forbids that on the sky and it reads as smeared
+      // distant terrain everywhere else.
+      vel *= 1.0 - smoothstep( uMbFar.x, uMbFar.y, z );
+
       velPx = vel * uRes;
       float vl = length( velPx );
       if ( vl > uVelMaxPx ) velPx *= uVelMaxPx / vl;
@@ -587,12 +677,19 @@ void main() {
   #endif
 
   #ifdef USE_DOF
-  {
+  if ( ! isSky ) {
     // Thin lens: CoC = A * f * |d - S| / ( d * ( S - f ) ), expressed as a
     // fraction of frame height so it is resolution independent.
     float coc = uCocGain * abs( z - uFocus ) / max( z, 0.05 );
-    cocPx = min( coc, uMaxCoc ) * uRes.y;
+    // Separate ceilings either side of the focal plane (§7.2): the near side
+    // may go properly soft, the far side may not — "never bokeh the mountain".
+    // Both ceilings are inactive at z == uFocus, where the CoC is zero, so the
+    // switch introduces no discontinuity.
+    float cap = z > uFocus ? uMaxCocFar : uMaxCoc;
+    cocPx = min( coc, cap ) * uRes.y;
   }
+  // The sky is at infinity and carries no depth cue at all; softening it just
+  // smears the sun and the cloud edges (§7.3). It stays at cocPx = 0.
   #endif
 
   vec3 col;
@@ -805,6 +902,7 @@ uniform vec3  uOffset;
 uniform vec3  uPower;
 uniform float uSaturation;
 uniform float uShadowSat;
+uniform vec2  uHiDesat;     // (amount, knee) of the extreme-highlight bleach
 uniform vec2  uRolloff;     // (knee, ceiling)
 
 uniform vec3  uVignette;    // (strength, start, end)
@@ -861,12 +959,15 @@ void main() {
   vec3 g = max( col * uSlope + uOffset, 0.0 );
   g = pow( g, uPower );
 
-  // Saturation by luminance: shadows keep (and slightly gain) their blue,
-  // highlights ease off, and the extreme highlight desaturates the way film
-  // and AgX both do.
+  // Saturation by luminance: shadows keep (and slightly gain) their blue, and
+  // only the *extreme* highlight bleaches toward white. The bleach knee has to
+  // sit above sunlit snow — on a 70%-white frame a knee inside the snow range
+  // is a whole-frame desaturation wearing a film-response costume, and it is
+  // what put mean frame saturation at 0.07 on the snow-only presets.
+  // Luminance-preserving by construction: dot(mix(vec3(l), g, s), LUMA) == l.
   float l = dot( g, LUMA );
   float sat = mix( uShadowSat, uSaturation, smoothstep( 0.0, 0.6, l ) );
-  sat *= 1.0 - 0.35 * smoothstep( 0.75, 1.0, l );
+  sat *= 1.0 - uHiDesat.x * smoothstep( uHiDesat.y, 1.0, l );
   g = mix( vec3( l ), g, sat );
 
   // --- highlight rolloff ---------------------------------------------------
@@ -1243,9 +1344,15 @@ export class PostProcessing {
             TUNE.motionBlur.subjectFloor,
           ),
         },
+        uMbFar: {
+          value: new THREE.Vector2(
+            TUNE.motionBlur.farFadeStart, TUNE.motionBlur.farFadeEnd,
+          ),
+        },
         uCocGain: { value: 0 },
         uFocus: { value: 9 },
         uMaxCoc: { value: 0.012 },
+        uMaxCocFar: { value: TUNE.dof.farMaxBlur },
       },
       { name: 'post/sceneFx', defines: { FX_SAMPLES: q.fxSamples } },
     );
@@ -1343,6 +1450,7 @@ export class PostProcessing {
         uPower: { value: new THREE.Vector3().fromArray(g.power) },
         uSaturation: { value: g.saturation },
         uShadowSat: { value: g.shadowSaturation },
+        uHiDesat: { value: new THREE.Vector2(g.highlightDesat, g.highlightDesatKnee) },
         uRolloff: { value: new THREE.Vector2(g.rolloffKnee, g.rolloffCeiling) },
         uVignette: { value: new THREE.Vector3(0.34, TUNE.vignette.start, TUNE.vignette.end) },
         uVignetteCurve: { value: TUNE.vignette.curve },
@@ -1485,7 +1593,7 @@ export class PostProcessing {
 
     this._updateCameraUniforms(cam);
     this._updateAO();
-    this._updateMotionBlur(ctx, cam, cut);
+    this._updateMotionBlur(ctx, cam, step, cut);
     this._updateDof(ctx, cam, step, cut);
     this._updateBloom(ctx, cam, step, cut);
     this._updateFinish(ctx);
@@ -1548,15 +1656,24 @@ export class PostProcessing {
     );
   }
 
-  _updateMotionBlur(ctx, cam, cut) {
+  _updateMotionBlur(ctx, cam, dt, cut) {
     const cfg = CONFIG.post?.motionBlur || {};
     const fx = this.sceneFxPass.uniforms;
 
     // `strength` is read as the shutter fraction: 0.5 is the 180 degree film
     // standard, and the config's 0.55 is a touch over that. The reprojection
-    // already yields exactly one frame of displacement, so no dt term is needed
-    // — the smear length is a fraction of the inter-frame motion by definition.
-    fx.uShutter.value = pick(cfg, 'strength', 0.55);
+    // yields one *simulation step* of displacement, so the shutter is rescaled
+    // to a fixed 1/120 s exposure (§7.3) and clamped so a long frame can only
+    // ever shorten the smear, never paint a screen-long streak. At the capture
+    // harness's fixed 1/60 step the scale is exactly 1.
+    const expScale = Math.min(1, TUNE.motionBlur.refFrameTime / Math.max(dt, 1e-4));
+    fx.uShutter.value = pick(cfg, 'strength', 0.55) * expScale;
+
+    // Distance at which a surface stops being "world" and starts being "sky".
+    fx.uMbFar.value.set(
+      pick(cfg, 'farFadeStart', TUNE.motionBlur.farFadeStart),
+      pick(cfg, 'farFadeEnd', TUNE.motionBlur.farFadeEnd),
+    );
 
     if (cut) {
       // Zero velocity for this frame: current view space -> current clip space
@@ -1644,6 +1761,12 @@ export class PostProcessing {
     fx.uMaxCoc.value = cine
       ? pick(cfg, 'cinematicMaxBlur', TUNE.dof.cinematicMaxBlur)
       : pick(cfg, 'maxBlur', 0.012);
+    // The far side of focus has its own, far tighter ceiling — see
+    // TUNE.dof.farMaxBlur. This is what keeps the ridge line and the backdrop
+    // skyline sharp (checklist 51) no matter how open the lens gets.
+    fx.uMaxCocFar.value = cine
+      ? pick(cfg, 'cinematicFarMaxBlur', TUNE.dof.cinematicFarMaxBlur)
+      : pick(cfg, 'farMaxBlur', TUNE.dof.farMaxBlur);
   }
 
   _autoFocusDistance(ctx, cam) {
@@ -1896,6 +2019,7 @@ export class PostProcessing {
     u.uPower.value.fromArray(g.power);
     u.uSaturation.value = g.saturation;
     u.uShadowSat.value = g.shadowSaturation;
+    u.uHiDesat.value.set(g.highlightDesat, g.highlightDesatKnee);
     u.uRolloff.value.set(g.rolloffKnee, g.rolloffCeiling);
   }
 
@@ -1936,6 +2060,15 @@ export class PostProcessing {
       flags: { ...this.flags },
       focus: this._focus,
       cocGain: this.sceneFxPass.uniforms.uCocGain.value,
+      // Near/far CoC ceilings as a fraction of frame height, and the far-field
+      // CoC in pixels at the current buffer height — the number checklist item
+      // 51 is really about. It must stay around a pixel.
+      maxCoc: this.sceneFxPass.uniforms.uMaxCoc.value,
+      maxCocFar: this.sceneFxPass.uniforms.uMaxCocFar.value,
+      farCocPx: Math.min(
+        this.sceneFxPass.uniforms.uCocGain.value,
+        this.sceneFxPass.uniforms.uMaxCocFar.value,
+      ) * this.height,
       sunVisibility: this._sunVis,
       // Both in linear scene-referred units: the sunlit-snow reference and the
       // bright-pass knee derived from it. The knee must stay above the first.
