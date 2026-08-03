@@ -313,9 +313,12 @@ export const SHOTS = [
     description: 'Gameplay chase camera mid-carve — the money shot.',
     settle: 5.0,
     prepare(ctx) {
-      // `bowl-entry` is the 25° powder pitch below the headwall; the default
-      // crest-plateau spawn is 8° and the rider barely moves in five seconds.
-      dropIn(ctx, 'bowl-entry', 14);
+      // `broadway-gate` is the sunlit line: the round-4 occlusion probe showed
+      // `bowl-entry` sits in the headwall's cast shadow for its entire run at
+      // 15:00, which is why every rider shot came back flat-lit with no cast
+      // shadow. The gate pitch is gentler, so the drop-in speed carries the
+      // energy a 5 s settle needs.
+      dropIn(ctx, 'broadway-gate', 14);
       ride(ctx, { steer: 0 });
       // The mode has to be set before the settle so the follow spring is
       // already tracking the rider by the time the frame is taken.
@@ -332,7 +335,7 @@ export const SHOTS = [
     description: 'Low, close on the board throwing a spray wall.',
     settle: 6.0,
     prepare(ctx) {
-      dropIn(ctx, 'bowl-entry', 16);
+      dropIn(ctx, 'broadway-gate', 16);
       ride(ctx, { steer: 0 });
       freeCam(ctx);
     },
@@ -378,7 +381,7 @@ export const SHOTS = [
     // 7 s of settle ground the run down to walking pace before the launch —
     // the HUD read 5 km/h under a trick. 3 s keeps real speed into the pop.
     settle: 3.0,
-    prepare(ctx) { dropIn(ctx, 'bowl-entry', 16); gameCam(ctx, 'cinematic'); },
+    prepare(ctx) { dropIn(ctx, 'broadway-gate', 16); gameCam(ctx, 'cinematic'); },
     apply(ctx) {
       launch(ctx, 5.8, 0.66, 'melon');
       // The cinematic chase cam leads the rider by several metres, which put
@@ -450,7 +453,7 @@ export const SHOTS = [
     name: 'rider-portrait',
     description: 'Three-quarter on the rider — tests character model + materials.',
     settle: 4.0,
-    prepare(ctx) { dropIn(ctx, 'bowl-entry', 10); ride(ctx, { steer: 0 }); freeCam(ctx); },
+    prepare(ctx) { dropIn(ctx, 'broadway-gate', 10); ride(ctx, { steer: 0 }); freeCam(ctx); },
     tick(ctx, t, dt, total) { ride(ctx, { steer: t > total - 0.6 ? 0.34 : 0 }); },
     apply(ctx) {
       const st = ctx.physics?.state;
@@ -459,9 +462,15 @@ export const SHOTS = [
       cam.fov = 34;
       const fwd = v(Math.sin(st.heading), 0, Math.cos(st.heading));
       const right = v(fwd.z, 0, -fwd.x);
+      // Portrait light rule: stand the camera on the SUN side of the rider,
+      // so the face the lens sees is the lit face. A fixed side put the
+      // camera in the rider's own shadow half the time — a character shot
+      // of a silhouette.
+      const sun = ctx.sky?.sunDirection;
+      const side = sun ? (Math.sign(sun.dot(right)) || 1) : 1;
       cam.position.copy(st.position)
         .add(fwd.clone().multiplyScalar(3.1))
-        .add(right.multiplyScalar(2.6))
+        .add(right.multiplyScalar(2.6 * side))
         .add(v(0, 1.15, 0));
       const floor = gh(ctx, cam.position.x, cam.position.z) + 0.4;
       if (cam.position.y < floor) cam.position.y = floor;
