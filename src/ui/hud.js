@@ -58,15 +58,18 @@ const CSS = `
 }
 
 .soho-air {
-  position: absolute; left: 50%; top: 14vh; transform: translateX(-50%);
-  font-size: 4.4vh; font-weight: 200; font-variant-numeric: tabular-nums;
+  /* Lower-right corner block with the speedo's grammar — never over the
+     rider. Centre-frame at 14vh sat the counter directly on the subject in
+     every air shot. */
+  position: absolute; right: 3.2vw; bottom: 12.5vh; text-align: right;
+  font-size: 3.6vh; font-weight: 200; font-variant-numeric: tabular-nums;
   opacity: 0; transition: opacity 140ms ease;
 }
 .soho-air.on { opacity: 0.95; }
 .soho-air small { font-size: 1.5vh; letter-spacing: 0.2em; opacity: 0.6; margin-left: 0.35em; }
 
 .soho-trick {
-  position: absolute; left: 50%; top: 24vh; transform: translateX(-50%);
+  position: absolute; left: 50%; top: 71vh; transform: translateX(-50%);
   text-align: center; opacity: 0;
 }
 .soho-trick .n {
