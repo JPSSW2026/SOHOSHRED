@@ -168,7 +168,7 @@ function makeShellTexture(rng, base, size = 256) {
 
   // Twill: a faint diagonal, which is what actually distinguishes a coated
   // face fabric from a flat painted surface at grazing angles.
-  g.strokeStyle = 'rgba(255,255,255,0.045)';
+  g.strokeStyle = 'rgba(255,255,255,0.028)';
   g.lineWidth = 1;
   for (let i = -size; i < size * 2; i += 3) {
     g.beginPath(); g.moveTo(i, 0); g.lineTo(i + size, size); g.stroke();
@@ -180,7 +180,7 @@ function makeShellTexture(rng, base, size = 256) {
     g.beginPath(); g.moveTo(i + 0.5, 0); g.lineTo(i + 0.5, size); g.stroke();
     g.beginPath(); g.moveTo(0, i + 0.5); g.lineTo(size, i + 0.5); g.stroke();
   }
-  g.strokeStyle = 'rgba(255,255,255,0.07)';
+  g.strokeStyle = 'rgba(255,255,255,0.045)';
   for (let i = 0; i < size; i += 8) {
     g.beginPath(); g.moveTo(i + 1.5, 0); g.lineTo(i + 1.5, size); g.stroke();
     g.beginPath(); g.moveTo(0, i + 1.5); g.lineTo(size, i + 1.5); g.stroke();
@@ -623,7 +623,7 @@ export class Rider {
         metalness: 0.0,
         sheen,
         sheenRoughness: 0.55,
-        sheenColor: new THREE.Color(0xfff0e2),
+        sheenColor: new THREE.Color(base).lerp(new THREE.Color(0xffffff), 0.35),
       });
       return m;
     };
@@ -634,12 +634,25 @@ export class Rider {
     // at L14 — "black wet plastic". Real dark softgoods sit nearer L 30–38
     // albedo, and the roughness goes UP relative to the first build so the
     // sun highlight spreads into a fabric sheen instead of a wet specular.
-    const shell = cloth(0xe8531f, 0.52, 0.62, [2, 3]);
-    const shellDark = cloth(0x52545c, 0.66, 0.55, [2, 3]);
-    const pants = cloth(0x585c66, 0.72, 0.55, [2, 3]);
+    // The Cardrona snowboard-instructor kit (user's reference): signal-red
+    // jacket with a black shoulder yoke/hood, black pants, black hardware.
+    // The red is the frame's single high-chroma element (§6.3) and pops
+    // against both the snow and the range wall. Sleeves are red full length —
+    // round 5 flagged mixed limb blocking as "bare capsule" segments.
+    // Head-to-toe Cardrona red (the full-body instructor reference): warm
+    // tomato-red jacket, matching red pants a half-step darker so the
+    // garments separate, black helmet/gloves/hardware, black balaclava.
+    // ALL red, per the user: one continuous Cardrona red across jacket,
+    // yoke, hood and pants — the silhouette reads as a single red figure
+    // against the snow, exactly like the instructor reference. Black stays
+    // only on helmet, gloves, boots and hardware.
+    const shell = cloth(0xd62914, 0.54, 0.42, [2, 3]);
+    const shellGrey = cloth(0xd62914, 0.58, 0.40, [2, 3]);
+    const pants = cloth(0xcb2511, 0.64, 0.38, [2, 3]);
+    const shellDark = shellGrey; // collar/hem trim reads as the black blocking
 
     const helmet = new THREE.MeshStandardMaterial({
-      color: 0x232a34, roughness: 0.34, metalness: 0.06, envMapIntensity: 1.1,
+      color: 0x1e2126, roughness: 0.34, metalness: 0.06, envMapIntensity: 1.1,
     });
     const rubber = new THREE.MeshStandardMaterial({ color: 0x23262c, roughness: 0.66 });
     /**
@@ -653,8 +666,8 @@ export class Rider {
     const goggle = new THREE.MeshStandardMaterial({
       color: 0x7080c8, roughness: 0.08, metalness: 1.0, envMapIntensity: 1.9,
     });
-    const strap = new THREE.MeshStandardMaterial({ color: 0xe8531f, roughness: 0.66 });
-    const glove = new THREE.MeshStandardMaterial({ color: 0x434a56, roughness: 0.72 });
+    const strap = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.66 });
+    const glove = new THREE.MeshStandardMaterial({ color: 0x24272e, roughness: 0.72 });
     const boot = new THREE.MeshStandardMaterial({ color: 0x3a4049, roughness: 0.68 });
     const sole = new THREE.MeshStandardMaterial({ color: 0x3c4048, roughness: 0.86 });
     const binding = new THREE.MeshStandardMaterial({
@@ -679,7 +692,7 @@ export class Rider {
     });
 
     const M = {
-      shell, shellDark, pants, helmet, rubber, goggle, strap, glove, boot, sole,
+      shell, shellGrey, shellDark, pants, helmet, rubber, goggle, strap, glove, boot, sole,
       binding, buckle, topsheet, base, sidewall, steel,
     };
     this._materials = Object.values(M);
@@ -806,7 +819,7 @@ export class Rider {
     const HP = Math.PI * 0.5;
     const zip = trim(
       limbPanel(DIM.chestLength, 0.148, 0.176, 1.06, 0.005, -HP - 0.105, 0.21, 0.06, 0.92),
-      M.shellDark, chest, 0, DIM.chestLength, 0,
+      M.rubber, chest, 0, DIM.chestLength, 0,
     );
     zip.scale.x = 0.74;
     trim(new THREE.BoxGeometry(0.014, 0.024, 0.016), M.buckle, chest, -0.133, 0.056, 0);
@@ -817,10 +830,10 @@ export class Rider {
     pocket.scale.x = 0.74;
 
     const neck = bone('neck', chest, 0, DIM.chestLength, 0);
-    part(new THREE.CylinderGeometry(0.056, 0.064, DIM.neckLength + 0.03, 10), M.shellDark, neck, 0, DIM.neckLength * 0.45, 0);
+    part(new THREE.CylinderGeometry(0.056, 0.064, DIM.neckLength + 0.03, 10), M.shellGrey, neck, 0, DIM.neckLength * 0.45, 0);
     // Collar / hood bunched behind the neck — a silhouette detail that reads
     // even at 30 m and covers the neck-to-helmet junction from behind.
-    const hood = part(new THREE.SphereGeometry(0.098, 12, 10), M.shellDark, chest, 0.070, DIM.chestLength * 0.96, 0);
+    const hood = part(new THREE.SphereGeometry(0.098, 12, 10), M.shellGrey, chest, 0.070, DIM.chestLength * 0.96, 0);
     hood.scale.set(0.70, 0.78, 1.05);
 
     const head = bone('head', neck, 0, DIM.neckLength, 0);
@@ -882,7 +895,7 @@ export class Rider {
         DIM.chestLength * 0.86,
         -sx * DIM.shoulderWidth * Math.cos(DIM.chestOpen),
       );
-      joint(0.086, M.shellDark, sh);
+      joint(0.092, M.shellGrey, sh);
 
       const ua = bone(`upperArm${side}`, sh, 0, 0, 0);
       part(limbGeometry(DIM.upperArm, 0.078, 0.064, 1.14, 12, 0.95, 1.0), M.shell, ua);
@@ -892,10 +905,10 @@ export class Rider {
 
       // Elbow: not a ball bearing — a squashed bunch of sleeve fabric that
       // stays inside both sleeve domes at every bend.
-      const elbow = joint(0.068, M.shellDark, ua, 0, -DIM.upperArm, 0);
+      const elbow = joint(0.068, M.shell, ua, 0, -DIM.upperArm, 0);
       elbow.scale.y = 0.78;
       const fa = bone(`foreArm${side}`, ua, 0, -DIM.upperArm, 0);
-      part(limbGeometry(DIM.foreArm, 0.064, 0.053, 1.10, 12, 1.0, 0.95), M.shellDark, fa);
+      part(limbGeometry(DIM.foreArm, 0.064, 0.053, 1.10, 12, 1.0, 0.95), M.shell, fa);
       // Cuff tab at the wrist.
       const cuff = trim(new THREE.TorusGeometry(0.050, 0.008, 6, 16), M.rubber, fa, 0, -DIM.foreArm + 0.012, 0);
       cuff.rotation.x = Math.PI * 0.5;

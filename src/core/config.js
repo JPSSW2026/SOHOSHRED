@@ -100,7 +100,7 @@ export const CONFIG = {
      * (CONFIG.render.shotExposure[name] ?? 1)` and restoring it afterwards.
      */
     shotExposure: {
-      'rider-portrait': 0.75,
+      'rider-portrait': 0.92,
       'snow-detail': 0.60,
       // The other direction: these two are framed into the light and onto
       // shadowed slopes, so the base stop that suits a sunlit snowfield
