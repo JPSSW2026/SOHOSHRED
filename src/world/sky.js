@@ -2597,7 +2597,19 @@ export class Sky {
     // still resolve the rider's own shadow (0.14 m texels, so a 9.6 m rider
     // shadow is ~66 texels long), and the receiver-scaled filter above is what
     // keeps the coarser texel from reading as a staircase.
-    const far = cfg.shadowDistance ?? 240;
+    // Adaptive slice. CONFIG has no sky.shadowDistance, so this used to fall
+    // back to 240 m flat - and nothing past 240 m ever cast a shadow, which is
+    // why every lift tower in the wide framings met the snow with no shadow
+    // bar despite a 10.6 deg sun owing each a ~43 m one. One 4096 map cannot
+    // serve both masters at a fixed size: 240 m gives the rider a crisp
+    // 0.14 m-texel shadow but orphans the mid-field; 900 m shadows the towers
+    // but coarsens the rider's to 0.5 m texels. So the slice follows the
+    // subject: when the rider is near the lens (chase, portrait) it stays
+    // tight and sharp, and in landscape framings - where no rider shadow is
+    // on screen to protect - it opens to the full declared range.
+    const riderPos = this.ctx?.physics?.state?.position;
+    const riderD = riderPos ? camera.position.distanceTo(riderPos) : 1e9;
+    const far = cfg.shadowDistance ?? clamp(riderD * 2.2, 280, 900);
     const near = Math.max(camera.near, 0.05);
 
     // Minimal bounding sphere of the frustum slice [near, far], in view space.
