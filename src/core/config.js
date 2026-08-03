@@ -167,15 +167,18 @@ export const CONFIG = {
     fov: 62,
     near: 0.12,
     far: 40000,
-    // Spring-damper follow.
-    followDistance: 6.4,
-    followHeight: 2.1,
+    // Spring-damper follow. Distance is tuned so the rider occupies roughly
+    // an eighth of frame height at cruise — the Shredders framing — rather
+    // than a third: 6.4 m put the camera nearly on the rider's back the
+    // moment a carve added lateral offset.
+    followDistance: 8.6,
+    followHeight: 2.7,
     stiffness: 9.0,
     damping: 0.86,
     // FOV widens with speed for a sense of velocity.
-    fovSpeedGain: 0.42,
-    fovMax: 82,
-    shakeAtSpeed: 0.35,
+    fovSpeedGain: 0.34,
+    fovMax: 78,
+    shakeAtSpeed: 0.30,
   },
 
   /** Post-processing chain. */

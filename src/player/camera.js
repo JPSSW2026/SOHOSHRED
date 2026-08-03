@@ -251,8 +251,11 @@ export class ChaseCamera {
     }
     if (clear < len - 0.01) {
       // Pull in, but keep a minimum so the camera never ends up inside the
-      // rider's own head.
-      const d = Math.max(clear, 1.9);
+      // rider's own head. The floor is generous: at 1.9 m the rider filled a
+      // third of the frame every time a convex roll nudged the sweep, which
+      // read as the camera panicking. Better to let the hill clip the bottom
+      // of frame for a beat than to ride the rider's shoulder.
+      const d = Math.max(clear, 4.2);
       this._pos.copy(s.position).addScaledVector(this._v, d);
       const g2 = terrain.getHeight(this._pos.x, this._pos.z);
       if (this._pos.y < g2 + GROUND_CLEARANCE) this._pos.y = g2 + GROUND_CLEARANCE;

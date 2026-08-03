@@ -628,14 +628,20 @@ export class Rider {
       return m;
     };
 
-    const shell = cloth(0xe8531f, 0.46, 0.62, [2, 3]);
-    const shellDark = cloth(0x3a3a3e, 0.50, 0.55, [2, 3]);
-    const pants = cloth(0x35353b, 0.58, 0.40, [2, 3]);
+    // Albedo floors matter more than any lighting trick here: charcoal
+    // garments authored at L≈20 render as voids on open snow no matter how
+    // much bounce the scene has, and the round-3 critics measured the limbs
+    // at L14 — "black wet plastic". Real dark softgoods sit nearer L 30–38
+    // albedo, and the roughness goes UP relative to the first build so the
+    // sun highlight spreads into a fabric sheen instead of a wet specular.
+    const shell = cloth(0xe8531f, 0.52, 0.62, [2, 3]);
+    const shellDark = cloth(0x52545c, 0.66, 0.55, [2, 3]);
+    const pants = cloth(0x585c66, 0.72, 0.55, [2, 3]);
 
     const helmet = new THREE.MeshStandardMaterial({
-      color: 0x14181e, roughness: 0.30, metalness: 0.06, envMapIntensity: 1.1,
+      color: 0x232a34, roughness: 0.34, metalness: 0.06, envMapIntensity: 1.1,
     });
-    const rubber = new THREE.MeshStandardMaterial({ color: 0x101318, roughness: 0.62 });
+    const rubber = new THREE.MeshStandardMaterial({ color: 0x23262c, roughness: 0.66 });
     /**
      * §6.4: the goggle lens is the highest value-per-square-centimetre surface
      * in the game. A purple-blue mirror rather than a gold one, so the rider
@@ -648,8 +654,8 @@ export class Rider {
       color: 0x7080c8, roughness: 0.08, metalness: 1.0, envMapIntensity: 1.9,
     });
     const strap = new THREE.MeshStandardMaterial({ color: 0xe8531f, roughness: 0.66 });
-    const glove = new THREE.MeshStandardMaterial({ color: 0x22262e, roughness: 0.66 });
-    const boot = new THREE.MeshStandardMaterial({ color: 0x24282f, roughness: 0.58 });
+    const glove = new THREE.MeshStandardMaterial({ color: 0x434a56, roughness: 0.72 });
+    const boot = new THREE.MeshStandardMaterial({ color: 0x3a4049, roughness: 0.68 });
     const sole = new THREE.MeshStandardMaterial({ color: 0x3c4048, roughness: 0.86 });
     const binding = new THREE.MeshStandardMaterial({
       color: 0x2f3238, roughness: 0.42, metalness: 0.28, envMapIntensity: 1.1,
