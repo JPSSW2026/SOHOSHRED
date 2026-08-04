@@ -116,9 +116,9 @@ const DEFAULT_TUNE = {
     // tall, heavily snow-draped - not rows of scatter. Dense vertical
     // stubs along the ridges read as TREES in demo v6, and Cardrona is
     // fully alpine: nothing up here may ever read as a tree.
-    scatterLimit: 70,    // free-standing outcrops on rock-classed ground
-    blockLimit: 60,      // crest blockfield plates
-    talusLimit: 80,      // bluff toe apron + bluff crest teeth
+    scatterLimit: 42,    // free-standing outcrops on rock-classed ground
+    blockLimit: 34,      // crest blockfield plates
+    talusLimit: 48,      // bluff toe apron + bluff crest teeth
     driftCollars: true,
   },
   poles: {
@@ -2193,7 +2193,7 @@ export class Props {
         if (l < 1e-3) { dx = 0; dz = -1; } else { dx /= l; dz /= l; }
 
         // Teeth on the lip.
-        if (rng() < 0.16) {
+        if (rng() < 0.10) {
           const ux = x - dx * rng.range(1.5, 5), uz = z - dz * rng.range(1.5, 5);
           const s = P.sample(ux, uz);
           // Ledges, not teeth: the chairlift reference shows crest rock as

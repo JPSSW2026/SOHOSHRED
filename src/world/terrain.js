@@ -2008,11 +2008,11 @@ export class Terrain {
         // against 16.4 %), rather than trading a texture artefact for a
         // flatter mountain.
         // Band 3 — mogul-scale drift, λ 20 / 10 m (§2.6 asks 8–30 m).
-        const b3 = (billow2(simD, x / 20, z / 20, { octaves: 2 }) - 0.45) * 1.22 * amp;
+        const b3 = (billow2(simD, x / 20, z / 20, { octaves: 2 }) - 0.45) * 1.45 * amp;
         // Band 4 — drift lobes and pillows over buried rock, λ 11 m. The 4–8 m
         // end of this band is below what a 2 m heightfield can carry at all; it
         // lives in the snow material's detail normal, which is filtered.
-        const b4 = fbm2(simF, x / 11, z / 11, { octaves: 1 }) * 0.30 * amp;
+        const b4 = fbm2(simF, x / 11, z / 11, { octaves: 1 }) * 0.38 * amp;
 
         H[k] += b3 + b4;
       }
@@ -2102,11 +2102,15 @@ export class Terrain {
         const e = expo[k] / 255;
         const c = curv[k];
 
+        // Deep-powder day (user direction): rock only where the ground is
+        // genuinely bare or near-vertical, ice only on the steepest scoured
+        // windward panels, and the windpack/powder split biased hard toward
+        // powder - a storm cycle just ended and the basin is refilled.
         let id;
-        if (d < 0.10 || slopeDeg > 50 || bluff[k] > 128) id = S_ROCK;
+        if (d < 0.05 || slopeDeg > 55 || bluff[k] > 128) id = S_ROCK;
         else if (groom[k] > 128) id = S_GROOMED;
-        else if (slopeDeg > 32 && windward && c > 0) id = S_ICE;
-        else if (e > 0.5 || (c > 0.15 && d < 1.0)) id = S_WINDPACK;
+        else if (slopeDeg > 38 && windward && c > 0.05) id = S_ICE;
+        else if (e > 0.62 || (c > 0.22 && d < 0.7)) id = S_WINDPACK;
         else id = S_POWDER;
         surf[k] = id;
 
@@ -2124,8 +2128,8 @@ export class Terrain {
 
         // Soft rock blend — a razor-edged snow/rock boundary is one of the
         // most damning tells there is, so the transition is 25 cm of depth.
-        let rb = 1 - smoothstep(0.06, 0.30, d);
-        rb = Math.max(rb, smoothstep(46, 56, slopeDeg));
+        let rb = 1 - smoothstep(0.10, 0.45, d);
+        rb = Math.max(rb, smoothstep(50, 60, slopeDeg));
         rb = Math.max(rb, bluff[k] / 255);
         rockBlend[k] = (clamp01(rb) * 255) | 0;
 
