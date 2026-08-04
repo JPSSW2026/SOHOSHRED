@@ -333,7 +333,11 @@ export class BoardPhysics {
     } else {
       // Inside the tolerance band: stay stuck to the surface. Without this a
       // rider crossing a sastrugi field spends half the run 3 cm airborne and
-      // the whole ride chatters.
+      // the whole ride chatters. A rider *descending into* the band after a
+      // real air is still landing, though — skipping _land here silently
+      // swallowed every soft touchdown (no trick scored, no chime, no
+      // impact puff), which is why grabs "weren't wired up" in playtest.
+      if (!s.grounded) this._land(s, n, contactY, g, h);
       s.position.y = contactY;
       const into = s.velocity.dot(n);
       if (into < 0) s.velocity.addScaledVector(n, -into);
@@ -532,8 +536,10 @@ export class BoardPhysics {
         s.pitch = damp(s.pitch, 0, 8, h);
       } else {
         // REAL flips (playtest: they were a 0.9 rad tilt, not a rotation):
-        // ~300 deg/s of authority - a full back/frontflip inside 1.2 s of air.
-        s.pitch += input.flip * 5.2 * h;
+        // ~400 deg/s of authority — a full back/frontflip inside 0.9 s,
+        // which is what the kicker airs actually give (measured 0.9–1.7 s).
+        // At 5.2 rad/s a one-second air came down 60° short, every time.
+        s.pitch += input.flip * 7.0 * h;
       }
     }
     s.edgeLoad = 0;
@@ -571,9 +577,14 @@ export class BoardPhysics {
     const spinResidue = Math.abs(((s.airRotation % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI);
     const spinClean = s.airTime < 0.25 || spinResidue > Math.PI - 0.55 || spinResidue < 0.55;
 
+    // Same rule for flips: coming down 60°+ through a rotation about the
+    // lateral axis is landing on your head or your heels, not your board.
+    const flipResidue = Math.abs(((s.pitch % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI);
+    const flipClean = s.airTime < 0.35 || flipResidue < 1.05;
+
     const tooHard = closing > CRASH_LANDING;
     const caughtEdge = slip > CRASH_SLIP_ANGLE && s.speed > 7;
-    const spunOut = !spinClean && s.airTime > 0.45 && s.speed > 6;
+    const spunOut = (!spinClean || !flipClean) && s.airTime > 0.45 && s.speed > 6;
 
     if (tooHard || caughtEdge || spunOut) {
       s.crashed = true;

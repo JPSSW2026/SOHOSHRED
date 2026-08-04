@@ -678,6 +678,8 @@ export class Rider {
     this._v3 = new THREE.Vector3();
     this._q = new THREE.Quaternion();
     this._m = new THREE.Matrix4();
+    this._flipQ = new THREE.Quaternion();
+    this._flipV = new THREE.Vector3();
     // IK scratch. The solver runs twice a frame and must not allocate.
     this._ikDir = new THREE.Vector3();
     this._ikPole = new THREE.Vector3();
@@ -1432,6 +1434,20 @@ export class Rider {
     const right = this._ikX.crossVectors(up, fwd).normalize();
     this._m.makeBasis(right, up, fwd);
     this._q.setFromRotationMatrix(this._m);
+    // Flips rotate the *whole rider*, not just the board (physics carries a
+    // real accumulated pitch; the old build tilted the board 40% and called
+    // it a backflip). The rotation pivots about a point near the centre of
+    // mass — flipping about the feet sweeps the head through a two-metre
+    // arc and reads as a cartwheel.
+    const flip = s.pitch || 0;
+    if (Math.abs(flip) > 1e-3) {
+      this._flipQ.setFromAxisAngle(right, flip);
+      this._q.premultiply(this._flipQ);
+      this._flipV.copy(up).multiplyScalar(0.88);
+      root.position.add(this._flipV);
+      this._flipV.applyQuaternion(this._flipQ);
+      root.position.sub(this._flipV);
+    }
     // Slerp rather than snap: the terrain normal is a bilinear field and steps
     // between posts, and an unfiltered basis reads as a twitch at speed.
     root.quaternion.slerp(this._q, clamp01(dt * 18));
@@ -1524,7 +1540,9 @@ export class Rider {
     // ---- Board ------------------------------------------------------
     const bp = B.boardPivot;
     bp.rotation.z = (s.roll || 0);
-    bp.rotation.x = (s.pitch || 0) * 0.4;
+    // Pitch lives on the root now (full-body flip); the board stays flat in
+    // the rider's own frame.
+    bp.rotation.x = 0;
     bp.position.y = this._boardLift;
 
     // ---- Hips -------------------------------------------------------

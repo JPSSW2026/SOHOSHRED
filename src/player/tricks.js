@@ -36,6 +36,10 @@ const SPIN_NAMES = {
 /** Base points per completed half-turn — rotation scores superlinearly. */
 const SPIN_BASE = [0, 100, 250, 480, 800, 1250, 1800, 2500, 3400];
 
+/** Base points per completed flip — a single back is worth about a 540. */
+const FLIP_BASE = [0, 460, 1500, 3100];
+const FLIP_NAMES = ['', '', 'Double ', 'Triple '];
+
 /** Pretty names for grabs. */
 const GRAB_NAMES = {
   indy: 'Indy', mute: 'Mute', melon: 'Melon', stalefish: 'Stalefish',
@@ -206,6 +210,15 @@ export class TrickSystem {
     const halves = Math.floor(absRot / Math.PI);
     const capped = Math.min(halves, 8);
 
+    // Flips. `c.flip` is the accumulated pitch at the last airborne frame; a
+    // landing up to ~40° shy still counts — physics lets the rider absorb
+    // that much, so you get credit for what you rode away from. Positive
+    // pitch sends the nose down first (front), negative is back.
+    const flips = Math.min(Math.floor((Math.abs(c.flip) + 0.7) / (Math.PI * 2)), 3);
+    const flipWord = flips > 0
+      ? `${FLIP_NAMES[flips]}${c.flip < 0 ? 'Backflip' : 'Frontflip'}`
+      : '';
+
     // Frontside vs backside. For a regular rider, a positive (counter-
     // clockwise seen from above) rotation is frontside.
     const dirWord = capped === 0 ? '' : (c.rotation > 0 ? 'Frontside ' : 'Backside ');
@@ -223,20 +236,19 @@ export class TrickSystem {
     const landMult = quality === 'perfect' ? 1.25 : quality === 'clean' ? 1.0 : 0.72;
     const switchMult = switchLanding ? 1.4 : 1.0;
 
-    let base = SPIN_BASE[capped] || 0;
+    let base = (SPIN_BASE[capped] || 0) + (FLIP_BASE[flips] || 0);
     // A straight air with a grab is still a trick; a straight air without one
     // is just riding, and should score nothing at all.
     if (base === 0) base = c.grab ? 60 : 0;
 
     const points = Math.round(base * grabMult * airMult * landMult * switchMult);
 
-    // Assemble the name the way a commentator would say it.
-    let name;
-    if (capped === 0 && c.grab) name = grabName;
-    else if (capped === 0) name = 'Air';
-    else if (c.grab) name = `${dirWord}${spinWord} ${grabName}`;
-    else name = `${dirWord}${spinWord}`;
-    if (switchLanding && capped > 0) name = `Switch ${name}`;
+    // Assemble the name the way a commentator would say it: flip first,
+    // then rotation, then the grab — "Backflip Frontside 360 Indy".
+    const spinPart = capped > 0 ? `${dirWord}${spinWord}` : '';
+    let name = [flipWord, spinPart, grabName].filter(Boolean).join(' ');
+    if (!name) name = 'Air';
+    if (switchLanding && (capped > 0 || flips > 0)) name = `Switch ${name}`;
 
     this.totals.score += points;
     return {
