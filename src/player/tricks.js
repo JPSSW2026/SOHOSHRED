@@ -125,7 +125,7 @@ export class TrickSystem {
       while (d < -Math.PI) d += Math.PI * 2;
       c.rotation += d;
       this._lastHeading = s.heading;
-      c.flip = s.pitch || 0;
+      c.flip = s.flipRot || 0;
 
       const held = ctx.input?.state?.grab || null;
       if (held) {

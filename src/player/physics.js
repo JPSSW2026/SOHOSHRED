@@ -169,6 +169,7 @@ export class BoardPhysics {
     // speed overwrite velocity right after reset, unaffected.
     s.velocity.set(Math.sin(s.heading), 0, Math.cos(s.heading)).multiplyScalar(4.5);
     s.pitch = 0;
+    s.flipRot = 0;
     s.roll = 0;
     s.edgeAngle = 0;
     s.grounded = true;
@@ -283,13 +284,14 @@ export class BoardPhysics {
     if (s.grounded) {
       this._groundStep(h, s, n, props, incl, absIncl, input, locked, g, P);
       // Whatever rotation a flip left, normalise to the nearest upright and
-      // settle. This must run here — unconditionally — not inside _airStep:
-      // that only runs while airborne, so landed pitch never unwound, and a
-      // crash mid-flip (locked) froze the rider crooked for the rest of the
-      // run (playtest screenshot: "BAILED and stuck crooked").
-      if (Math.abs(s.pitch) > 1e-4) {
-        s.pitch = ((s.pitch + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
-        s.pitch = damp(s.pitch, 0, locked ? 5 : 8, h);
+      // settle. Runs unconditionally (crashed too — a crash mid-flip froze
+      // the rider crooked otherwise), and on the DEDICATED flip channel:
+      // s.pitch is the surface-following board attitude with its own writer
+      // below, and damping it to zero here made the two fight (playtest:
+      // rider tilted with the slope, bindings under the deck).
+      if (Math.abs(s.flipRot || 0) > 1e-4) {
+        s.flipRot = ((s.flipRot + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+        s.flipRot = damp(s.flipRot, 0, locked ? 5 : 8, h);
       }
     } else {
       this._airStep(h, s, input, locked, P);
@@ -548,7 +550,7 @@ export class BoardPhysics {
       // which is what the kicker airs actually give (measured 0.9–1.7 s).
       // At 5.2 rad/s a one-second air came down 60° short, every time.
       // (The landed unwind lives in update()'s grounded branch.)
-      s.pitch += input.flip * 7.0 * h;
+      s.flipRot = (s.flipRot || 0) + input.flip * 7.0 * h;
     }
     s.edgeLoad = 0;
     s.sliding = false;
@@ -587,7 +589,7 @@ export class BoardPhysics {
 
     // Same rule for flips: coming down 60°+ through a rotation about the
     // lateral axis is landing on your head or your heels, not your board.
-    const flipResidue = Math.abs(((s.pitch % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI);
+    const flipResidue = Math.abs((((s.flipRot || 0) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI);
     const flipClean = s.airTime < 0.35 || flipResidue < 1.05;
 
     const tooHard = closing > CRASH_LANDING;

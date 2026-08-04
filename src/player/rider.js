@@ -1453,7 +1453,7 @@ export class Rider {
     // it a backflip). The rotation pivots about a point near the centre of
     // mass — flipping about the feet sweeps the head through a two-metre
     // arc and reads as a cartwheel.
-    const flip = s.pitch || 0;
+    const flip = s.flipRot || 0;
     if (Math.abs(flip) > 1e-3) {
       this._flipQ.setFromAxisAngle(right, flip);
       this._q.premultiply(this._flipQ);
@@ -1554,9 +1554,9 @@ export class Rider {
     // ---- Board ------------------------------------------------------
     const bp = B.boardPivot;
     bp.rotation.z = (s.roll || 0);
-    // Pitch lives on the root now (full-body flip); the board stays flat in
-    // the rider's own frame.
-    bp.rotation.x = 0;
+    // Surface-following attitude, as it always was — flips live on their
+    // own channel (s.flipRot) and rotate the root instead.
+    bp.rotation.x = (s.pitch || 0) * 0.4;
     bp.position.y = this._boardLift;
 
     // ---- Hips -------------------------------------------------------
