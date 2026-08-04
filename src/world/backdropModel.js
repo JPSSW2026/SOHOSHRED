@@ -40,3 +40,60 @@ export async function mountBackdropModel(ctx) {
   ctx.scene.add(g);
   return g;
 }
+
+
+/**
+ * The modelled Soho Express base station (user GLB, "a bit rough but cake
+ * it in more snow"). Kept lit (it is a building in our sun), with snow
+ * caking injected into its material: strong accumulation on every
+ * up-facing surface plus a light rime dusting overall, and a drift
+ * collar buried around the foundation so it sits IN the snowpack.
+ */
+export async function mountBaseStation(ctx) {
+  const gltf = await new GLTFLoader().loadAsync('models/base-station.glb');
+  const root = gltf.scene;
+  let mesh = null;
+  root.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
+  if (!mesh) return null;
+
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  const m = mesh.material;
+  m.side = THREE.DoubleSide;
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vSohoWN;')
+      .replace('#include <defaultnormal_vertex>',
+        '#include <defaultnormal_vertex>\nvSohoWN = normalize( mat3( modelMatrix ) * objectNormal );');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vSohoWN;')
+      .replace('#include <map_fragment>', `#include <map_fragment>
+	{
+		float up = smoothstep( 0.30, 0.75, vSohoWN.y );
+		float dust = 0.18 * smoothstep( -0.2, 0.6, vSohoWN.y );
+		float cake = clamp( up * 0.95 + dust, 0.0, 1.0 );
+		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.895, 0.905, 0.93 ), cake );
+	}`);
+  };
+  m.needsUpdate = true;
+
+  const yaw = Math.atan2(240 - 320, 700 - (-560));
+  const gy = ctx.terrain.getHeight(320, -560);
+  const g = new THREE.Group();
+  g.name = 'base-station-model';
+  g.add(root);
+  root.scale.set(58, 44, 58);
+  g.position.set(320, gy + 5.0, -560);
+  g.rotation.y = yaw;
+  ctx.scene.add(g);
+
+  // Drift collar: a shallow snow ring burying the foundation line.
+  const collar = new THREE.Mesh(
+    new THREE.CylinderGeometry(26, 33, 3.2, 26),
+    new THREE.MeshStandardMaterial({ color: 0xf2f4f8, roughness: 0.94 }),
+  );
+  collar.position.set(320, gy + 0.5, -560);
+  collar.receiveShadow = true;
+  ctx.scene.add(collar);
+  return g;
+}

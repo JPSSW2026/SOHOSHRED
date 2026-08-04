@@ -23,7 +23,7 @@ import { TrailSystem } from './fx/trails.js';
 import { createComposer, updatePost } from './fx/postprocess.js';
 import { HUD } from './ui/hud.js';
 import { TitleFlow } from './ui/titleflow.js';
-import { mountBackdropModel } from './world/backdropModel.js';
+import { mountBackdropModel, mountBaseStation } from './world/backdropModel.js';
 import { AudioSystem } from './audio/audio.js';
 
 /** Read boot overrides from the query string, e.g. ?seed=foo&tod=15.5 */
@@ -129,6 +129,7 @@ async function boot() {
   // The modelled range wall (user's look-dev GLB) mounts async - the game
   // is playable before it streams in.
   mountBackdropModel(ctx).catch((e) => console.warn('[backdrop-model]', e.message));
+  mountBaseStation(ctx).catch((e) => console.warn('[base-station]', e.message));
 
   // Game flow: sting -> title -> riding. Sockets for the user-supplied
   // presentation assets; the riding core is untouched.
