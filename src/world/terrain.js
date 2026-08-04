@@ -49,7 +49,7 @@ import {
   clamp, clamp01, lerp, smoothstep,
 } from '../core/rng.js';
 import { CONFIG } from '../core/config.js';
-import { createSnowMaterial, createRockMaterial, updateSnowMaterial } from './snowMaterial.js';
+import { createSnowMaterial, createRockMaterial, updateSnowMaterial, setKickerDye } from './snowMaterial.js';
 
 /* ================================================================== *
  * Shared constants — exported so sky.js / props.js can agree with us.
@@ -2355,6 +2355,8 @@ export class Terrain {
     // Harmless on a ShaderMaterial, essential on a MeshStandardMaterial.
     this.material.vertexColors = true;
     this.material.needsUpdate = true;
+    // The lips are already stamped by now, so the dye stations are known.
+    setKickerDye(this.material, this.kickers);
     this.rockMaterial = createRockMaterial(ctx, {});
     this.rockMaterial.polygonOffset = true;
     this.rockMaterial.polygonOffsetFactor = -2;

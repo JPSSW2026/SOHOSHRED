@@ -769,6 +769,12 @@ uniform sampler2D uSnowMacro;
 uniform sampler2D uRockPack;
 uniform sampler2D uRockNormal;
 
+// Kicker dye lines: xy = station in world XZ, zw = unit run direction.
+// One entry per lip, count in uDyeCount (0 disables the whole block).
+#define SOHO_MAX_DYE 6
+uniform vec4  uDye[ SOHO_MAX_DYE ];
+uniform float uDyeCount;
+
 uniform vec4  uDetailScale;      // metres per tile: grainFine, grainMid, drift, macro
 uniform vec4  uDetailAmp;        // gradient amplitude per layer
 uniform vec2  uDetailFade;       // start / end distance for the fine grain layers
@@ -1359,6 +1365,61 @@ const SNOW_SURFACE = /* glsl */ `
 	// RIDERS' tracks, and the fantasy is untouched snow - only the live
 	// trail may mark the pack).
 	// albedo *= 1.0 - tMc.w * 0.06 * f4 * texFade * smoothstep( 0.30, 0.70, tDr.w );
+	// ---- kicker dye ----
+	// A wind lip is white snow on a white slope, so the takeoff edge has no
+	// silhouette to read on approach. Parks solve it with blue dye and so
+	// does Shredders: a bar across the lip, rails down the corridor feeding
+	// it. The rails carry the cue at distance — converging in perspective,
+	// they point at the lip from far enough out to set up for it, which a
+	// single transverse line cannot do.
+	//
+	// Painted here rather than as draped geometry on purpose: a decal mesh
+	// z-fights the clipmap (the LOD ring under it carries a different
+	// height than the one the ribbon was built from) and breaks into
+	// dashes exactly at the crest, which is worse than no marking at all.
+	// Evaluated against world XZ, it lands on the surface at every LOD.
+	float dye = 0.0;
+	if ( uDyeCount > 0.5 ) {
+		// One pixel's worth of softness, floored so a near-flat grazing
+		// view still antialiases instead of crawling.
+		// Clamped: at a grazing angle one pixel legitimately covers metres of
+		// ground, and an unclamped footprint turns the softening band — and
+		// the minimum width below — into a several-metre smear.
+		float dyeAA = clamp( sohoFootprint, 0.06, 0.45 );
+		// Minimum apparent width. A 60 cm rail seen down the fall line is
+		// sub-pixel well before 30 m, and a sub-pixel line does not read as
+		// a faint line — antialiasing dissolves it into a wash, which is
+		// how the first pass lost exactly the far-approach cue the rails
+		// exist to give. Widen in world space to hold roughly a pixel and
+		// the line keeps its colour all the way out.
+		// Capped at roughly twice nominal for the same reason.
+		float railHW = clamp( sohoFootprint * 0.5, 0.55, 1.15 );
+		float barHW  = clamp( sohoFootprint * 0.5, 1.30, 2.10 );
+		for ( int i = 0; i < SOHO_MAX_DYE; i++ ) {
+			if ( float( i ) >= uDyeCount ) break;
+			vec4 K = uDye[ i ];
+			vec2 r = sohoWP.xz - K.xy;
+			float s = dot( r, K.zw );                  // along the run
+			float t = r.y * K.z - r.x * K.w;           // across it
+			// Bar just below the crest: on the ramp face where the rider
+			// sees it, not over the lee where the lip hides it.
+			float bar = ( 1.0 - smoothstep( barHW - dyeAA, barHW + dyeAA, abs( s + 1.3 ) ) )
+			          * ( 1.0 - smoothstep( 10.5 - dyeAA, 10.5 + dyeAA, abs( t ) ) );
+			// Corridor rails, 30 m of run-in — the distance a lip needs to
+			// be legible from to be rideable.
+			float rail = ( 1.0 - smoothstep( railHW - dyeAA, railHW + dyeAA, abs( abs( t ) - 10.5 ) ) )
+			           * ( 1.0 - smoothstep( 0.0, dyeAA + 0.5, -( s + 30.0 ) ) )
+			           * ( 1.0 - smoothstep( 0.0, dyeAA + 0.5, s + 1.3 ) );
+			dye = max( dye, max( bar, rail ) );
+		}
+		// Dye soaks snow, not schist.
+		dye *= 1.0 - rockF;
+	}
+	// Multiplicative, so the line is *dyed snow*: it takes the sun, the
+	// terrain shadow and the aerial the surface under it already has,
+	// instead of reading as a decal pasted over the top.
+	albedo *= mix( vec3( 1.0 ), vec3( 0.30, 0.56, 0.94 ), dye );
+
 	albedo *= 1.0 - trkTrench * 0.15;
 	albedo *= 1.0 + trkLip * 0.05;
 	albedo *= 1.0 + snowLip * 0.05;                              // drift lip at the rock edge
@@ -1742,6 +1803,9 @@ function buildUniforms(ctx, opts) {
     uSnowOnRock: { value: opts.snowOnRock ?? 1.0 },
     uTrackStrength: { value: opts.trackStrength ?? 1.0 },
 
+    uDye: { value: Array.from({ length: 6 }, () => new THREE.Vector4()) },
+    uDyeCount: { value: 0 },
+
     uTrackMap: { value: null },
     uTrackRegion: { value: new THREE.Vector4(-1024, -1024, 1 / 2048, 1 / 2048) },
   };
@@ -1923,6 +1987,24 @@ const _v2 = new THREE.Vector2();
  * @param {THREE.Texture|null} texture
  * @param {{minX:number,minZ:number,size:number}|{minX,maxX,minZ,maxZ}|null} [region]
  */
+/**
+ * Publish the kicker dye stations to a snow material.
+ *
+ * `terrain.js` calls this once its lips are placed; anything else using the
+ * snow material leaves the count at zero and pays only a dead branch.
+ *
+ * @param {THREE.Material} material  a material from `createSnowMaterial`
+ * @param {Array<{x:number,z:number,dx:number,dz:number}>} kickers
+ */
+export function setKickerDye(material, kickers) {
+  const u = material?.userData?.snowUniforms;
+  if (!u?.uDye) return;
+  const list = kickers || [];
+  const n = Math.min(list.length, u.uDye.value.length);
+  for (let i = 0; i < n; i++) u.uDye.value[i].set(list[i].x, list[i].z, list[i].dx, list[i].dz);
+  u.uDyeCount.value = n;
+}
+
 export function setTrackTexture(material, texture, region) {
   const u = material?.userData?.snowUniforms;
   if (!u) return;
