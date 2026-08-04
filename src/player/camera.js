@@ -208,6 +208,16 @@ export class ChaseCamera {
     this._look.copy(s.position)
       .addScaledVector(this._dir, lead)
       .addScaledVector(this._up, 1.15 - airT * 0.5);
+    // Steep-descent framing (playtest: rider drops out the BOTTOM of frame
+    // on steep pitches): the look-ahead point sits on the slope ahead, and
+    // on a steep face that point is far BELOW the rider, pitching the lens
+    // down past them. Blend the look target's height toward the rider's own
+    // altitude as descent rate grows, so the rider stays in frame and the
+    // slope ahead reads below them.
+    if (s.grounded && s.velocity.y < -2) {
+      const steep = Math.min(1, (-s.velocity.y - 2) / 10);
+      this._look.y += (s.position.y + 0.9 - this._look.y) * 0.6 * steep;
+    }
 
     // In the air, aim at where they will actually come down.
     if (!s.grounded && terrain && s.velocity.y < 0) {
