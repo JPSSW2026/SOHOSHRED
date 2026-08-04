@@ -28,7 +28,7 @@ import * as THREE from 'three';
 import { CONFIG } from '../core/config.js';
 import { makeRng, seedFromString, clamp, clamp01, lerp, smoothstep } from '../core/rng.js';
 
-const MAX_DYNAMIC = 2600;
+const MAX_DYNAMIC = 4200;
 const MAX_AMBIENT = 1800;
 /** Half-extent of the box ambient snow is recycled within, metres. */
 const AMBIENT_BOX = 34;
@@ -58,6 +58,8 @@ const VERT = /* glsl */`
   varying float vKind;
   varying float vBright;
   varying vec3  vWorld;
+  varying vec2  vStretchDir;   // screen-space motion direction
+  varying float vStretch;      // major/minor axis ratio, 1 = round
 
   void main() {
     float age = uTime - aParams.x;
@@ -108,7 +110,20 @@ const VERT = /* glsl */`
     vBright = aStyle.z;
 
     gl_Position = projectionMatrix * mv;
-    gl_PointSize = max(size * uPixelScale / max(dist, 0.05), 1.0);
+
+    // Motion stretch (round 6, all critics: "no motion stretch" is the
+    // default-particle tell). The instantaneous velocity from the same
+    // analytic integral, projected to screen space; the point square is
+    // enlarged along it and the fragment draws an ellipse inside. Fast
+    // fresh spray becomes streaks; old drifting crystals relax to round.
+    vec3 vel = aVelocity * e + vTerm * (1.0 - e);
+    vec4 mv2 = modelViewMatrix * vec4(pos + vel * 0.04, 1.0);
+    vec2 sd = (mv2.xy / max(-mv2.z, 0.05)) - (mv.xy / max(dist, 0.05));
+    float sl = length(sd);
+    vStretch = 1.0 + clamp(sl * 55.0, 0.0, 2.6) * (1.0 - t * 0.7);
+    vStretchDir = sl > 1e-6 ? sd / sl : vec2(1.0, 0.0);
+
+    gl_PointSize = max(size * uPixelScale / max(dist, 0.05), 1.0) * vStretch;
   }
 `;
 
@@ -126,6 +141,8 @@ const FRAG = /* glsl */`
   varying float vKind;
   varying float vBright;
   varying vec3  vWorld;
+  varying vec2  vStretchDir;
+  varying float vStretch;
 
   // Cheap hash for per-particle crystal variation.
   float hash(vec2 p) {
@@ -134,7 +151,11 @@ const FRAG = /* glsl */`
 
   void main() {
     vec2 uv = gl_PointCoord * 2.0 - 1.0;
-    float r2 = dot(uv, uv);
+    // Ellipse inside the stretch-enlarged square: full length along the
+    // motion axis, original width across it.
+    float um = dot(uv, vStretchDir);
+    float vm = dot(uv, vec2(-vStretchDir.y, vStretchDir.x)) * vStretch;
+    float r2 = um * um + vm * vm;
     if (r2 > 1.0) discard;
 
     // Soft particle profile. Not a hard disc and not a Gaussian: snow spray
@@ -323,7 +344,7 @@ export class ParticleFX {
   emitSpray(position, direction, intensity) {
     if (!this.dynamic || intensity <= 0.001) return;
     const rng = this._rng;
-    const n = Math.min(Math.floor(intensity * 42), 64);
+    const n = Math.min(Math.floor(intensity * 60), 96);
     const t = this._time;
 
     this._fwd.copy(direction).setY(0);
@@ -487,7 +508,7 @@ export class ParticleFX {
     if (spray > 0.02) {
       // 46/s at full intensity was a trickle: a spray wall needs hundreds of
       // sprites in the air at once against a 2600 pool with ~2 s lifetimes.
-      this._sprayDebt += spray * 170 * dt;
+      this._sprayDebt += spray * 340 * dt;
       if (this._sprayDebt >= 1) {
         const count = Math.floor(this._sprayDebt);
         this._sprayDebt -= count;

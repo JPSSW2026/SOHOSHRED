@@ -1181,6 +1181,20 @@ const SNOW_SURFACE = /* glsl */ `
 	float trkComp = 0.0;
 	#ifdef USE_TRACK_MAP
 		vec2 tuv = ( sohoWP.xz - uTrackRegion.xy ) * uTrackRegion.zw;
+		// Smooth-bilinear: bilinear is C0, so the relief pass's screen
+		// derivatives jump at every 15.6 cm texel boundary and the lighting
+		// renders each texel as a flat facet - the stair-stepped block trail
+		// of rounds 5-6. Warping the sample point with a smoothstep of the
+		// texel fraction makes the field C1 for one extra ALU, no extra
+		// fetches, and the facets dissolve.
+		{
+			vec2 tsz = vec2( textureSize( uTrackMap, 0 ) );
+			vec2 q = tuv * tsz - 0.5;
+			vec2 iq = floor( q );
+			vec2 fq = q - iq;
+			fq = fq * fq * ( 3.0 - 2.0 * fq );
+			tuv = ( iq + 0.5 + fq ) / tsz;
+		}
 		vec2 tin = step( vec2( 0.0 ), tuv ) * step( tuv, vec2( 1.0 ) );
 		vec4 tk = texture2D( uTrackMap, clamp( tuv, 0.0, 1.0 ) ) * ( tin.x * tin.y * ( 1.0 - rockF ) );
 		trkTrench = saturate( tk.r * tk.a ) * uTrackStrength;
