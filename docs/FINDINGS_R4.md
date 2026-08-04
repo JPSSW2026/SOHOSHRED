@@ -228,3 +228,24 @@ Consensus queue, in attack order:
 10. **f0180 rig break (1/5, from demo v4 frames)**: board detached at waist
    height mid-air + stray edge rod — IK pin feet to bindings through
    aerial rotation; grab-hand contact (round-5 carryover).
+
+## Post-round-6 fix state (r14, shots/r14)
+
+Fixes shipped this cycle: LAW-2 micro-horizon + geometric horizon ramp
+(e734dbf), vignette/streak/banks edge-band batch (97b83e2), garment pass 2
+with cloth normal maps + AgX-aware vermilion (01dbecb), packed hood +
+sun-local veil (55d7be6), spray motion-stretch + C1 trail sampling
+(f27d9a8). Sizzle-reel quality-bar notes in CARDRONA_REFERENCE §6.
+
+r14 vs r13: shaBR 1.05-1.10 -> 1.11-1.42 (8/9 frames; air-trick 1.418,
+ridge-backlight 1.371, west-spur 1.229); ch9 ~1.0 -> 1.14-1.92; nf passes
+item 17 on hero/west-spur/air-trick/portrait; close-spray meanSat 0.065 ->
+0.108 with the frame keeping saturation away from the sun; trail facets
+dissolved (C1 sampling); chase-carve shaBR 1.000 is a one-frame percentile
+quirk (spray mist claims the darkest decile) - re-check next round.
+
+Still open, in order: props lighting/aerial + contact (5/5), edge slab
+(NOT post, NOT banks - MAD toggle probe interrupted, see task #6),
+LAW-1 backlight HG sun-tint (1.277 vs <=1.06), LOD zigzag in snow-detail,
+rock TV-static albedo near camera, portrait backdrop slat fence, f0180
+air rig break, orphan shadows.
