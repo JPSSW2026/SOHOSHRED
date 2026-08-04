@@ -1316,6 +1316,11 @@ uniform float sohoSunAlt;
 				float sohoNgdL = dot( nonPerturbedNormal, directLight.direction );
 				float sohoMicro = saturate( sohoNdL / max( sohoNgdL, 1e-3 ) );
 				sohoMicro *= sohoMicro;
+				// Playtest: full-strength micro shadowing rakes every dimple into
+				// a dark line and fresh powder reads tracked-out. Two-thirds
+				// strength keeps the LAW-2 blue in real shadows while the open
+				// pack smooths back toward untouched.
+				sohoMicro = mix( 1.0, sohoMicro, 0.62 );
 				// Geometric-scale horizon term, same physics one octave up: a
 				// swale tilted a few degrees off a 10.6 deg sun is horizon-
 				// occluded by its own upslope lip, but plain Lambert hands it a

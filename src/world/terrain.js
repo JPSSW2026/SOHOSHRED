@@ -2026,7 +2026,7 @@ export class Terrain {
         // Band 4 — drift lobes and pillows over buried rock, λ 11 m. The 4–8 m
         // end of this band is below what a 2 m heightfield can carry at all; it
         // lives in the snow material's detail normal, which is filtered.
-        const b4 = fbm2(simF, x / 11, z / 11, { octaves: 1 }) * 0.38 * amp;
+        const b4 = fbm2(simF, x / 11, z / 11, { octaves: 1 }) * 0.26 * amp;
 
         H[k] += b3 + b4;
       }
