@@ -854,7 +854,17 @@ void main() {
 
   vec3 veil = texture2D( tVeil, vUv ).rgb;
 
-  vec3 outc = base + b * uBloomStrength + veil * uVeilStrength;
+  // Veiling glare is an around-the-sun phenomenon (Shredders sizzle: the
+  // glow hugs the disc, the rest of the frame keeps its saturation). A
+  // frame-wide veil washed the close-spray preset to meanSat 0.065. Weight
+  // the veil by proximity to the sun; keep a small global floor for the
+  // lens's own scatter.
+  float veilW = 0.16;
+  if ( uSunVis > 0.0 ) {
+    float dv = length( ( vUv - uSunUv ) * vec2( uAspect, 1.0 ) );
+    veilW = mix( 0.16, 1.0, exp( - dv * dv / 0.22 ) );
+  }
+  vec3 outc = base + b * uBloomStrength + veil * uVeilStrength * veilW;
 
   #ifdef USE_STREAK
   {

@@ -962,8 +962,14 @@ export class Rider {
     part(new THREE.CylinderGeometry(0.056, 0.064, DIM.neckLength + 0.03, 10), M.shellGrey, neck, 0, DIM.neckLength * 0.45, 0);
     // Collar / hood bunched behind the neck — a silhouette detail that reads
     // even at 30 m and covers the neck-to-helmet junction from behind.
-    const hood = part(new THREE.SphereGeometry(0.098, 12, 10), M.shellGrey, chest, 0.070, DIM.chestLength * 0.96, 0);
-    hood.scale.set(0.70, 0.78, 1.05);
+    // Sizzle-reel close-up: the packed hood is the LOUDEST silhouette cue on
+    // their riders — a real mass riding the collar, not a bump. Two lobes:
+    // the main pack behind the neck and a smaller roll over the shoulder
+    // line, both in the shell cloth so the folds read.
+    const hood = part(new THREE.SphereGeometry(0.115, 14, 12), M.shell, chest, 0.082, DIM.chestLength * 0.94, 0);
+    hood.scale.set(0.88, 0.72, 1.18);
+    const hoodRoll = part(new THREE.SphereGeometry(0.085, 12, 10), M.shell, chest, 0.055, DIM.chestLength * 1.04, 0);
+    hoodRoll.scale.set(0.62, 0.55, 1.30);
 
     const head = bone('head', neck, 0, DIM.neckLength, 0);
     // Balaclava: the lower face, so there is a head under the helmet without
