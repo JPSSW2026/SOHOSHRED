@@ -1133,6 +1133,33 @@ vec3 sohoAerialPerspective( vec3 color, vec3 worldPos, vec3 camPos ) {
 
 	vec3 result = color * T + inscatter * sohoAtmo[ 3 ].z;
 
+	// --- Valley inversion deck (user direction: "fill that valley with fog
+	// so only the tops of the mountains are visible"). A cloud sheet with
+	// its top at 1560 m lies in every valley beyond the playable bowl - the
+	// Cardrona signature from the reference photos, and it swallows the
+	// field/backdrop seam whole. Fog optical depth accumulates over the
+	// part of the ray that runs below the deck top, gated radially so the
+	// basin itself stays clear.
+	{
+		float yLo = min( camPos.y, worldPos.y );
+		float yHi = max( camPos.y, worldPos.y );
+		float below = clamp( ( 1720.0 - yLo ) / max( yHi - yLo, 1.0 ), 0.0, 1.0 );
+		float gate = smoothstep( 1500.0, 2600.0, length( worldPos.xz ) );
+		gate *= gate;   // gentle onset: no hot rim where the deck begins
+		float fogF = 1.0 - exp( - d * below * gate * 0.0028 );
+		// Bank-top occlusion (user: the deck must BLOCK what pokes through):
+		// any fragment submerged below the 1950 m bank top down-valley whites
+		// out by its own depth, camera height irrelevant - this is what
+		// finally swallows the seam verticals whole.
+		float sub = clamp( ( 1950.0 - worldPos.y ) / 260.0, 0.0, 1.0 );
+		fogF = max( fogF, sub * sub * gate * smoothstep( 600.0, 1800.0, d ) );
+		float sunL = dot( sohoAtmo[ 7 ].xyz, vec3( 0.2126, 0.7152, 0.0722 ) );
+		// Dimmer and a shade cooler than sunlit snow, so the sheet reads as
+		// cloud lying in shadowless valley light, not a glowing tear.
+		vec3 fogCol = sohoAtmo[ 4 ].xyz * sunL * 0.60 * vec3( 0.90, 0.95, 1.06 );
+		result = mix( result, fogCol, fogF );
+	}
+
 	// --- The §5.2 / checklist-19 guarantee, enforced arithmetically.
 	//
 	// Everything above converges on the sky *asymptotically*, and at the shipped
@@ -1662,6 +1689,19 @@ void main() {
 	float sunI = sohoAtmo[ 4 ].w;
 
 	vec3 col = sohoSkyRadiance( dir );
+
+#ifndef SOHO_ENV
+	// Valley inversion deck, horizon side: a below-horizontal sky ray ends
+	// on the cloud sheet filling the valleys, never on clear air - this is
+	// what closes the navy slot where sky showed through the field/backdrop
+	// seam. Excluded from the environment probe so lighting calibration is
+	// untouched.
+	{
+		float sunLv = dot( sohoAtmo[ 7 ].xyz, vec3( 0.2126, 0.7152, 0.0722 ) );
+		vec3 deckCol = sohoAtmo[ 4 ].xyz * sunLv * 0.60 * vec3( 0.90, 0.95, 1.06 );
+		col = mix( col, deckCol, smoothstep( 0.014, -0.006, dir.y ) );
+	}
+#endif
 
 	// ---- Solar disc ------------------------------------------------------
 	// At air mass 5.4 the disc has no discernible edge (ART_DIRECTION §7.1), so

@@ -535,7 +535,10 @@ function bakeSnowMacro(size, seed) {
     }
   };
 
-  const trackCount = 7;
+  // Zero, per the user: "powder runs are meant to be untracked, only
+  // leaving yours - that's the fantasy Soho Shred should depict." The
+  // live trail system carries the player's own line; nothing is pre-baked.
+  const trackCount = 0;
   for (let n = 0; n < trackCount; n++) {
     const x0 = rng() * size;
     const y0 = rng() * size;

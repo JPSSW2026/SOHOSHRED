@@ -731,7 +731,7 @@ export class Rider {
      * blends bone[j-1] → bone[j] over 35% of the shorter adjacent span.
      * A terminal station may repeat its neighbour's bone (taper only).
      */
-    const tube = (stations, mat, { seg = 14, capEnd = false } = {}) => {
+    const tube = (stations, mat, { seg = 14, capEnd = false, capStart = false } = {}) => {
       const boneNames = [];
       for (const st of stations) if (!boneNames.includes(st.bone)) boneNames.push(st.bone);
       const bones = boneNames.map((n) => this.bones[n]);
@@ -793,7 +793,12 @@ export class Rider {
         for (let k = 0; k <= seg; k++) {
           const a = (k / seg) * Math.PI * 2;
           const ca = Math.cos(a), sa = Math.sin(a);
-          pos.push(p.x + ca * r * sx, p.y, p.z + sa * r);
+          // Cloth ease: a perfect ellipse stack reads as a rigid box (user
+          // catch). Two low-frequency lobes, phase-drifting along the tube,
+          // give the silhouette the slack of fabric over a body.
+          const rr = r * (1 + 0.035 * Math.sin(3 * a + s * 5.0)
+                            + 0.022 * Math.sin(5 * a - s * 3.0));
+          pos.push(p.x + ca * rr * sx, p.y, p.z + sa * rr);
           const nx = ca / Math.max(sx, 0.5);
           const inv = 1 / Math.hypot(nx, taper, sa);
           nrm.push(nx * inv, taper * inv, sa * inv);
@@ -834,6 +839,41 @@ export class Rider {
           const a = (base + c) * (seg + 1), b = a + seg + 1;
           for (let k = 0; k < seg; k++) {
             idx.push(a + k, b + k, a + k + 1, a + k + 1, b + k, b + k + 1);
+          }
+        }
+      }
+
+      // Start cap: an inward dome over the first ring, so an open tube
+      // mouth (a sleeve top seen from above) never shows its hollow inside
+      // - the "see-through body parts" of the user's v9 zooms.
+      if (capStart) {
+        const s0 = 0;
+        const { p, r, sx } = evalAt(s0);
+        const [b0, w0, b1, w1] = weightsAt(s0);
+        const capRings = 3;
+        let base = rings.length + 0;   // rows appended after existing ones
+        // account for capEnd rows already appended
+        base = pos.length / (3 * (seg + 1)) ;
+        for (let c = 1; c <= capRings; c++) {
+          const f = c / capRings;
+          const rr = r * Math.cos(f * Math.PI * 0.5);
+          const lift = r * 0.5 * Math.sin(f * Math.PI * 0.5);
+          for (let k = 0; k <= seg; k++) {
+            const a = (k / seg) * Math.PI * 2;
+            const ca = Math.cos(a), sa = Math.sin(a);
+            pos.push(p.x + ca * rr * sx, p.y + lift, p.z + sa * rr);
+            const inv = 1 / Math.hypot(ca * (1 - f), 1.1 * f, sa * (1 - f));
+            nrm.push(ca * (1 - f) * inv, 1.1 * f * inv, sa * (1 - f) * inv);
+            uv.push(k / seg, 0);
+            sIdx.push(b0, b1 < 0 ? 0 : b1, 0, 0);
+            sWgt.push(w0, w1, 0, 0);
+          }
+        }
+        for (let c = 0; c < capRings; c++) {
+          const rowA = c === 0 ? 0 : base + c - 1;
+          const a = rowA * (seg + 1), b = (base + c) * (seg + 1);
+          for (let k = 0; k < seg; k++) {
+            idx.push(a + k, a + k + 1, b + k, a + k + 1, b + k + 1, b + k);
           }
         }
       }
@@ -882,11 +922,12 @@ export class Rider {
       const chest = jointPos('chest');
       const collarY = chest.y + DIM.chestLength;
       tube([
-        { bone: 'hips',  pos: hips.clone().setY(hips.y + 0.02),   r: 0.176, sx: 0.82 },
-        { bone: 'spine', pos: jointPos('spine', 0.10),            r: 0.166, sx: 0.80 },
-        { bone: 'chest', pos: chest.clone().setY(chest.y + 0.02), r: 0.176, sx: 0.75 },
-        { bone: 'chest', pos: chest.clone().setY(collarY * 0.55 + chest.y * 0.45), r: 0.163, sx: 0.74 },
-        { bone: 'chest', pos: chest.clone().setY(collarY - 0.012), r: 0.146, sx: 0.74 },
+        { bone: 'hips',  pos: hips.clone().setY(hips.y + 0.00),   r: 0.186, sx: 0.84 },
+        { bone: 'hips',  pos: hips.clone().setY(hips.y + 0.07),   r: 0.170, sx: 0.82 },
+        { bone: 'spine', pos: jointPos('spine', 0.10),            r: 0.157, sx: 0.80 },
+        { bone: 'chest', pos: chest.clone().setY(chest.y + 0.02), r: 0.172, sx: 0.76 },
+        { bone: 'chest', pos: chest.clone().setY(collarY * 0.55 + chest.y * 0.45), r: 0.166, sx: 0.74 },
+        { bone: 'chest', pos: chest.clone().setY(collarY - 0.012), r: 0.144, sx: 0.74 },
       ], M.shell, { capEnd: true });
     }
     /* Sleeves: a short yoke on the chest, then upper arm and forearm. */
@@ -898,7 +939,7 @@ export class Rider {
         { bone: `upperArm${side}`, pos: jointPos(`foreArm${side}`, 0.045), r: 0.070 },
         { bone: `foreArm${side}`,  pos: jointPos(`foreArm${side}`, -0.04), r: 0.066 },
         { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.015),    r: 0.055 },
-      ], M.shellGrey, { capEnd: false });
+      ], M.shellGrey, { capEnd: false, capStart: true });
     }
   }
 
@@ -976,9 +1017,13 @@ export class Rider {
     // jacket's red is deep (~#C33) and keeps its chroma; the highlights get
     // their orange from shading, not from the albedo. So: darker base, and
     // the emissive floor carries the signal in shade.
-    const shell = cloth(0xc42d08, 0.58, 0.26, [1.4, 2], { quilt: 0.3, wrinkle: 1.15 });
-    const shellGrey = cloth(0xc42d08, 0.60, 0.24, [1.4, 2], { wrinkle: 1.05 });
-    const pants = cloth(0xb02407, 0.64, 0.22, [1.4, 2], { wrinkle: 1.35 });
+    // ONE kit, one cloth (user: the quilted torso against plainer limbs
+    // split the rider into a dark vest over pink arms). Same base, same
+    // roughness and sheen, quilt pulled way down; the pants sit a half-step
+    // darker only.
+    const shell = cloth(0xc42d08, 0.60, 0.26, [1.4, 2], { quilt: 0.12, wrinkle: 1.1 });
+    const shellGrey = cloth(0xc42d08, 0.60, 0.26, [1.4, 2], { wrinkle: 1.1 });
+    const pants = cloth(0xb62808, 0.60, 0.26, [1.4, 2], { wrinkle: 1.2 });
     const shellDark = shellGrey; // collar/hem trim reads as the black blocking
 
     const helmet = new THREE.MeshStandardMaterial({
@@ -1154,14 +1199,11 @@ export class Rider {
     part(new THREE.CylinderGeometry(0.056, 0.064, DIM.neckLength + 0.03, 10), M.shellGrey, neck, 0, DIM.neckLength * 0.45, 0);
     // Collar / hood bunched behind the neck — a silhouette detail that reads
     // even at 30 m and covers the neck-to-helmet junction from behind.
-    // Sizzle-reel close-up: the packed hood is the LOUDEST silhouette cue on
-    // their riders — a real mass riding the collar, not a bump. Two lobes:
-    // the main pack behind the neck and a smaller roll over the shoulder
-    // line, both in the shell cloth so the folds read.
-    const hood = part(new THREE.SphereGeometry(0.115, 14, 12), M.shell, chest, 0.082, DIM.chestLength * 0.94, 0);
-    hood.scale.set(0.88, 0.72, 1.18);
-    const hoodRoll = part(new THREE.SphereGeometry(0.085, 12, 10), M.shell, chest, 0.055, DIM.chestLength * 1.04, 0);
-    hoodRoll.scale.set(0.62, 0.55, 1.30);
+    // Collar roll. The two-lobe packed hood read as a bulge growing off the
+    // back at gameplay distance (user catch on the v9 zooms) — a snug roll
+    // hugging the collar keeps the silhouette cue without the growth.
+    const hood = part(new THREE.SphereGeometry(0.082, 14, 12), M.shell, chest, 0.055, DIM.chestLength * 1.00, 0);
+    hood.scale.set(0.55, 0.42, 1.12);
 
     const head = bone('head', neck, 0, DIM.neckLength, 0);
     // Balaclava: the lower face, so there is a head under the helmet without
