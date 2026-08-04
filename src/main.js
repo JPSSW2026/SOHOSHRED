@@ -22,6 +22,7 @@ import { ParticleFX } from './fx/particles.js';
 import { TrailSystem } from './fx/trails.js';
 import { createComposer, updatePost } from './fx/postprocess.js';
 import { HUD } from './ui/hud.js';
+import { TitleFlow } from './ui/titleflow.js';
 import { AudioSystem } from './audio/audio.js';
 
 /** Read boot overrides from the query string, e.g. ?seed=foo&tod=15.5 */
@@ -124,6 +125,12 @@ async function boot() {
   engine._onResize();
   engine.start();
 
+  // Game flow: sting -> title -> riding. Sockets for the user-supplied
+  // presentation assets; the riding core is untouched.
+  const flow = new TitleFlow(ctx);
+  ctx.flow = flow;
+  engine.add({ update: (dt) => flow.update(dt) });
+
   // --- Capture harness -----------------------------------------------------
   let readyResolve;
   const readyPromise = new Promise((r) => (readyResolve = r));
@@ -138,7 +145,7 @@ async function boot() {
 
     setSize(w, h) { engine.setSize(w, h); },
 
-    setManual(on) { engine.manualTime = !!on; },
+    setManual(on) { engine.manualTime = !!on; ctx.flow?.skip(); },
 
     step(dt = 1 / 60) { engine.tick(dt); },
 
