@@ -699,6 +699,209 @@ export class Rider {
     this._boardLift = BOARD_LIFT;
   }
 
+
+  /* ------------------------------------------------------------------ *
+   * Skinned garments
+   * ------------------------------------------------------------------ */
+  /**
+   * One continuous deformable cloth surface per garment piece, skinned to the
+   * existing bone hierarchy — the fix the segment-and-conceal approach could
+   * never reach (user: "flexible garment mesh over the round forms"). Each
+   * tube is a stack of rings; every vertex carries linear-blend weights that
+   * smoothstep from one bone to the next across a joint, so a bending knee
+   * CURVES the fabric. There are no segment ends, so there are no rims.
+   *
+   * Built in the rest pose (all bone rotations zero, every chain hanging
+   * straight down −Y), which makes the ring frames trivial: horizontal
+   * ellipses stacked along the joint positions read straight from the bones'
+   * rest matrices.
+   */
+  _buildSkinnedGarments(M) {
+    this.object3D.updateMatrixWorld(true);
+    const rootInv = new THREE.Matrix4().copy(this.object3D.matrixWorld).invert();
+    const jointPos = (name, dy = 0) => {
+      const p = new THREE.Vector3().setFromMatrixPosition(this.bones[name].matrixWorld)
+        .applyMatrix4(rootInv);
+      p.y += dy;
+      return p;
+    };
+
+    /**
+     * stations: [{bone, pos, r, sx}] — bone NAMES; crossing interior station j
+     * blends bone[j-1] → bone[j] over 35% of the shorter adjacent span.
+     * A terminal station may repeat its neighbour's bone (taper only).
+     */
+    const tube = (stations, mat, { seg = 14, capEnd = false } = {}) => {
+      const boneNames = [];
+      for (const st of stations) if (!boneNames.includes(st.bone)) boneNames.push(st.bone);
+      const bones = boneNames.map((n) => this.bones[n]);
+
+      // Arc length per station.
+      const arc = [0];
+      for (let i = 1; i < stations.length; i++) {
+        arc.push(arc[i - 1] + stations[i].pos.distanceTo(stations[i - 1].pos));
+      }
+      const total = arc[arc.length - 1];
+
+      // Blend windows at interior stations.
+      const blend = stations.map((st, j) => {
+        if (j === 0 || j === stations.length - 1) return 0;
+        if (st.bone === stations[j - 1].bone) return 0;
+        return 0.35 * Math.min(arc[j] - arc[j - 1], arc[j + 1] - arc[j]);
+      });
+
+      const pos = [], nrm = [], uv = [], sIdx = [], sWgt = [], idx = [];
+      const rings = [];
+      for (let j = 0; j < stations.length - 1; j++) {
+        const span = arc[j + 1] - arc[j];
+        const n = Math.max(3, Math.ceil(span * 22));
+        for (let k = 0; k < n; k++) rings.push(arc[j] + (span * k) / n);
+      }
+      rings.push(total);
+
+      const evalAt = (s) => {
+        let j = 0;
+        while (j < stations.length - 2 && s > arc[j + 1]) j++;
+        const t = (s - arc[j]) / Math.max(arc[j + 1] - arc[j], 1e-6);
+        const a = stations[j], b = stations[j + 1];
+        return {
+          p: a.pos.clone().lerp(b.pos, t),
+          r: a.r + (b.r - a.r) * t,
+          sx: (a.sx ?? 1) + ((b.sx ?? 1) - (a.sx ?? 1)) * t,
+          taper: (a.r - b.r) / Math.max(arc[j + 1] - arc[j], 1e-6),
+        };
+      };
+      const weightsAt = (s) => {
+        // Walk the interior stations; each crossing hands weight to its bone.
+        let wPrev = 1, bPrev = boneNames.indexOf(stations[0].bone);
+        for (let j = 1; j < stations.length - 1; j++) {
+          if (blend[j] === 0) continue;
+          const t = THREE.MathUtils.smoothstep(s, arc[j] - blend[j], arc[j] + blend[j]);
+          if (t <= 0) break;
+          const bNext = boneNames.indexOf(stations[j].bone);
+          if (t >= 1) { wPrev = 1; bPrev = bNext; continue; }
+          return [bPrev, 1 - t, bNext, t];
+        }
+        return [bPrev, wPrev, -1, 0];
+      };
+
+      const smooth = (f) => f * f * (3 - 2 * f);
+      for (let ri = 0; ri < rings.length; ri++) {
+        const s = rings[ri];
+        const { p, r, sx, taper } = evalAt(s);
+        const [b0, w0, b1, w1] = weightsAt(s);
+        for (let k = 0; k <= seg; k++) {
+          const a = (k / seg) * Math.PI * 2;
+          const ca = Math.cos(a), sa = Math.sin(a);
+          pos.push(p.x + ca * r * sx, p.y, p.z + sa * r);
+          const nx = ca / Math.max(sx, 0.5);
+          const inv = 1 / Math.hypot(nx, taper, sa);
+          nrm.push(nx * inv, taper * inv, sa * inv);
+          uv.push(k / seg, s / Math.max(total, 1e-6));
+          sIdx.push(b0, b1 < 0 ? 0 : b1, 0, 0);
+          sWgt.push(w0, w1, 0, 0);
+        }
+      }
+      for (let ri = 0; ri < rings.length - 1; ri++) {
+        const a = ri * (seg + 1), b = a + seg + 1;
+        for (let k = 0; k < seg; k++) {
+          idx.push(a + k, b + k, a + k + 1, a + k + 1, b + k, b + k + 1);
+        }
+      }
+      // Optional end cap: a dome shrinking to the axis (collar top, hem lip).
+      if (capEnd) {
+        const s = total;
+        const { p, r, sx } = evalAt(s);
+        const [b0, w0, b1, w1] = weightsAt(s);
+        const capRings = 3;
+        for (let c = 1; c <= capRings; c++) {
+          const f = c / capRings;
+          const rr = r * Math.cos(f * Math.PI * 0.5);
+          const lift = r * 0.55 * Math.sin(f * Math.PI * 0.5);
+          for (let k = 0; k <= seg; k++) {
+            const a = (k / seg) * Math.PI * 2;
+            const ca = Math.cos(a), sa = Math.sin(a);
+            pos.push(p.x + ca * rr * sx, p.y + lift, p.z + sa * rr);
+            const inv = 1 / Math.hypot(ca * (1 - f), 1.2 * f, sa * (1 - f));
+            nrm.push(ca * (1 - f) * inv, 1.2 * f * inv, sa * (1 - f) * inv);
+            uv.push(k / seg, 1);
+            sIdx.push(b0, b1 < 0 ? 0 : b1, 0, 0);
+            sWgt.push(w0, w1, 0, 0);
+          }
+        }
+        const base = rings.length - 1;
+        for (let c = 0; c < capRings; c++) {
+          const a = (base + c) * (seg + 1), b = a + seg + 1;
+          for (let k = 0; k < seg; k++) {
+            idx.push(a + k, b + k, a + k + 1, a + k + 1, b + k, b + k + 1);
+          }
+        }
+      }
+
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(sIdx, 4));
+      geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sWgt, 4));
+      geo.setIndex(idx);
+
+      const mesh = new THREE.SkinnedMesh(geo, mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.frustumCulled = false;   // skinned bounds never update
+      this.object3D.add(mesh);
+      const inverses = bones.map((b) =>
+        new THREE.Matrix4().copy(b.matrixWorld).premultiply(rootInv).invert());
+      mesh.bind(new THREE.Skeleton(bones, inverses), new THREE.Matrix4());
+      return mesh;
+    };
+
+    /* Pant legs: yoke ring on the pelvis, thigh, shin, into the gaiter. */
+    for (const side of ['F', 'B']) {
+      const hip = jointPos(`hip${side}`);
+      tube([
+        { bone: 'hips',          pos: hip.clone().setY(hip.y + 0.085), r: 0.128, sx: 0.94 },
+        { bone: `thigh${side}`,  pos: hip,                             r: 0.122, sx: 0.94 },
+        { bone: `thigh${side}`,  pos: jointPos(`shin${side}`, 0.05),   r: 0.100 },
+        { bone: `shin${side}`,   pos: jointPos(`shin${side}`, -0.04),  r: 0.094 },
+        { bone: `shin${side}`,   pos: jointPos(`boot${side}`, 0.05),   r: 0.085 },
+      ], M.pants);
+    }
+    /* Pelvis / seat, bridging the two legs under the jacket hem. */
+    {
+      const hips = jointPos('hips');
+      tube([
+        { bone: 'hips', pos: hips.clone().setY(hips.y - 0.10), r: 0.150, sx: 0.86 },
+        { bone: 'hips', pos: hips.clone().setY(hips.y + 0.12), r: 0.158, sx: 0.86 },
+      ], M.pants);
+    }
+    /* Jacket body: hem below the hips to the collar, one surface. */
+    {
+      const hips = jointPos('hips');
+      const chest = jointPos('chest');
+      const collarY = chest.y + DIM.chestLength;
+      tube([
+        { bone: 'hips',  pos: hips.clone().setY(hips.y + 0.02),   r: 0.176, sx: 0.82 },
+        { bone: 'spine', pos: jointPos('spine', 0.10),            r: 0.166, sx: 0.80 },
+        { bone: 'chest', pos: chest.clone().setY(chest.y + 0.02), r: 0.176, sx: 0.75 },
+        { bone: 'chest', pos: chest.clone().setY(collarY * 0.55 + chest.y * 0.45), r: 0.163, sx: 0.74 },
+        { bone: 'chest', pos: chest.clone().setY(collarY - 0.012), r: 0.146, sx: 0.74 },
+      ], M.shell, { capEnd: true });
+    }
+    /* Sleeves: a short yoke on the chest, then upper arm and forearm. */
+    for (const side of ['L', 'R']) {
+      const sh = jointPos(`shoulder${side}`);
+      tube([
+        { bone: 'chest',           pos: sh.clone().setY(sh.y + 0.055), r: 0.092 },
+        { bone: `upperArm${side}`, pos: sh,                            r: 0.088 },
+        { bone: `upperArm${side}`, pos: jointPos(`foreArm${side}`, 0.045), r: 0.070 },
+        { bone: `foreArm${side}`,  pos: jointPos(`foreArm${side}`, -0.04), r: 0.066 },
+        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.015),    r: 0.055 },
+      ], M.shellGrey, { capEnd: false });
+    }
+  }
+
   /* ------------------------------------------------------------------ *
    * Materials
    * ------------------------------------------------------------------ */
@@ -773,9 +976,9 @@ export class Rider {
     // jacket's red is deep (~#C33) and keeps its chroma; the highlights get
     // their orange from shading, not from the albedo. So: darker base, and
     // the emissive floor carries the signal in shade.
-    const shell = cloth(0xcc3208, 0.58, 0.32, [1.4, 2], { quilt: 0.3, wrinkle: 1.15 });
-    const shellGrey = cloth(0xcc3208, 0.60, 0.30, [1.4, 2], { wrinkle: 1.05 });
-    const pants = cloth(0xa82006, 0.64, 0.28, [1.4, 2], { wrinkle: 1.35 });
+    const shell = cloth(0xc42d08, 0.58, 0.26, [1.4, 2], { quilt: 0.3, wrinkle: 1.15 });
+    const shellGrey = cloth(0xc42d08, 0.60, 0.24, [1.4, 2], { wrinkle: 1.05 });
+    const pants = cloth(0xb02407, 0.64, 0.22, [1.4, 2], { wrinkle: 1.35 });
     const shellDark = shellGrey; // collar/hem trim reads as the black blocking
 
     const helmet = new THREE.MeshStandardMaterial({
@@ -911,31 +1114,20 @@ export class Rider {
     /* --- rider ------------------------------------------------------ */
     // Hips sit above the board; the pose drives the actual ride height.
     const hips = bone('hips', boardPivot, 0, 0.78, 0);
-    const pelvis = part(limbGeometry(0.20, 0.150, 0.140, 1.0, 12, 0.5, 0.55), M.pants, hips, 0, 0.10, 0);
-    pelvis.scale.x = 0.84;
-    joint(0.098, M.pants, hips, 0, 0, DIM.hipWidth * 0.55);
-    joint(0.098, M.pants, hips, 0, 0, -DIM.hipWidth * 0.55);
+    // Pelvis, torso and limbs are now the skinned garment surfaces built in
+    // _buildSkinnedGarments() — continuous cloth over the skeleton, no
+    // segment rims. Only rigid parts and trims remain here.
 
     const spine = bone('spine', hips, 0, 0.06, 0);
     // The abdomen. Its absence is what left a 16 cm hole between the pelvis and
     // the ribcage — a torso mesh anchored at the chest bone and a pelvis mesh
     // anchored at the hips do not meet, and because both were open tubes the
     // hole showed their bright interiors.
-    const abdomen = part(limbGeometry(0.23, 0.168, 0.158, 1.02, 14, 0.22, 0.55), M.shell, spine, 0, 0.21, 0);
-    abdomen.scale.x = 0.82;
-    // Drawcord hem, so the shell reads as a garment with an edge to it.
-    const hem = part(new THREE.CylinderGeometry(0.170, 0.156, 0.052, 16), M.shellDark, spine, 0, -0.012, 0);
-    hem.scale.x = 0.82;
     const cord = trim(new THREE.TorusGeometry(0.163, 0.0055, 6, 20), M.rubber, spine, 0, 0.008, 0);
     cord.rotation.x = Math.PI * 0.5;
     cord.scale.x = 0.82;
 
     const chest = bone('chest', spine, 0, DIM.spineLength, 0);
-    const torso = part(limbGeometry(DIM.chestLength, 0.148, 0.176, 1.06, 14, 0.42, 0.5), M.shell, chest, 0, DIM.chestLength, 0);
-    // A ribcage is deep along the shoulder line and shallow across it. With the
-    // shoulders on Z, that means squashing X — the previous build squashed Z
-    // and gave the rider a skier's chest on a snowboarder's stance.
-    torso.scale.x = 0.74;
 
     // Construction: a chest panel seam, the main zip up the front (−X, which
     // is the way the chest faces), and a chest pocket with its own zip. The
@@ -1030,23 +1222,8 @@ export class Rider {
         DIM.chestLength * 0.86,
         -sx * DIM.shoulderWidth * Math.cos(DIM.chestOpen),
       );
-      joint(0.076, M.shellGrey, sh);
-
       const ua = bone(`upperArm${side}`, sh, 0, 0, 0);
-      part(limbGeometry(DIM.upperArm, 0.086, 0.064, 1.10, 12, 1.05, 1.0), M.shellGrey, ua);
-      // Shoulder-yoke seam and a bicep panel seam.
-      const yoke = trim(new THREE.TorusGeometry(0.070, 0.005, 6, 16), M.shellDark, ua, 0, -0.062, 0);
-      yoke.rotation.x = Math.PI * 0.5;
-
-      // Elbow: not a ball bearing — a squashed bunch of sleeve fabric that
-      // stays inside both sleeve domes at every bend.
-      const elbow = joint(0.068, M.shellGrey, ua, 0, -DIM.upperArm, 0);
-      elbow.scale.y = 0.78;
-      // Upper-sleeve flare hanging past the elbow: the lens must never see
-      // where the two sleeve domes meet (round 6, all five critics).
-      part(cuffFlare(0.066, 0.072, 0.085), M.shellGrey, ua, 0, -DIM.upperArm + 0.055, 0);
       const fa = bone(`foreArm${side}`, ua, 0, -DIM.upperArm, 0);
-      part(limbGeometry(DIM.foreArm, 0.064, 0.053, 1.10, 12, 1.0, 0.95), M.shellGrey, fa);
       // Cuff tab at the wrist.
       const cuff = trim(new THREE.TorusGeometry(0.050, 0.008, 6, 16), M.rubber, fa, 0, -DIM.foreArm + 0.012, 0);
       cuff.rotation.x = Math.PI * 0.5;
@@ -1071,22 +1248,13 @@ export class Rider {
       const sz = side === 'F' ? 1 : -1;
       const hip = bone(`hip${side}`, hips, 0, 0, sz * DIM.hipWidth * 0.55);
       const thigh = bone(`thigh${side}`, hip, 0, 0, 0);
-      part(limbGeometry(DIM.thighLength, 0.114, 0.092, 1.14, 14, 0.95, 1.0), M.pants, thigh);
       // Cargo pocket flap on the outer thigh.
       const cargo = trim(new THREE.BoxGeometry(0.014, 0.092, 0.084), M.pants, thigh, 0.104, -0.20, 0);
       cargo.rotation.z = -0.06;
       const thighSeam = trim(new THREE.TorusGeometry(0.090, 0.0055, 6, 18), M.pants, thigh, 0, -0.40, 0);
       thighSeam.rotation.x = Math.PI * 0.5;
 
-      // Knee ball. Two tapered tubes that merely touch at a point read as a
-      // break in the leg the instant the knee bends; an overlapping ball never
-      // can.
-      const knee = joint(0.094, M.pants, thigh, 0, -DIM.thighLength, 0);
-      knee.scale.y = 0.80;
-      // Pant-leg flare over the knee, same reasoning as the sleeve flare.
-      part(cuffFlare(0.096, 0.104, 0.115), M.pants, thigh, 0, -DIM.thighLength + 0.075, 0);
       const shin = bone(`shin${side}`, thigh, 0, -DIM.thighLength, 0);
-      part(limbGeometry(DIM.shinLength, 0.088, 0.072, 1.10, 14, 1.0, 0.6), M.pants, shin);
       // Knee panel seam below the joint (the one above rides on the thigh).
       const kneeSeam = trim(new THREE.TorusGeometry(0.082, 0.0055, 6, 18), M.pants, shin, 0, -0.060, 0);
       kneeSeam.rotation.x = Math.PI * 0.5;
@@ -1134,6 +1302,10 @@ export class Rider {
     this.object3D.add(contact);
     this._contact = contact;
     this._materials.push(contact.material);
+
+    // Skinned cloth over the completed skeleton — must run in the rest pose,
+    // before the IK settle below moves a single bone.
+    this._buildSkinnedGarments(M);
 
     this.ctx.scene.add(this.object3D);
     // The IK blends toward its solution rather than snapping, so settle the

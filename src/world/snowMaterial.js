@@ -1177,29 +1177,53 @@ const SNOW_SURFACE = /* glsl */ `
 	// Channels are documented on SNOW_TRACK_TEXTURE_CHANNELS.  A board cannot cut
 	// a trench into schist, so everything here is gated on snow cover.
 	float trkTrench = 0.0;
+	float trkTrenchRel = 0.0;
+	float trkLipRel = 0.0;
 	float trkLip = 0.0;
 	float trkComp = 0.0;
 	#ifdef USE_TRACK_MAP
 		vec2 tuv = ( sohoWP.xz - uTrackRegion.xy ) * uTrackRegion.zw;
-		// Smooth-bilinear: bilinear is C0, so the relief pass's screen
-		// derivatives jump at every 15.6 cm texel boundary and the lighting
-		// renders each texel as a flat facet - the stair-stepped block trail
-		// of rounds 5-6. Warping the sample point with a smoothstep of the
-		// texel fraction makes the field C1 for one extra ALU, no extra
-		// fetches, and the facets dissolve.
-		{
-			vec2 tsz = vec2( textureSize( uTrackMap, 0 ) );
-			vec2 q = tuv * tsz - 0.5;
-			vec2 iq = floor( q );
-			vec2 fq = q - iq;
-			fq = fq * fq * ( 3.0 - 2.0 * fq );
-			tuv = ( iq + 0.5 + fq ) / tsz;
-		}
+		// Smooth-bilinear for the RELIEF only: bilinear is C0, so the relief
+		// pass's screen derivatives jump at every 15.6 cm texel boundary and
+		// light each texel as a flat facet - the stair-stepped block trail of
+		// rounds 5-6. The warp snaps toward texel centres, which is exactly
+		// wrong for the ALBEDO of a texel-wide track line (it beads into a
+		// dotted chain), so the colour terms keep the raw bilinear lookup and
+		// the relief pays one extra fetch at the warped coordinate.
+
 		vec2 tin = step( vec2( 0.0 ), tuv ) * step( tuv, vec2( 1.0 ) );
 		vec4 tk = texture2D( uTrackMap, clamp( tuv, 0.0, 1.0 ) ) * ( tin.x * tin.y * ( 1.0 - rockF ) );
 		trkTrench = saturate( tk.r * tk.a ) * uTrackStrength;
 		trkLip    = saturate( tk.g * tk.a ) * uTrackStrength;
 		trkComp   = saturate( tk.b * tk.a );
+		// Relief needs a C1 field: bilinear's derivative jumps at every texel
+		// boundary and lights each one as a flat facet (the block-trail of
+		// rounds 5-6), while snapping the sample toward texel centres beads a
+		// texel-wide line into a dotted chain (round 7). Bicubic B-spline via
+		// the 4-bilinear-fetch trick is genuinely smooth in both value and
+		// derivative, at every range, with no snapping.
+		{
+			vec2 tsz = vec2( textureSize( uTrackMap, 0 ) );
+			vec2 st = tuv * tsz - 0.5;
+			vec2 ip = floor( st );
+			vec2 f = st - ip;
+			vec2 f2 = f * f, f3 = f2 * f;
+			vec2 w0 = ( 1.0 - 3.0 * f + 3.0 * f2 - f3 ) / 6.0;
+			vec2 w1 = ( 4.0 - 6.0 * f2 + 3.0 * f3 ) / 6.0;
+			vec2 w2 = ( 1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3 ) / 6.0;
+			vec2 w3 = f3 / 6.0;
+			vec2 g0 = w0 + w1, g1 = w2 + w3;
+			vec2 h0 = ( ip + 0.5 + w1 / g0 - 1.0 ) / tsz;
+			vec2 h1 = ( ip + 0.5 + w3 / g1 + 1.0 ) / tsz;
+			vec4 tA = texture2D( uTrackMap, clamp( vec2( h0.x, h0.y ), 0.0, 1.0 ) );
+			vec4 tB = texture2D( uTrackMap, clamp( vec2( h1.x, h0.y ), 0.0, 1.0 ) );
+			vec4 tC = texture2D( uTrackMap, clamp( vec2( h0.x, h1.y ), 0.0, 1.0 ) );
+			vec4 tD = texture2D( uTrackMap, clamp( vec2( h1.x, h1.y ), 0.0, 1.0 ) );
+			vec4 tkR = ( mix( mix( tB, tA, g0.x ), mix( tD, tC, g0.x ), g1.y ) )
+				* ( tin.x * tin.y * ( 1.0 - rockF ) );
+			trkTrenchRel = saturate( tkR.r * tkR.a ) * uTrackStrength;
+			trkLipRel    = saturate( tkR.g * tkR.a ) * uTrackStrength;
+		}
 	#endif
 
 	// TERRAIN_BRIEF §2.8 is categorical: "Sastrugi (only where surface ∈
@@ -1298,7 +1322,7 @@ const SNOW_SURFACE = /* glsl */ `
 		// compaction terms are plain bilinear lookups and carry the track at
 		// distance on their own.
 		float trkFade = 1.0 - smoothstep( 0.10, 0.38, sohoFootprint / 0.156 );
-		float trkH = ( trkLip * 0.06 - trkTrench * 0.16 ) * trkFade;
+		float trkH = ( trkLipRel * 0.06 - trkTrenchRel * 0.16 ) * trkFade;
 		nW = sohoPerturb( nW, dFdx( sohoWP ), dFdy( sohoWP ), dFdx( trkH ), dFdy( trkH ) );
 	#endif
 
