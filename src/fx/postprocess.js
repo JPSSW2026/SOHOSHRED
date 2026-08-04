@@ -341,9 +341,16 @@ const TUNE = {
   },
 
   vignette: {
-    start: 0.55,   // §7.4: falloff begins at 0.55 of the frame radius
-    end: 1.14,
-    curve: 1.35,
+    // §7.4: falloff begins at 0.55 of the frame radius. Round 6: with
+    // end inside the corner radius (1.14) the smoothstep's steep middle
+    // landed on the frame edges, cutting ~16% - a 30-luma band on a
+    // 190-luma snow frame that three critics measured as a rendering
+    // artifact. End beyond the corner (1.35) keeps the edge columns on
+    // the shallow toe of the curve: -6% at edge-mid, -13% in the extreme
+    // corners, invisible on snow but still seating the frame.
+    start: 0.55,
+    end: 1.35,
+    curve: 1.5,
   },
 
   chromatic: {
@@ -855,11 +862,16 @@ void main() {
     vec3 st = vec3( 0.0 );
     float wsum = 0.0;
     for ( int i = -3; i <= 3; i ++ ) {
-      float w = 1.0 - abs( float( i ) ) * 0.25;
-      st += texture2D( tVeil, vUv + vec2( float( i ) * uStreakSpread, 0.0 ) ).rgb * w;
+      vec2 suv = vUv + vec2( float( i ) * uStreakSpread, 0.0 );
+      // Taps that leave the frame are dropped and the kernel renormalised —
+      // clamped, they re-count the edge column and paint a frosted
+      // desaturated strip down both frame edges (round 6, three critics).
+      float w = ( 1.0 - abs( float( i ) ) * 0.25 )
+              * step( 0.0, suv.x ) * step( suv.x, 1.0 );
+      st += texture2D( tVeil, suv ).rgb * w;
       wsum += w;
     }
-    outc += st / wsum * uStreak;
+    outc += st / max( wsum, 1e-4 ) * uStreak;
   }
   #endif
 
@@ -1263,8 +1275,13 @@ export class PostProcessing {
         generateMipmaps: false,
       });
       rt.texture.name = `post.bloom${i}`;
-      rt.texture.wrapS = THREE.ClampToEdgeWrapping;
-      rt.texture.wrapT = THREE.ClampToEdgeWrapping;
+      // Mirrored, not clamped: the separable blur gathers less energy where
+      // its taps run off the frame, and on a bright snowfield that missing
+      // bloom measured as a 15 px dark rim down the frame edge (round 6).
+      // Reflecting the taps keeps the gathered energy statistically flat all
+      // the way to the last column.
+      rt.texture.wrapS = THREE.MirroredRepeatWrapping;
+      rt.texture.wrapT = THREE.MirroredRepeatWrapping;
       this.bloomRT.push(rt);
       this.bloomSize.push(new THREE.Vector2(bw, bh));
       bw = Math.max(1, Math.floor(bw / 2));
@@ -1452,7 +1469,7 @@ export class PostProcessing {
         uShadowSat: { value: g.shadowSaturation },
         uHiDesat: { value: new THREE.Vector2(g.highlightDesat, g.highlightDesatKnee) },
         uRolloff: { value: new THREE.Vector2(g.rolloffKnee, g.rolloffCeiling) },
-        uVignette: { value: new THREE.Vector3(0.34, TUNE.vignette.start, TUNE.vignette.end) },
+        uVignette: { value: new THREE.Vector3(0.26, TUNE.vignette.start, TUNE.vignette.end) },
         uVignetteCurve: { value: TUNE.vignette.curve },
         uGrain: { value: 0.022 },
         uSeed: { value: 0 },
@@ -2000,7 +2017,7 @@ export class PostProcessing {
 
     const vgOn = post.vignette?.enabled !== false;
     u.uVignette.value.set(
-      vgOn ? clamp(pick(post.vignette, 'strength', 0.34), 0, 0.4) : 0,
+      vgOn ? clamp(pick(post.vignette, 'strength', 0.26), 0, 0.4) : 0,
       TUNE.vignette.start,
       TUNE.vignette.end,
     );

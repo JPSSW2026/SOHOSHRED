@@ -1843,6 +1843,7 @@ varying vec2 vBankUv;
 varying vec3 vWorld;
 varying vec3 vRight;
 varying float vSeed;
+varying float vCamDist;
 uniform float uTime;
 uniform vec2 uDrift;
 void main() {
@@ -1852,6 +1853,7 @@ void main() {
 	c.xz += uDrift * uTime * ( 0.55 + 0.45 * fract( aSize.w ) );
 	c.y += sin( uTime * 0.06 + aSize.z ) * 3.5;
 	vec3 toCam = cameraPosition - c;
+	vCamDist = length( toCam );
 	vec3 right = normalize( vec3( - toCam.z, 0.0, toCam.x ) + vec3( 1e-5, 0.0, 0.0 ) );
 	vRight = right;
 	vec3 world = c + right * ( position.x * aSize.x ) + vec3( 0.0, position.y * aSize.y, 0.0 );
@@ -1866,6 +1868,7 @@ varying vec2 vBankUv;
 varying vec3 vWorld;
 varying vec3 vRight;
 varying float vSeed;
+varying float vCamDist;
 uniform sampler2D uNoise;
 uniform float uTime;
 uniform float uOpacity;
@@ -1911,6 +1914,12 @@ void main() {
 	float n = a.r * 0.46 + a.g * 0.22 + b.b * 0.19 + b.a * 0.13;
 
 	float alpha = sohoBankDensity( vBankUv, vSeed, uTime ) * uOpacity;
+	// Banks are distant scenery: SS 5.4 wants them cut into by far ridgelines,
+	// never at the lens. A drifted near-group card crossing the play corridor
+	// rendered as a full-height cream slab down the frame edge (round 6's
+	// "edge strip", and the tan vertical smears in the demo frames were the
+	// same cards magnified). Dissolve any card long before it can loom.
+	alpha *= smoothstep( 900.0, 1800.0, vCamDist );
 	if ( alpha < 0.004 ) discard;
 
 	// ---- three-tap light march ------------------------------------------
@@ -2238,10 +2247,18 @@ export class Sky {
     // with it, so a ridgeline reliably cuts through them instead of passing
     // under a mesa, and they are denser and fewer — §5.4 asks for "one or two
     // cloud banks", not a scattering of pillows.
+    // Round 6 re-siting: the old near group (r 2200, y 1735) stood at eye
+    // level beside the play corridor, and from the chase camera its cards
+    // rendered as full-height cream walls at the frame edge — the "edge
+    // strip" three critics measured, and the tan horizon smears in the demo
+    // frames. The reference (CARDRONA_REFERENCE §3b) puts banks BELOW eye
+    // level: inversion sheets lying at ~snowline in the valleys, lapping the
+    // mid-range bases, seen from above off the 1700 m+ crest. So: further
+    // out, and 250-350 m lower than the basin floor's sightlines.
     const banks = [
-      { r: 2200, theta: 165, spread: 42, y: 1735, n: 16, w: 430, h: 250 },
-      { r: 4800, theta: -108, spread: 34, y: 1800, n: 12, w: 720, h: 320 },
-      { r: 9500, theta: 55, spread: 46, y: 1905, n: 8, w: 1150, h: 380 },
+      { r: 4600, theta: 165, spread: 42, y: 1480, n: 14, w: 520, h: 210 },
+      { r: 6800, theta: -108, spread: 34, y: 1440, n: 10, w: 800, h: 280 },
+      { r: 9500, theta: 55, spread: 46, y: 1560, n: 8, w: 1150, h: 340 },
     ];
     let total = 0;
     for (const b of banks) total += b.n;
