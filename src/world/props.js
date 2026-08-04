@@ -858,26 +858,55 @@ function buildChair() {
   return B.build('soho-chair');
 }
 
-/** A terminal shed: box building with a shallow gable, on its own pad. */
+/**
+ * The Soho Express station, per the user's photo references: a near-black
+ * clad hall under a BARREL-VAULT canopy with the resort's red trim stripe
+ * running the roof rim, a dark glazing band under the eave, all on a pad.
+ * The lettering is a separate canvas-texture mesh added by the caller (a
+ * TriBuilder carries vertex colour only).
+ */
 function pushTerminal(B, x, y, z, yaw, len) {
   const c = Math.cos(yaw), s = Math.sin(yaw);
   const rot = (lx, ly, lz) => [x + lx * c + lz * s, y + ly, z - lx * s + lz * c];
-  const W = 4.6, H = 3.4, L = len;
-  const wall = [0.300, 0.316, 0.334];
-  const roof = [0.130, 0.140, 0.152];
+  const W = 6.0, H = 3.8, L = len;
+  const wall = [0.085, 0.090, 0.100];    // near-black cladding
+  const glaz = [0.045, 0.055, 0.075];    // glazing band, cool
+  const roof = [0.055, 0.060, 0.070];    // canopy
+  const trim = [0.620, 0.070, 0.045];    // resort red
   const corners = [];
   for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) corners.push([sx * L, sz * W]);
   const bot = corners.map(([lx, lz]) => rot(lx, 0, lz));
+  const mid = corners.map(([lx, lz]) => rot(lx, H - 1.05, lz));
   const top = corners.map(([lx, lz]) => rot(lx, H, lz));
   for (let i = 0; i < 4; i++) {
     const j = (i + 1) % 4;
-    B.quad(bot[i], top[i], top[j], bot[j], wall, wall, wall, wall);
+    B.quad(bot[i], mid[i], mid[j], bot[j], wall, wall, wall, wall);
+    B.quad(mid[i], top[i], top[j], mid[j], glaz, glaz, glaz, glaz);
   }
-  const ridgeA = rot(-L, H + 1.25, 0), ridgeB = rot(L, H + 1.25, 0);
-  B.quad(top[1], top[0], ridgeA, ridgeB, roof, roof, roof, roof);
-  B.quad(top[3], top[2], ridgeB, ridgeA, roof, roof, roof, roof);
-  B.tri(top[2], top[1], ridgeB, wall, wall, wall);
-  B.tri(top[0], top[3], ridgeA, wall, wall, wall);
+  // Barrel vault: a circular-arc profile across the width, swept the full
+  // length, overhanging both the eaves and the gable ends like the refs.
+  const SEG = 8, OV = 1.0, RISE = 2.6;
+  let prev = null;
+  for (let k = 0; k <= SEG; k++) {
+    const t = k / SEG;
+    const lz = -(W + OV) + 2 * (W + OV) * t;
+    const ly = H + Math.sin(Math.PI * t) * RISE;
+    const a = rot(-(L + OV), ly, lz), b = rot(L + OV, ly, lz);
+    if (prev) {
+      B.quad(prev[0], a, b, prev[1], roof, roof, roof, roof);
+      // underside, so looking up into the canopy never shows a hole
+      B.quad(prev[1], b, a, prev[0], glaz, glaz, glaz, glaz);
+    }
+    prev = [a, b];
+  }
+  // Red trim stripe along both eave rims and around the gable arc edge.
+  for (const sz of [-1, 1]) {
+    const lz = sz * (W + OV);
+    const a = rot(-(L + OV), H - 0.02, lz), b = rot(L + OV, H - 0.02, lz);
+    const a2 = rot(-(L + OV), H + 0.15, lz), b2 = rot(L + OV, H + 0.15, lz);
+    B.quad(a, a2, b2, b, trim, trim, trim, trim);
+    B.quad(b, b2, a2, a, trim, trim, trim, trim);
+  }
 }
 
 /* ==========================================================================
@@ -2855,11 +2884,45 @@ export class Props {
 
     /* -- Terminals -------------------------------------------------------- */
     const term = new TriBuilder();
-    pushTerminal(term, ax, P.height(ax, az) - 0.6, az, yaw, 8.5);
+    pushTerminal(term, ax, P.height(ax, az) - 0.6, az, yaw, 11.0);
     pushTerminal(term, bx, P.height(bx, bz) - 0.6, bz, yaw, 7.0);
     this._static(term.build('soho-terminals'), this.steelMat, 'props-lift-terminals', {
       castShadow: true, receiveShadow: true,
     });
+
+    // "Soho EXPRESS" fascia lettering on the base station (canvas texture -
+    // procedural, like everything else). Faces down-run so it greets the
+    // rider finishing a lap.
+    {
+      const cnv = document.createElement('canvas');
+      cnv.width = 1024; cnv.height = 192;
+      const g = cnv.getContext('2d');
+      g.fillStyle = '#0b0c0f'; g.fillRect(0, 0, 1024, 192);
+      g.fillStyle = '#f2f0ec'; g.textBaseline = 'middle';
+      g.font = 'italic 900 118px system-ui, sans-serif';
+      g.fillText('Soho', 96, 100);
+      g.font = '600 104px system-ui, sans-serif';
+      let xx = 420;
+      for (const ch of 'EXPRESS') { g.fillText(ch, xx, 104); xx += 82; }
+      const tex = new THREE.CanvasTexture(cnv);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 4;
+      const signMat = new THREE.MeshStandardMaterial({
+        map: tex, roughness: 0.5, metalness: 0.05,
+        emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.22,
+      });
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(7.6, 1.42), signMat);
+      const sy = P.height(ax, az) - 0.6 + 3.1;
+      sign.position.set(ax - Math.sin(yaw) * 0.0 + Math.cos(yaw) * 0.0, sy, az);
+      // sit just proud of the down-run gable end
+      // On the broad eave fascia, like the reference photos - the face the
+      // whole slope sees on the way in.
+      const lz = 6.0 + 1.0 + 0.06;
+      sign.position.set(ax + lz * Math.sin(yaw), sy + 0.35, az + lz * Math.cos(yaw));
+      sign.rotation.y = -yaw;
+      sign.name = 'props-lift-sign';
+      this.object3D.add(sign);
+    }
     for (const [cx, cz, len] of [[ax, az, 8.5], [bx, bz, 7.0]]) {
       this._colliders.push({
         type: 'box',

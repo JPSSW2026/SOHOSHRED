@@ -29,12 +29,11 @@ const CSS = /* css */ `
 /* Title card: shown once the sting finishes. A styled stand-in echoing the
    delivered treatment until the artwork PNGs land in public/img/. */
 .soho-card {
+  /* The sting's held final frame IS the title art — the card only carries
+     the prompt over it. */
   position: absolute; inset: 0; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 1.2vh;
-  opacity: 0; transition: opacity 0.6s ease;
-  background:
-    radial-gradient(130% 90% at 50% 108%, rgba(224, 228, 236, 0.16), transparent 55%),
-    linear-gradient(168deg, #c01806 0%, #a51204 34%, #170d0e 58%, #05080d 100%);
+  align-items: center; justify-content: flex-end; padding-bottom: 7vh;
+  opacity: 0; transition: opacity 0.6s ease; background: transparent;
 }
 .soho-card.show { opacity: 1; }
 .soho-card .lockup {
@@ -50,7 +49,7 @@ const CSS = /* css */ `
 }
 .soho-card .strap b { color: #e02310; font-weight: 600; }
 .soho-card .prompt {
-  margin-top: 7vh; font-size: 1.9vh; font-weight: 700;
+  text-shadow: 0 0 1.6vh rgba(0,0,0,0.7); font-size: 1.9vh; font-weight: 700;
   letter-spacing: 0.34em; color: #fff;
   animation: sohoPulse 1.6s ease-in-out infinite;
 }
@@ -108,8 +107,6 @@ export class TitleFlow {
     this.el.innerHTML = `
       <video muted autoplay playsinline preload="auto" src="video/sting.mp4"></video>
       <div class="soho-card">
-        <div class="lockup"><span class="soho">SOHO</span><span class="shred">SHRED</span></div>
-        <div class="strap">CARDRONA <b>/</b> NEW ZEALAND</div>
         <div class="prompt">PRESS ANY KEY TO DROP</div>
       </div>`;
     host.appendChild(this.el);
