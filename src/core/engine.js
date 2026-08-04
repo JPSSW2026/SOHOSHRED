@@ -185,9 +185,16 @@ export class Engine {
       if (!this.running) return;
       this._raf = requestAnimationFrame(loop);
       if (this.manualTime) return;
-      const dt = (now - last) / 1000;
+      let dt = (now - last) / 1000;
       last = now;
-      this.tick(dt);
+      // Real-hardware rule the headless captures never needed: a frame
+      // hitch (GC, texture decode, tab jank) must not become one giant
+      // physics step - that is how the first playtest put the rider and
+      // camera under the terrain. Clamp the wall-clock step and integrate
+      // it in <=1/60 s quanta.
+      dt = Math.min(dt, 0.05);
+      const n = dt > 1 / 50 ? Math.ceil(dt / (1 / 60)) : 1;
+      for (let i = 0; i < n; i++) this.tick(dt / n);
     };
     this._raf = requestAnimationFrame(loop);
   }

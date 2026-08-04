@@ -327,11 +327,15 @@ export class Terrain {
       // segments sit 30 m either side, in profile, for the hero frame. The
       // fall line from here is clean to the run-out at ≤48°.
       'broadway-gate': { x: 140, z: 960, heading: Math.PI },
+      // The proven fast line from the demo captures: sustained 28-deg
+      // powder, sunlit, committed pitch from the first metre (user:
+      // "aim for fast lines" after the plateau spawn stalled twice).
+      'captains-flank': { x: 450, z: 600, heading: null },
       'bowl-entry': { x: -180, z: 560, heading: Math.PI },
       'mid-traverse': { x: 430, z: 120, heading: Math.PI - 0.35 },
       'runout': { x: -60, z: -700, heading: Math.PI },
     };
-    f.defaultSpawn = 'broadway-gate';
+    f.defaultSpawn = 'captains-flank';
 
     /* -- Headwall ribs and couloirs -------------------------------------- */
     // φ is the crest-arc parameter, measured from +Z rotating toward +X.
@@ -968,9 +972,15 @@ export class Terrain {
   /** Default (or named) spawn. Heading π faces −Z, the fall line. */
   getSpawn(name) {
     const s = this.spawns[name || this.features.defaultSpawn] || this.spawns['broadway-gate'];
+    // heading null = straight down the local fall line, whatever it is.
+    let heading = s.heading;
+    if (heading == null) {
+      const n = this.getNormal(s.x, s.z, this._v0);
+      heading = Math.atan2(n.x, n.z);
+    }
     return {
       position: new THREE.Vector3(s.x, this.getHeight(s.x, s.z), s.z),
-      heading: s.heading,
+      heading,
     };
   }
 
