@@ -2571,6 +2571,12 @@ export class Terrain {
       // vertex-colour path was the painter). Deep winter wants far rock as
       // a subordinate darkening in the flutes, not full schist.
       rb *= lerp(1, 0.18, smoothstep(2500, 6500, r2));
+      // And to ZERO past 10 km: the farthest chains' schist-tinted crests,
+      // half-dissolved in haze above the nearer white walls, read as smoke
+      // plumes rising behind the ridge — the user called it a bushfire.
+      // At that distance real Otago ranges in deep winter are white, full
+      // stop.
+      rb *= 1 - smoothstep(8000, 11500, r2);
       id = S_WINDPACK;
     }
 

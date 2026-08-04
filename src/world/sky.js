@@ -315,9 +315,13 @@ const SKY_TERRAIN_OCCLUSION = 0.65;
  * thick along the skyline and gone by ~12° up, which is the vertical structure
  * checklist 21 asks for and the reason it cannot flatten the zenith.
  */
-const HORIZON_BAND_STRENGTH = 0.55;
+const HORIZON_BAND_STRENGTH = 0.32;
 const HORIZON_BAND_SCALE = 0.075;          // sin(4.3°) e-folding
-const HORIZON_BAND_TINT = [0.85, 0.95, 1.20];
+// Blowing snow at the horizon is lit mostly by SKYLIGHT - it must read
+// cool pale blue-grey. With the old warm-leaning tint the band took the
+// sunlit snowfield's cream hue and the whole horizon read as bushfire
+// smoke (user's words) on the antisolar side.
+const HORIZON_BAND_TINT = [0.66, 0.84, 1.24];
 
 /**
  * Fraction of a surface's hemisphere filled by the surrounding snowfield.
