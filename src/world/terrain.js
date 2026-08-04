@@ -331,11 +331,15 @@ export class Terrain {
       // powder, sunlit, committed pitch from the first metre (user:
       // "aim for fast lines" after the plateau spawn stalled twice).
       'captains-flank': { x: 450, z: 600, heading: null },
+      // Measured, not assumed (playtest stalled twice on rolling starts):
+      // a 240 m fall-line walk from here never drops below 24 deg. Top of
+      // a genuinely steep drop, per the user's spec.
+      'headwall-drop': { x: 400, z: 740, heading: null },
       'bowl-entry': { x: -180, z: 560, heading: Math.PI },
       'mid-traverse': { x: 430, z: 120, heading: Math.PI - 0.35 },
       'runout': { x: -60, z: -700, heading: Math.PI },
     };
-    f.defaultSpawn = 'captains-flank';
+    f.defaultSpawn = 'headwall-drop';
 
     /* -- Headwall ribs and couloirs -------------------------------------- */
     // φ is the crest-arc parameter, measured from +Z rotating toward +X.
