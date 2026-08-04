@@ -111,9 +111,14 @@ const DEFAULT_TUNE = {
      * field is a handful of legible masses with a scatter of shed plates
      * *around* them, not a uniform sprinkle (§6.1, checklist 31/32).
      */
-    scatterLimit: 210,   // free-standing outcrops on rock-classed ground
-    blockLimit: 150,     // crest blockfield plates
-    talusLimit: 200,     // bluff toe apron + bluff crest teeth
+    // The user's Soho chairlift video is categorical: a real crest view
+    // carries a HANDFUL of outcrop clusters - low, blocky, wider than
+    // tall, heavily snow-draped - not rows of scatter. Dense vertical
+    // stubs along the ridges read as TREES in demo v6, and Cardrona is
+    // fully alpine: nothing up here may ever read as a tree.
+    scatterLimit: 70,    // free-standing outcrops on rock-classed ground
+    blockLimit: 60,      // crest blockfield plates
+    talusLimit: 80,      // bluff toe apron + bluff crest teeth
     driftCollars: true,
   },
   poles: {
@@ -2188,13 +2193,15 @@ export class Props {
         if (l < 1e-3) { dx = 0; dz = -1; } else { dx /= l; dz /= l; }
 
         // Teeth on the lip.
-        if (rng() < 0.55) {
+        if (rng() < 0.16) {
           const ux = x - dx * rng.range(1.5, 5), uz = z - dz * rng.range(1.5, 5);
           const s = P.sample(ux, uz);
-          const len = rng.range(1.4, 4.2);
+          // Ledges, not teeth: the chairlift reference shows crest rock as
+          // blocky clusters wider than they are tall, draped in snow.
+          const len = rng.range(2.2, 5.5);
           this._addRock(this.outcropField, {
             x: ux, z: uz, y: s.height, length: len,
-            height: len * rng.range(0.45, 1.05), width: len * rng.range(0.4, 0.75),
+            height: len * rng.range(0.18, 0.42), width: len * rng.range(0.65, 1.05),
             strike: FOLIATION_STRIKE + rng.range(-0.15, 0.15), rng, depth: s.depth,
           });
           budget--;

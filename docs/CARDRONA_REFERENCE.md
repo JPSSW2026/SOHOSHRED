@@ -79,3 +79,18 @@ ranges (inversion). A huge Cardrona signature and free depth cue.
    aligned chains with drift tails; more of them, lower, on the plateau.
 4. **Rimed lift hardware**: white ice material on towers/cross-arms.
 5. Track-scribble decal field on popular lines (fine old-track texture).
+
+## 5. Soho chairlift video (user upload) — crest rock ground truth
+
+Fourteen seconds from the Soho Basin chair, ending on the demo-v6 view:
+
+- A full crest view carries a HANDFUL of outcrops: one substantial craggy
+  cluster near the summit (3-6 m, ledgy, blocky), two or three smaller
+  clusters on the upper face, one half-buried elongated reef mid-slope.
+- Every outcrop is WIDER THAN TALL, dark grey-brown, heavily snow-draped,
+  seated IN the slope with drift merging around its base.
+- Nothing vertical, nothing repeated, nothing resembling a tree — the
+  basin is fully alpine.
+- Confirmed from the down-valley pan: mottled brown-white rolling ranges
+  on the Pisa side, tiny serrated white peaks far beyond, real lenticular
+  clouds, vast smooth tracked snowfields.
