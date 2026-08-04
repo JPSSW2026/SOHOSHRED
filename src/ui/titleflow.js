@@ -55,6 +55,38 @@ const CSS = /* css */ `
   animation: sohoPulse 1.6s ease-in-out infinite;
 }
 @keyframes sohoPulse { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
+.soho-end {
+  position: absolute; inset: 0; z-index: 45; display: none;
+  flex-direction: column; align-items: center; justify-content: center;
+  gap: 1.4vh; pointer-events: auto;
+  background: transparent;
+}
+.soho-end.show { display: flex; }
+.soho-end .done {
+  font-weight: 900; font-style: italic; font-size: 17vh; line-height: 1;
+  letter-spacing: -0.01em; color: #14161a; transform: skewX(-6deg);
+  text-shadow: 0 0 4vh rgba(255,255,255,0.85), 0 0 1.2vh rgba(255,255,255,0.9);
+  animation: sohoFlash 0.9s ease-out both;
+}
+.soho-end .done i { font-style: normal; color: #e02310; }
+.soho-end .stats {
+  margin-top: 3.2vh; display: flex; gap: 5vw; font-weight: 700;
+  font-size: 2.1vh; letter-spacing: 0.18em; color: #14161a;
+  text-shadow: 0 0 1.6vh rgba(255,255,255,0.9);
+  animation: sohoFlash 0.9s 0.25s ease-out both;
+}
+.soho-end .stats b { color: #e02310; margin-right: 0.5em; }
+.soho-end .again {
+  margin-top: 6vh; font-size: 1.8vh; font-weight: 700; letter-spacing: 0.34em;
+  color: #14161a; animation: sohoPulse 1.6s 1.1s ease-in-out infinite both; opacity: 0;
+}
+@keyframes sohoFlash {
+  0% { opacity: 0; transform: scale(1.3) skewX(-6deg); }
+  14% { opacity: 1; transform: scale(0.98) skewX(-6deg); }
+  26% { opacity: 0.2; }
+  40% { opacity: 1; }
+  100% { opacity: 1; transform: scale(1) skewX(-6deg); }
+}
 `;
 
 export class TitleFlow {
@@ -82,9 +114,26 @@ export class TitleFlow {
       </div>`;
     host.appendChild(this.el);
 
+    // Run-end flash. Uses the styled lockup until the user's end-frame
+    // artwork lands in public/img/endframe.png (the <img> swaps itself in
+    // when that file exists).
+    this.endEl = document.createElement('div');
+    this.endEl.className = 'soho-end';
+    this.endEl.innerHTML = `
+      <div class="done">DONE<i>.</i></div>
+      <div class="stats"></div>
+      <div class="again">PRESS ANY KEY TO RIDE AGAIN</div>`;
+    host.appendChild(this.endEl);
+
     const video = this.el.querySelector('video');
     const card = this.el.querySelector('.soho-card');
-    const toCard = () => { this.state = 'title'; card.classList.add('show'); };
+    // Guard: the video's 'ended' and the backstop timer can both fire AFTER
+    // the player has already dropped in - they must never drag the state
+    // back to the title (probe caught riding -> title regression).
+    const toCard = () => {
+      if (this.state !== 'sting') return;
+      this.state = 'title'; card.classList.add('show');
+    };
     video.addEventListener('ended', toCard);
     // Autoplay can be refused even muted (rare) — fail toward the card.
     video.play?.()?.catch?.(toCard);
@@ -127,6 +176,7 @@ export class TitleFlow {
     window.removeEventListener('keydown', this._drop);
     window.removeEventListener('pointerdown', this._drop);
     this.el?.remove();
+    this.endEl?.remove();
     if (this.ctx.input) this.ctx.input.enabled = true;
   }
 
@@ -135,6 +185,12 @@ export class TitleFlow {
     if (this.state !== 'riding') return;
     const s = this.ctx.physics?.state;
     if (!s) return;
+    // The natural end of a Soho run is arriving back at the lift line
+    // (user's rules): the base terminal sits at (320, -560).
+    {
+      const dx = s.position.x - 320, dz = s.position.z - (-560);
+      if (dx * dx + dz * dz < 48 * 48) { this.endRun(); return; }
+    }
     this.stats.time += dt;
     if (s.speed > this.stats.topSpeed) this.stats.topSpeed = s.speed;
     if (!s.grounded) {
@@ -151,8 +207,33 @@ export class TitleFlow {
    * calls this with nothing extra — the tally is already here.
    */
   endRun() {
+    if (this.state === 'ended') return;
     this.state = 'ended';
-    // Presentation TBD: the user's end-frame artwork mounts here.
+    if (this.ctx.input) this.ctx.input.enabled = false;
+    const st = this.stats;
+    const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+    this.endEl.querySelector('.stats').innerHTML =
+      `<span><b>TIME</b>${fmt(st.time)}</span>` +
+      `<span><b>TOP</b>${Math.round(st.topSpeed * 3.6)} KM/H</span>` +
+      `<span><b>AIR</b>${st.maxAir.toFixed(1)}s</span>`;
+    this.endEl.classList.add('show');
+    this._again = (e) => {
+      if (e.type === 'keydown' && (e.metaKey || e.ctrlKey || e.altKey)) return;
+      window.removeEventListener('keydown', this._again);
+      window.removeEventListener('pointerdown', this._again);
+      this.endEl.classList.remove('show');
+      const spawn = this.ctx.terrain?.getSpawn?.();
+      if (spawn) this.ctx.physics.reset(spawn.position, spawn.heading);
+      this.ctx.player?.camera?.snapToTarget?.();
+      if (this.ctx.input) this.ctx.input.enabled = true;
+      this.stats = { time: 0, topSpeed: 0, maxAir: 0, _air: 0 };
+      this.state = 'riding';
+    };
+    // A beat of lockout so the landing keystroke cannot skip the flash.
+    setTimeout(() => {
+      window.addEventListener('keydown', this._again);
+      window.addEventListener('pointerdown', this._again);
+    }, 900);
   }
 
   dispose() {
