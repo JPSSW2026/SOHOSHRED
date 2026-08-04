@@ -204,6 +204,32 @@ export class TitleFlow {
     } catch { /* headless */ }
   }
 
+  /**
+   * Wipeout sting: a descending, detuned thud — the opposite shape to the
+   * landing chime's bright rising pair, so the two are never confused even
+   * with the screen out of view. Synthesized, no asset, same as the rest.
+   */
+  _sfxFail() {
+    try {
+      this._ac = this._ac || new (window.AudioContext || window.webkitAudioContext)();
+      const ac = this._ac, t = ac.currentTime;
+      for (const [f, to, amp, dur, type] of [
+        [180, 48, 0.55, 0.55, 'triangle'],   // body: the impact, pitched down
+        [300, 90, 0.30, 0.42, 'sawtooth'],   // detuned against it: the sour note
+        [92, 40, 0.42, 0.70, 'sine'],        // low tail
+      ]) {
+        const o = ac.createOscillator(), gn = ac.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(f, t);
+        o.frequency.exponentialRampToValueAtTime(to, t + dur);
+        gn.gain.setValueAtTime(amp, t);
+        gn.gain.exponentialRampToValueAtTime(0.001, t + dur);
+        o.connect(gn).connect(ac.destination);
+        o.start(t); o.stop(t + dur + 0.02);
+      }
+    } catch { /* headless */ }
+  }
+
   /** Capture harness: no sting, no card, no music, input untouched. */
   skip() {
     if (this._skipped) return;
@@ -259,6 +285,28 @@ export class TitleFlow {
       if (this.stats._air > 0.4) this._sfxLand(Math.min(1, this.stats._air / 1.4));
       this.stats._air = 0;
     }
+    // Wipeout: an unsalvageable landing — inverted, or an impact far past a
+    // normal crash — ends the run attempt. Physics flags it, we own the
+    // response. The reset is deliberately held off for a beat: cutting
+    // instantly to the drop reads as a bug, and the player needs to SEE
+    // that they landed on their head. Same heli-back as the stall rescue,
+    // stats keep running.
+    if (s.wipeout) {
+      s.wipeout = false;              // one-shot handshake with physics
+      this._bail = 1.3;
+      this._sfxFail();
+    }
+    if (this._bail > 0) {
+      this._bail -= dt;
+      if (this._bail <= 0) {
+        this._bail = 0;
+        this._stall = 0;
+        const sp = this.ctx.terrain?.getSpawn?.();
+        if (sp) { this.ctx.physics.reset(sp.position, sp.heading); this.ctx.player?.camera?.snapToTarget?.(); }
+      }
+      return;                          // no stall bookkeeping mid-bail
+    }
+
     // Stall rescue (playtest: stranded on flats): grounded, slow, upright,
     // for ~3 s -> heli back to the drop. Stats keep running - it is a
     // rescue, not a new run. The timer *decays* rather than zeroing when

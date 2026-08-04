@@ -56,6 +56,18 @@ const CRASH_LANDING = 17.5;
 const CRASH_SLIP_ANGLE = 1.02;
 
 /**
+ * Past this much flip rotation left over at touchdown the rider is coming
+ * down on their head or their back, not their heels. There is no version of
+ * that you ride away from, so it ends the run rather than costing speed.
+ * 1.9 rad is 109 degrees off upright — well beyond the 60 degrees that
+ * already counts as a crash.
+ */
+const WIPEOUT_FLIP = 1.9;
+
+/** A landing this much harder than a crash is terminal on impact alone. */
+const WIPEOUT_CLOSING = CRASH_LANDING * 1.6;
+
+/**
  * Per-surface response. `friction` is the base coefficient, `grip` scales the
  * lateral budget, `drag` scales powder displacement, `spray` is how much snow
  * an edge throws (particles.js reads it through the state).
@@ -117,6 +129,8 @@ export class BoardPhysics {
       carving: false,
       sliding: false,
       crashed: false,
+      /** One-shot: an unsalvageable landing. Consumed and cleared by the run flow. */
+      wipeout: false,
       /** 0…1, how hard the edge is working against its grip budget. */
       edgeLoad: 0,
       /** 0…1 board flex from pop charge + landing compression. */
@@ -170,6 +184,7 @@ export class BoardPhysics {
     s.velocity.set(Math.sin(s.heading), 0, Math.cos(s.heading)).multiplyScalar(4.5);
     s.pitch = 0;
     s.flipRot = 0;
+    s.wipeout = false;
     s.roll = 0;
     s.edgeAngle = 0;
     s.grounded = true;
@@ -596,7 +611,14 @@ export class BoardPhysics {
     const caughtEdge = slip > CRASH_SLIP_ANGLE && s.speed > 7;
     const spunOut = (!spinClean || !flipClean) && s.airTime > 0.45 && s.speed > 6;
 
-    if (tooHard || caughtEdge || spunOut) {
+    // Unsalvageable: inverted, or an impact well past what a crash already
+    // is. A normal crash is recoverable — the rider gets back up and rides
+    // on — but landing on your head is the end of the run, so it is flagged
+    // for the run flow to sting and reset (playtest ask).
+    const inverted = flipResidue > WIPEOUT_FLIP && s.airTime > 0.35;
+    if (inverted || closing > WIPEOUT_CLOSING) s.wipeout = true;
+
+    if (tooHard || caughtEdge || spunOut || s.wipeout) {
       s.crashed = true;
       s.crashTime = 0;
       // A crash dumps most of the speed instantly and the rest to friction.
