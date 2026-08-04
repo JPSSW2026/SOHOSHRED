@@ -32,7 +32,7 @@ const CSS = /* css */ `
   /* The sting's held final frame IS the title art — the card only carries
      the prompt over it. */
   position: absolute; inset: 0; display: flex; flex-direction: column;
-  align-items: center; justify-content: flex-end; padding-bottom: 7vh;
+  align-items: center; justify-content: flex-start; padding-top: 5.5vh;
   opacity: 0; transition: opacity 0.6s ease; background: transparent;
 }
 .soho-card.show { opacity: 1; }
