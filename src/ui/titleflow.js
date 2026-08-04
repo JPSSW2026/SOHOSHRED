@@ -130,6 +130,14 @@ export class TitleFlow {
     const toCard = () => {
       if (this.state !== 'sting') return;
       this.state = 'title'; card.classList.add('show');
+      // Title theme (user asset). Autoplay may be blocked before any
+      // gesture - fail silent; the drop gesture starts the riding track.
+      try {
+        this._titleMusic = new Audio('audio/soho-valley-tonight.mp3');
+        this._titleMusic.loop = true;
+        this._titleMusic.volume = 0.45;
+        this._titleMusic.play().catch(() => {});
+      } catch { /* headless */ }
     };
     video.addEventListener('ended', toCard);
     // Autoplay can be refused even muted (rare) — fail toward the card.
@@ -161,6 +169,14 @@ export class TitleFlow {
     this.ctx.player?.camera?.snapToTarget?.();
     // The gesture that dismisses the title is the gesture that legally
     // unlocks audio — one motion, no second prompt.
+    // Fade the title theme into the riding track.
+    if (this._titleMusic) {
+      const tm = this._titleMusic;
+      const fade = setInterval(() => {
+        tm.volume = Math.max(0, tm.volume - 0.06);
+        if (tm.volume <= 0.01) { tm.pause(); clearInterval(fade); }
+      }, 80);
+    }
     try {
       this._music = new Audio('audio/snowboard-chill.mp3');
       this._music.loop = true;
@@ -296,6 +312,7 @@ export class TitleFlow {
 
   dispose() {
     this._music?.pause();
+    this._titleMusic?.pause();
     this.el?.remove();
   }
 }
