@@ -241,10 +241,14 @@ export class BoardPhysics {
 
     // ---- Crash lockout -------------------------------------------------
     // A crashed rider still slides: gravity and friction keep acting, but no
-    // steering, no edge, no pop. It self-clears once they have slowed down.
+    // steering, no edge, no pop. It clears when they slow down — or after a
+    // couple of seconds regardless: on a steep pitch a slider never drops
+    // under the speed gate (gravity beats friction), and the old rule left
+    // the player tobogganing the whole headwall with no control (playtest:
+    // "BAILED and stuck"). Riders get back up moving; so do we.
     if (s.crashed) {
       s.crashTime += h;
-      if (s.speed < 1.4 && s.crashTime > 1.6) {
+      if ((s.speed < 1.4 && s.crashTime > 1.2) || s.crashTime > 2.2) {
         s.crashed = false;
         s.crashTime = 0;
         s.heading = Math.atan2(s.velocity.x, s.velocity.z) || s.heading;
@@ -278,6 +282,15 @@ export class BoardPhysics {
 
     if (s.grounded) {
       this._groundStep(h, s, n, props, incl, absIncl, input, locked, g, P);
+      // Whatever rotation a flip left, normalise to the nearest upright and
+      // settle. This must run here — unconditionally — not inside _airStep:
+      // that only runs while airborne, so landed pitch never unwound, and a
+      // crash mid-flip (locked) froze the rider crooked for the rest of the
+      // run (playtest screenshot: "BAILED and stuck crooked").
+      if (Math.abs(s.pitch) > 1e-4) {
+        s.pitch = ((s.pitch + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+        s.pitch = damp(s.pitch, 0, locked ? 5 : 8, h);
+      }
     } else {
       this._airStep(h, s, input, locked, P);
     }
@@ -530,17 +543,12 @@ export class BoardPhysics {
       s.heading += rate * h;
       s.airRotation += rate * h;
       s.roll = damp(s.roll, input.lean * 0.55, 5, h);
-      if (s.grounded) {
-        // Landing: whatever rotation the flip left, normalise and settle.
-        s.pitch = ((s.pitch + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
-        s.pitch = damp(s.pitch, 0, 8, h);
-      } else {
-        // REAL flips (playtest: they were a 0.9 rad tilt, not a rotation):
-        // ~400 deg/s of authority — a full back/frontflip inside 0.9 s,
-        // which is what the kicker airs actually give (measured 0.9–1.7 s).
-        // At 5.2 rad/s a one-second air came down 60° short, every time.
-        s.pitch += input.flip * 7.0 * h;
-      }
+      // REAL flips (playtest: they were a 0.9 rad tilt, not a rotation):
+      // ~400 deg/s of authority — a full back/frontflip inside 0.9 s,
+      // which is what the kicker airs actually give (measured 0.9–1.7 s).
+      // At 5.2 rad/s a one-second air came down 60° short, every time.
+      // (The landed unwind lives in update()'s grounded branch.)
+      s.pitch += input.flip * 7.0 * h;
     }
     s.edgeLoad = 0;
     s.sliding = false;
