@@ -364,7 +364,11 @@ const BOUNCE_VIEW_FACTOR = 0.18;
  * the blue sky fill and loses most of the neutral snow bounce, which is what
  * actually happens on a mountain.
  */
-const BOUNCE_OCCLUDED_FRACTION = 0.72;
+// Round 6: at 0.72 the unconditional 28% still floored the umbra with enough
+// neutral light to hold shadow B/R at 1.05-1.10 (law: >=1.20) and fill at
+// 0.59-0.65 (cap: 0.55). 0.86 halves that neutral floor; the blue sky term is
+// untouched, so shadows lose grey, not light.
+const BOUNCE_OCCLUDED_FRACTION = 0.86;
 
 /** Resolution of the sky radiance tables (bins in zenith cosine). */
 const LUT_N = 20;
@@ -1211,6 +1215,8 @@ let _apInstalled = false;
 function installOccludedBounce(C) {
   C.lights_pars_begin += /* glsl */ `
 uniform vec3 sohoBounceOccluded;
+/** sin of the sun's altitude — a flat surface's N.L equals this exactly. */
+uniform float sohoSunAlt;
 `;
 
   const needleDecl = 'IncidentLight directLight;';
@@ -1249,6 +1255,55 @@ uniform vec3 sohoBounceOccluded;
 			// faces away from the sunlit snowfield that produces the bounce,
 			// so the same wrap that shades the surface gates its bounce.
 			sohoSunVis *= smoothstep( -0.04, 0.18, dot( geometryNormal, directLight.direction ) );
+			// Round 6 measured shadow B/R 1.05-1.10 against the 1.20 law with
+			// this gate linear: a penumbra pixel at half beam kept half the
+			// neutral bounce, so the shadow-edge band — most of what a
+			// percentile sampler calls "shadow" — stayed grey. The bounce must
+			// die faster than the beam (the occluder looms over the snowfield a
+			// point sees before it blocks its direct light), so square the
+			// visibility. Umbra and full sun are unchanged; only the penumbra
+			// loses neutral fill.
+			sohoSunVis *= sohoSunVis;
+			// Micro-horizon shadowing — the actual LAW 2 mechanism (round 6).
+			// Sun-off ablation proved the fill is deep blue (B/R 2.3-3.0);
+			// grey shadows are DIRECT-SUN pollution: a sastrugi dip whose
+			// detail normal tilts 15 deg away from the 10.6 deg sun still
+			// gets ~26% of the beam from plain Lambert, and that dim warm
+			// light swamps the blue fill. On real snow the dip's own upwind
+			// lip occludes the beam outright. Model it as relative
+			// visibility: the perturbed normal's N.L against the base
+			// surface's. Flat lit ground -> ratio 1, untouched (LAW 1 safe);
+			// a dip tilted away -> ratio -> 0 fast at grazing sun, exactly
+			// when the real horizon effect is strongest.
+			{
+				float sohoNdL  = dot( normal, directLight.direction );
+				float sohoNgdL = dot( nonPerturbedNormal, directLight.direction );
+				float sohoMicro = saturate( sohoNdL / max( sohoNgdL, 1e-3 ) );
+				sohoMicro *= sohoMicro;
+				// Geometric-scale horizon term, same physics one octave up: a
+				// swale tilted a few degrees off a 10.6 deg sun is horizon-
+				// occluded by its own upslope lip, but plain Lambert hands it a
+				// wide dim-warm rolloff — measured (round 6, hero-basin) as the
+				// darkest-decile pixels living in grey terminator bands at B/R
+				// 1.05-1.09 while the true cast shadows beside them sat blue.
+				// Ramp the beam out over [0.25, 0.9] x sin(sunAlt): flat lit
+				// ground (N.L = sinAlt) is untouched (LAW 1), the terminator
+				// band narrows from ~90 deg of tilt to ~7, and what was dim
+				// warm pollution becomes blue-filled shadow (LAW 2).
+				// Ramp on the PERTURBED normal (detail noise dithers the edge —
+				// on the raw vertex normal the sharpened terminator renders the
+				// triangulation as hard polygonal shards), and widen it with
+				// distance: coarse LOD rings carry per-facet normal jumps that a
+				// 7-degree band turns into broken glass, and beyond ~1 km the
+				// aerial term owns shadow colour anyway.
+				float sohoDist = length( geometryPosition );
+				float sohoW = 1.0 + 1.2 * smoothstep( 450.0, 1400.0, sohoDist );
+				float sohoHi = sohoSunAlt * 0.95;
+				float sohoHorizon = smoothstep( sohoHi - sohoSunAlt * 0.62 * sohoW, sohoHi, sohoNdL );
+				sohoMicro *= sohoHorizon;
+				directLight.color *= sohoMicro;
+				sohoSunVis *= sohoMicro;
+			}
 		#endif`);
   src = src.replace(needleAmbient,
     'vec3 irradiance = getAmbientLightIrradiance( ambientLightColor )'
@@ -1399,6 +1454,7 @@ const BOUNCE_UNIFORMS = {
   sohoBounceOccluded: { value: new THREE.Color(0, 0, 0) },
   /** x: the penumbra probe distance in shadow-map depth units. */
   sohoShadow: { value: new THREE.Vector4(0, 0, 0, 0) },
+  sohoSunAlt: { value: 0.184 },
 };
 
 /**
@@ -2763,6 +2819,10 @@ export class Sky {
     BOUNCE_UNIFORMS.sohoShadow.value.set(
       (cfg.shadowProbeMetres ?? SHADOW_PROBE_METRES) / depthRange, 0, 0, 0,
     );
+    // Sun altitude for the geometric horizon ramp in the light loop: a flat
+    // surface's N.L equals this exactly, so the ramp's upper knee sits just
+    // below it and full sun stays full.
+    BOUNCE_UNIFORMS.sohoSunAlt.value = sinAlt;
   }
 
   /* -------------------------------------------------------------- *
