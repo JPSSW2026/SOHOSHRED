@@ -121,6 +121,11 @@ const VERT = /* glsl */`
     vec2 sd = (mv2.xy / max(-mv2.z, 0.05)) - (mv.xy / max(dist, 0.05));
     float sl = length(sd);
     vStretch = 1.0 + clamp(sl * 55.0, 0.0, 2.6) * (1.0 - t * 0.7);
+    // Ambient snowfall (kind 3) must NOT stretch: a flake drifting on the
+    // wind is a dot to the eye, and stretching the whole falling field
+    // reads as rain across the frame (demo v8 regression). Stretch belongs
+    // to thrown spray only.
+    vStretch = mix(vStretch, 1.0, step(2.5, aStyle.x));
     vStretchDir = sl > 1e-6 ? sd / sl : vec2(1.0, 0.0);
 
     gl_PointSize = max(size * uPixelScale / max(dist, 0.05), 1.0) * vStretch;
