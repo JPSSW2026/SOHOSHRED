@@ -1046,6 +1046,7 @@ export class Terrain {
     this._phaseSurfaceFeatures(H);            mark('features');
     this._phaseDepth(H);                      mark('depth');
     this._phaseDrift(H);                      mark('drift');
+    this._phaseKickers(H);                    mark('kickers');
     this._phaseClassify(H);                   mark('classify');
     this._placeTors();                        mark('tors');
     this._buildFarLUT();                      mark('far-lut');
@@ -2066,6 +2067,127 @@ export class Terrain {
 
     for (let k = 0; k < H.length; k++) {
       H[k] = softMin(softMax(H[k], 1866, 12), 1409, 6);
+    }
+  }
+
+  /* ================================================================ *
+   * PHASE G2 — wind-lip kickers down the headwall-drop fall line
+   * Natural-feature jumps for the top section: a cubic ramp builds to a
+   * sharp crest, the lee face drops away into a scooped landing that eases
+   * back to the slope. Stamped after drift/despike so the crest stays
+   * crisp, before classify so the lee reads as windpack, not paint.
+   * Stations come from walking the actual fall line of the built surface,
+   * so the jumps sit square to the run whatever erosion did upstream.
+   * ================================================================ */
+
+  _phaseKickers(H) {
+    const n = this.n, cell = this.cell;
+
+    const sampleH = (x, z) => {
+      const fx = clamp((x - this.minX) / cell, 0, n - 2);
+      const fz = clamp((z - this.minZ) / cell, 0, n - 2);
+      const i = Math.floor(fx), j = Math.floor(fz);
+      const u = fx - i, v = fz - j, k = j * n + i;
+      return H[k] * (1 - u) * (1 - v) + H[k + 1] * u * (1 - v)
+           + H[k + n] * (1 - u) * v + H[k + n + 1] * u * v;
+    };
+
+    // Walk downhill from the headwall-drop spawn. Direction is smoothed
+    // with momentum so micro-terrain doesn't wiggle the stations, and each
+    // station keeps the smoothed direction so the stamp faces the riding
+    // line, not a local drift lobe.
+    // The first ~150 m from the spawn is the 40°+ headwall itself — no lip
+    // can launch a rider off a face that falls faster than the ballistic
+    // arc, and no wind lip would form there anyway. Stations start where
+    // the pitch eases.
+    const sp = this.spawns['headwall-drop'];
+    const STATIONS = [160, 250, 340, 440];  // m along the run from spawn
+    const kickers = this.kickers = [];
+    let px = sp.x, pz = sp.z, dirX = 0, dirZ = -1, dist = 0, si = 0;
+    for (let step = 0; step < 400 && si < STATIONS.length; step++) {
+      const d = 3;
+      const gx = (sampleH(px + d, pz) - sampleH(px - d, pz)) / (2 * d);
+      const gz = (sampleH(px, pz + d) - sampleH(px, pz - d)) / (2 * d);
+      const gm = Math.hypot(gx, gz);
+      if (gm < 0.03) break;                  // fall line died: stop placing
+      let nx = dirX * 0.65 - (gx / gm) * 0.35;
+      let nz = dirZ * 0.65 - (gz / gm) * 0.35;
+      const nm = Math.hypot(nx, nz) || 1;
+      dirX = nx / nm; dirZ = nz / nm;
+      const stepLen = 4;
+      px += dirX * stepLen; pz += dirZ * stepLen; dist += stepLen;
+      if (dist >= STATIONS[si]) {
+        // Hold the station until the walk reaches moderate ground: a lip
+        // on a 35°+ rollover can't project the rider (measured — 20 m/s
+        // over a lip on the 43° headwall never separates), and a wind lip
+        // forms where the wind decelerates, i.e. where the slope eases,
+        // so this is also where the real feature would sit. A minimum gap
+        // keeps a held station from crowding the next one — back-to-back
+        // scoops chain-sap the rider's speed.
+        const sHere = Math.atan(gm) / DEG;
+        const last = kickers[kickers.length - 1];
+        const gapOk = !last || Math.hypot(px - last.x, pz - last.z) >= 70;
+        // No wind lip forms on a groomed piste — the cat combed it flat.
+        const gi = Math.round((px - this.minX) / cell);
+        const gj = Math.round((pz - this.minZ) / cell);
+        const groomed = this.groom[Math.min(n - 1, Math.max(0, gj)) * n
+          + Math.min(n - 1, Math.max(0, gi))] > 100;
+        if (sHere > 30 || !gapOk || groomed) {
+          // A station that can't find clean ground near its target is
+          // dropped, not walked down the mountain — these are top-section
+          // jumps, and by 120 m past target the hold is chasing terrain
+          // that was never going to cooperate.
+          if (dist > STATIONS[si] + 120) si++;
+          continue;
+        }
+        kickers.push({ x: px, z: pz, dx: dirX, dz: dirZ });
+        si++;
+      }
+    }
+
+    // Wind-lip profile along the run direction s (s = 0 at the crest):
+    //   ramp   s ∈ [-16, 0]  cubic rise to +2.2 m (slope steepens to the lip)
+    //   lee    s ∈ (0, 13]   drop to −1.8 m — the scooped landing
+    //   runout s ∈ (13, 39]  ease back to the untouched slope
+    // Laterally full-strength over the middle ~13 m, feathered to a 28 m
+    // footprint. The lee stays under the 38° ice-classify line so the
+    // landing keeps its powder surface.
+    const RAMP = 16, LEE = 13, BACK = 26, LIP = 2.2, RECESS = 1.8, HALFW = 14;
+    const REACH = Math.max(RAMP, LEE + BACK) + HALFW;
+    for (const kk of kickers) {
+      const i0 = Math.max(1, Math.floor((kk.x - REACH - this.minX) / cell));
+      const i1 = Math.min(n - 2, Math.ceil((kk.x + REACH - this.minX) / cell));
+      const j0 = Math.max(1, Math.floor((kk.z - REACH - this.minZ) / cell));
+      const j1 = Math.min(n - 2, Math.ceil((kk.z + REACH - this.minZ) / cell));
+      for (let j = j0; j <= j1; j++) {
+        const z = this.minZ + j * cell, row = j * n;
+        for (let i = i0; i <= i1; i++) {
+          const x = this.minX + i * cell;
+          const rx = x - kk.x, rz = z - kk.z;
+          const s = rx * kk.dx + rz * kk.dz;
+          const t = -rx * kk.dz + rz * kk.dx;
+          if (s < -RAMP || s > LEE + BACK) continue;
+          const lat = 1 - smoothstep(0.45, 1.0, Math.abs(t) / HALFW);
+          if (lat <= 0.001) continue;
+          let h;
+          if (s <= 0) {
+            // Cubic-to-quintic blend: same 2.2 m lip, but the last few
+            // metres steepen harder (exit gradient 0.56 vs 0.41 for pure
+            // cubic), which is what lets a 16–19 m/s rider separate instead
+            // of needing a full tuck to get air.
+            const u = (s + RAMP) / RAMP;
+            const u3 = u * u * u;
+            h = LIP * (0.55 * u3 + 0.45 * u3 * u * u);
+          } else if (s <= LEE) {
+            const u = s / LEE;
+            h = LIP - (LIP + RECESS) * u * u * (3 - 2 * u);
+          } else {
+            const u = (s - LEE) / BACK;
+            h = -RECESS * (1 - u * u * (3 - 2 * u));
+          }
+          H[row + i] += h * lat;
+        }
+      }
     }
   }
 
