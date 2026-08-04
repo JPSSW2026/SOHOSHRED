@@ -1141,21 +1141,30 @@ vec3 sohoAerialPerspective( vec3 color, vec3 worldPos, vec3 camPos ) {
 	// part of the ray that runs below the deck top, gated radially so the
 	// basin itself stays clear.
 	{
-		float yLo = min( camPos.y, worldPos.y );
-		float yHi = max( camPos.y, worldPos.y );
-		float below = clamp( ( 1720.0 - yLo ) / max( yHi - yLo, 1.0 ), 0.0, 1.0 );
-		float gate = smoothstep( 1500.0, 2600.0, length( worldPos.xz ) );
-		gate *= gate;   // gentle onset: no hot rim where the deck begins
-		float fogF = 1.0 - exp( - d * below * gate * 0.0028 );
-		// Bank-top occlusion (user: the deck must BLOCK what pokes through):
-		// any fragment submerged below the 1950 m bank top down-valley whites
-		// out by its own depth, camera height irrelevant - this is what
-		// finally swallows the seam verticals whole.
+		// A LAYER (base 1180-1300 m, top 1520-1640 m), not a half-space:
+		// the previous below-top model fogged the entire far wall for every
+		// camera under 1720 m - which is every rider camera - and erased the
+		// user's modelled ranges. Five taps along the ray, each weighted by
+		// layer occupancy AND the radial gate at that tap, so a sightline
+		// that climbs out of the layer before the gate opens stays clear -
+		// exactly the see-the-tops physics of a real inversion.
+		float fogPath = 0.0;
+		for ( int fi = 0; fi < 5; fi ++ ) {
+			vec3 P = mix( camPos, worldPos, ( float( fi ) + 0.5 ) / 5.0 );
+			float occ = smoothstep( 1180.0, 1300.0, P.y ) * ( 1.0 - smoothstep( 1520.0, 1640.0, P.y ) );
+			float gt = smoothstep( 1500.0, 2600.0, length( P.xz ) );
+			fogPath += occ * gt * gt;
+		}
+		fogPath *= d * 0.2 * 0.0035;
+		float fogF = 1.0 - exp( - fogPath );
+		// Bank-top occlusion, CONFINED to the seam-pillar zone (1.9-6.8 km):
+		// it exists to bury the backdrop's inner-edge verticals and must not
+		// touch the modelled wall standing beyond 7 km.
+		float rFrag = length( worldPos.xz );
 		float sub = clamp( ( 1950.0 - worldPos.y ) / 260.0, 0.0, 1.0 );
-		fogF = max( fogF, sub * sub * gate * smoothstep( 600.0, 1800.0, d ) );
+		float subGate = smoothstep( 1500.0, 2200.0, rFrag ) * ( 1.0 - smoothstep( 6800.0, 8000.0, rFrag ) );
+		fogF = max( fogF, sub * sub * subGate * smoothstep( 600.0, 1800.0, d ) );
 		float sunL = dot( sohoAtmo[ 7 ].xyz, vec3( 0.2126, 0.7152, 0.0722 ) );
-		// Dimmer and a shade cooler than sunlit snow, so the sheet reads as
-		// cloud lying in shadowless valley light, not a glowing tear.
 		vec3 fogCol = sohoAtmo[ 4 ].xyz * sunL * 0.60 * vec3( 0.90, 0.95, 1.06 );
 		result = mix( result, fogCol, fogF );
 	}

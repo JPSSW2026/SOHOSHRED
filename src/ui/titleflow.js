@@ -177,8 +177,30 @@ export class TitleFlow {
     if (this.ctx.input) this.ctx.input.enabled = true;
   }
 
+  /** Any controller button works the overlays (Gamepad API has no events). */
+  _padAny() {
+    if (typeof navigator === 'undefined' || !navigator.getGamepads) return false;
+    for (const p of navigator.getGamepads() || []) {
+      if (p && p.connected && p.buttons.some((b) => b && b.pressed)) return true;
+    }
+    return false;
+  }
+
   /** Run tally, cheap enough to run every frame. */
   update(dt) {
+    if (this.state === 'sting' || this.state === 'title') {
+      if (this._padAny()) this._begin();
+      return;
+    }
+    if (this.state === 'ended') {
+      // Same post-flash lockout as the keyboard path, and require a
+      // fresh press (the arrival frame often still has a button down).
+      this._endT = (this._endT || 0) + dt;
+      const down = this._padAny();
+      if (this._endT > 0.9 && down && !this._padHeld) this._again?.({ type: 'pad' });
+      this._padHeld = down;
+      return;
+    }
     if (this.state !== 'riding') return;
     const s = this.ctx.physics?.state;
     if (!s) return;
@@ -206,6 +228,7 @@ export class TitleFlow {
   endRun() {
     if (this.state === 'ended') return;
     this.state = 'ended';
+    this._endT = 0; this._padHeld = true;
     if (this.ctx.input) this.ctx.input.enabled = false;
     const st = this.stats;
     const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;

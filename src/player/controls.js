@@ -231,6 +231,29 @@ export class Input {
     s.reset = reset;
 
     this.ctx.physics?.applyInput?.(s);
+
+    /* ---- rumble ------------------------------------------------------ */
+    // Landing thump scaled by hang time, hard buzz on a crash. The
+    // actuator API is fire-and-forget and absent on most non-Xbox pads,
+    // so every call is optional-chained.
+    const ph = this.ctx.physics?.state;
+    if (ph && pad) {
+      const act = pad.vibrationActuator;
+      if (!ph.grounded) this._airT = (this._airT || 0) + dt;
+      else {
+        if ((this._airT || 0) > 0.25 && act?.playEffect) {
+          const g = Math.min(1, this._airT / 1.4);
+          act.playEffect('dual-rumble', {
+            duration: 90 + 160 * g, strongMagnitude: 0.35 + 0.6 * g, weakMagnitude: 0.25,
+          }).catch(() => {});
+        }
+        this._airT = 0;
+      }
+      if (ph.crashed && !this._crashBuzz && act?.playEffect) {
+        act.playEffect('dual-rumble', { duration: 420, strongMagnitude: 1.0, weakMagnitude: 0.7 }).catch(() => {});
+      }
+      this._crashBuzz = !!ph.crashed;
+    }
   }
 
   _readPad() {
