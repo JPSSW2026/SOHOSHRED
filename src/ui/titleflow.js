@@ -260,17 +260,21 @@ export class TitleFlow {
       this.stats._air = 0;
     }
     // Stall rescue (playtest: stranded on flats): grounded, slow, upright,
-    // for 2.5 s -> heli back to the drop. Stats keep running - it is a
-    // rescue, not a new run.
-    if (s.grounded && !s.crashed && s.speed < 1.3) {
+    // for ~3 s -> heli back to the drop. Stats keep running - it is a
+    // rescue, not a new run. The timer *decays* rather than zeroing when
+    // speed pokes over the line: a stranded rider creeps across the flat
+    // at 1.3-1.6 m/s for tens of seconds, and the old hard reset at a
+    // 1.3 threshold meant the rescue never fired for exactly the player
+    // it exists for (measured on the runout).
+    if (s.grounded && !s.crashed && s.speed < 2.2) {
       this._stall = (this._stall || 0) + dt;
-      if (this._stall > 2.5) {
+      if (this._stall > 3.0) {
         this._stall = 0;
         const sp = this.ctx.terrain?.getSpawn?.();
         if (sp) { this.ctx.physics.reset(sp.position, sp.heading); this.ctx.player?.camera?.snapToTarget?.(); }
       }
     } else {
-      this._stall = 0;
+      this._stall = Math.max(0, (this._stall || 0) - dt * 2);
     }
   }
 
