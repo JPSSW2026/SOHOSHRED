@@ -8,6 +8,7 @@
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { CONFIG } from '../core/config.js';
 
 export async function mountBackdropModel(ctx) {
   const gltf = await new GLTFLoader().loadAsync('models/backdrop-ranges.glb');
@@ -22,9 +23,24 @@ export async function mountBackdropModel(ctx) {
   const mat = new THREE.MeshBasicMaterial({
     map: mesh.material.map,
     fog: false,
+    // `toneMapped` is a no-op here either way: with the composer in the
+    // pipeline the scene renders to linear buffers and AgX is applied to
+    // the whole frame at the end (see postprocess.js), so this matte is
+    // tone-mapped no matter what the material asks for.
     toneMapped: true,
     side: THREE.DoubleSide,   // look-dev: orientation-proof
   });
+
+  // ...which is why the painting needs a gain. The art is authored as FINAL
+  // pixels - snow already white, atmosphere already in it - but it was being
+  // fed to AgX at exposure 0.34 like a scene-linear radiance, which crushed
+  // its whites to grey-blue and desaturated the snow off the peaks entirely
+  // (playtest: "refined but stripped of snow on peaks"). Lit surfaces
+  // survive that because sunlight is far above 1.0; a painted 1.0 does not.
+  // Pre-dividing by the exposure puts the matte back where the painter put
+  // it - the same inverse-exposure trick the AO luminance thresholds use.
+  const exposure = ctx.renderer?.toneMappingExposure || CONFIG.render?.exposure || 1;
+  mat.userData.gain = { value: 1 / Math.max(0.05, exposure) };
   // The painting's lower half is its valley floor, painted grey-olive.
   // From ride height the terrain silhouette hides it, but from the
   // headwall you see straight over the bowl rim onto it — a flat dull
@@ -32,6 +48,9 @@ export async function mountBackdropModel(ctx) {
   // inversion deck's top into the same fog the deck paints (the deck
   // itself cannot reach this material: it is fog:false by design).
   mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uBdGain = mat.userData.gain;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uBdGain;');
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vSohoBW;')
       .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
@@ -51,14 +70,26 @@ export async function mountBackdropModel(ctx) {
 		// sky behind still show through the discarded pixels, and the
 		// light whitening rides the shoulder so the emerging midslopes
 		// look haze-licked rather than screen-doored.
-		float sink = 1.0 - smoothstep( 1860.0, 2400.0, vSohoBW.y );
+		// Widened from a 540 m band. The dither is a screen-space pattern on a
+		// jagged silhouette, so the narrower the band the more it resolves into
+		// a hatched stripe across the horizon rather than a gradient — and
+		// brightening the art to its authored values (above) made that stripe
+		// far more visible, because the screen door now separates bright snow
+		// from sky instead of grey from grey. Spreading it over 900 m drops the
+		// pattern's frequency relative to the shoulder.
+		float sink = 1.0 - smoothstep( 1700.0, 2600.0, vSohoBW.y );
 		// Shoulder is PAINTED haze (pure colour mix — artifact-free); the
 		// dithered discard only begins once the pixel is already ~90%
 		// fog-coloured, so the screen-door has nothing to reveal.
-		gl_FragColor.rgb = mix( gl_FragColor.rgb, vec3( 1.14, 1.22, 1.35 ), min( sink * 1.25, 0.95 ) );
-		float cut = smoothstep( 0.70, 0.985, sink );
+		gl_FragColor.rgb = mix( gl_FragColor.rgb, vec3( 0.92, 0.96, 1.02 ), min( sink * 1.25, 0.95 ) );
+		// ...and the discard holds off until the pixel is almost entirely haze
+		// coloured, so the door has as little as possible left to reveal.
+		float cut = smoothstep( 0.86, 0.995, sink );
 		float ign = fract( 52.9829189 * fract( 0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y ) );
 		if ( cut > ign ) discard;
+		// Art and haze are both display-referred above; one gain takes the
+		// pair into the scene-linear space the tone mapper expects.
+		gl_FragColor.rgb *= uBdGain;
 	}
 	#include <dithering_fragment>`);
   };
