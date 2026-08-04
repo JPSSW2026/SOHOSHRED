@@ -152,6 +152,13 @@ export class TitleFlow {
     this.state = 'riding';
     window.removeEventListener('keydown', this._drop);
     window.removeEventListener('pointerdown', this._drop);
+    // Fresh drop: the sim has been running under the title the whole
+    // time, so the boot glide has long since bled out on the flat -
+    // the rider strands before the player ever gets control (first
+    // playtest, twice). Respawn AT the moment control lands.
+    const spawn = this.ctx.terrain?.getSpawn?.();
+    if (spawn) this.ctx.physics?.reset(spawn.position, spawn.heading);
+    this.ctx.player?.camera?.snapToTarget?.();
     // The gesture that dismisses the title is the gesture that legally
     // unlocks audio — one motion, no second prompt.
     try {
