@@ -172,6 +172,22 @@ export class TitleFlow {
     this.stats = { time: 0, topSpeed: 0, maxAir: 0, _air: 0 };
   }
 
+  /** Tiny synthesized landing chime - thump plus a fifth, no asset. */
+  _sfxLand(g) {
+    try {
+      this._ac = this._ac || new (window.AudioContext || window.webkitAudioContext)();
+      const ac = this._ac, t = ac.currentTime;
+      for (const [f, amp, dur] of [[120, 0.5, 0.10], [660, 0.22 * g, 0.14], [990, 0.16 * g, 0.18]]) {
+        const o = ac.createOscillator(), gn = ac.createGain();
+        o.frequency.value = f; o.type = f < 200 ? 'triangle' : 'sine';
+        gn.gain.setValueAtTime(amp, t);
+        gn.gain.exponentialRampToValueAtTime(0.001, t + dur);
+        o.connect(gn).connect(ac.destination);
+        o.start(t); o.stop(t + dur + 0.02);
+      }
+    } catch { /* headless */ }
+  }
+
   /** Capture harness: no sting, no card, no music, input untouched. */
   skip() {
     if (this._skipped) return;
@@ -223,7 +239,22 @@ export class TitleFlow {
       this.stats._air += dt;
       if (this.stats._air > this.stats.maxAir) this.stats.maxAir = this.stats._air;
     } else {
+      // Landing chime for a real air (playtest ask): synthesized, no asset.
+      if (this.stats._air > 0.4) this._sfxLand(Math.min(1, this.stats._air / 1.4));
       this.stats._air = 0;
+    }
+    // Stall rescue (playtest: stranded on flats): grounded, slow, upright,
+    // for 2.5 s -> heli back to the drop. Stats keep running - it is a
+    // rescue, not a new run.
+    if (s.grounded && !s.crashed && s.speed < 1.3) {
+      this._stall = (this._stall || 0) + dt;
+      if (this._stall > 2.5) {
+        this._stall = 0;
+        const sp = this.ctx.terrain?.getSpawn?.();
+        if (sp) { this.ctx.physics.reset(sp.position, sp.heading); this.ctx.player?.camera?.snapToTarget?.(); }
+      }
+    } else {
+      this._stall = 0;
     }
   }
 

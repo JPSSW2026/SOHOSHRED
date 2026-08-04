@@ -173,6 +173,7 @@ export class Input {
     let lean = this._lean;
     let crouch = this._crouch;
     let spin = 0, flip = 0, brake = 0;
+    let boost = held('KeyB');
     let pop = held('Space');
     let tuck = held('ShiftLeft', 'ShiftRight');
     let reset = held('KeyR');
@@ -203,6 +204,7 @@ export class Input {
       if (btn(6) > 0.1) brake = Math.max(brake, btn(6)); // left trigger
       if (btn(7) > 0.1) tuck = true;                     // right trigger
       if (btn(8) > 0.5 || btn(9) > 0.5) reset = true;
+      if (btn(11) > 0.5) boost = true;   // right-stick click
       for (const [i, name] of PAD_GRABS) {
         if (btn(i) > 0.5) { grab = name; break; }
       }
@@ -229,6 +231,7 @@ export class Input {
     s.tuck = tuck;
     s.grab = grab;
     s.reset = reset;
+    s.boost = boost;
 
     this.ctx.physics?.applyInput?.(s);
 

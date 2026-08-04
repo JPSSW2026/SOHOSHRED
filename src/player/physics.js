@@ -455,6 +455,13 @@ export class BoardPhysics {
     }
 
     // ---- Braking (heelside slide to a stop) ----------------------------
+    if (input.boost && s.grounded && !locked && speed < 24) {
+      // Power boost (playtest: "make flat ground more fun") - a firm push
+      // along the direction of travel, capped well under terminal carve
+      // speed so it aids flats without trivialising the steeps.
+      if (speed > 0.5) a.addScaledVector(this._tmp.copy(s.velocity).normalize(), 9);
+      else a.addScaledVector(this._tmp.set(Math.sin(s.heading), 0, Math.cos(s.heading)), 9);
+    }
     if (!locked && input.brake > 0.01 && speed > 0.2) {
       const brakeAccel = input.brake * g * 1.35 * props.grip;
       a.addScaledVector(this._tmp.copy(s.velocity).normalize(), -brakeAccel);
@@ -519,7 +526,15 @@ export class BoardPhysics {
       s.heading += rate * h;
       s.airRotation += rate * h;
       s.roll = damp(s.roll, input.lean * 0.55, 5, h);
-      s.pitch = damp(s.pitch, input.flip * 0.9, 4.5, h);
+      if (s.grounded) {
+        // Landing: whatever rotation the flip left, normalise and settle.
+        s.pitch = ((s.pitch + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+        s.pitch = damp(s.pitch, 0, 8, h);
+      } else {
+        // REAL flips (playtest: they were a 0.9 rad tilt, not a rotation):
+        // ~300 deg/s of authority - a full back/frontflip inside 1.2 s of air.
+        s.pitch += input.flip * 5.2 * h;
+      }
     }
     s.edgeLoad = 0;
     s.sliding = false;
