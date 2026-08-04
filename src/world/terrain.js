@@ -2682,12 +2682,19 @@ export class Terrain {
     // 4 km is rolling near-plain - the fan is invisible there - and the
     // whole wall band then runs at uniform 768-post resolution.
     const AN_NEAR = 192, AN_FAR = 768, FAR_R = 4000;
-    const WALL_STEP = 450;
+    // Quad aspect ratio is the final sliver-band culprit (wireframe probe):
+    // 41 m angular x 450 m radial rows, seen nearly edge-on, foreshorten to
+    // a few pixels tall, and vertex-normal variation along the thin axis
+    // shades every quad as a vertical blade. Radial spacing therefore
+    // matches the angular spacing through the steep 4-12 km band (~130 m,
+    // 3:1 worst case) and relaxes to 450 m beyond, where the wall is far
+    // enough that rows stack many per pixel and average out.
     const RN_LOG = 22;
     const radii = [];
     const growth = Math.pow(FAR_R / R0, 1 / RN_LOG);
     for (let k = 0; k <= RN_LOG; k++) radii.push(R0 * Math.pow(growth, k));
-    for (let r = FAR_R + WALL_STEP; r < R1; r += WALL_STEP) radii.push(r);
+    for (let r = FAR_R + 130; r < 12000; r += 130) radii.push(r);
+    for (let r = 12000; r < R1; r += 450) radii.push(r);
     radii.push(R1);
     const RN = radii.length - 1;
     const rings = RN + 2;                       // +1 outer, +1 skirt
@@ -2732,9 +2739,12 @@ export class Terrain {
         // reach 2 km at 15 km out, and smoothing gradients over that erases
         // the 900 m avalanche flutes the angular posts can perfectly resolve.
         const spacing = Math.max(8, r * (Math.PI * 2 / AN));
-        // Floor at 120 m: sub-post eps turns the amplified far relief into
-        // per-post normal jitter that shades as vertical prism columns.
-        const eps = Math.max(120, spacing * 0.6);
+        // The normal-attribute dump closed the sliver case: per-post normal
+        // wobble is only 2-5 deg, but the 10.6 deg grazing sun turns that
+        // into full-swing N.L stripes. Far normals must be smoother than
+        // the mesh by a wide margin - eps well past post spacing. Flutes
+        // soften ~40% at 900 m wavelength; grazing shading carries them.
+        const eps = Math.max(320, spacing * 1.8);
         const hx = (this._heightAt(x + eps, z) - this._heightAt(x - eps, z)) / (2 * eps);
         const hz = (this._heightAt(x, z + eps) - this._heightAt(x, z - eps)) / (2 * eps);
         const inv = 1 / Math.sqrt(hx * hx + hz * hz + 1);
