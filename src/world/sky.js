@@ -1211,6 +1211,19 @@ vec3 sohoAerialPerspective( vec3 color, vec3 worldPos, vec3 camPos ) {
 	// physical brightness of a snow wall in sun.
 	vec3 skyRef = min( sky, skyUp ) * 1.10;
 
+	// --- Far-wall consolidation (majesty pass). Beyond ~6 km every pixel of
+	// the range wall is sub-resolution mixed terrain, but the shading kept
+	// per-facet contrast: the lit snow converged on the sky tone (the §5.2
+	// clamp below guarantees it) while rock speckle and lee facets stayed
+	// dark, so from altitude the wall read as torn fragments floating in
+	// haze rather than a ridge line. A real distant range is one coherent
+	// atmospheric mass a touch darker than the horizon sky — that is what
+	// makes it read as *far and huge* (the user's painted reference does
+	// exactly this). Collapse toward that mass tone with distance, keeping
+	// 15% of the local shading so the crests stay alive.
+	float wallMass = smoothstep( 6000.0, 10500.0, d ) * 0.85;
+	result = mix( result, min( sky, skyUp ) * 0.94, wallMass );
+
 	float veil = smoothstep( 0.03, 0.24, 1.0 - T.b );
 	return mix( result, min( result, skyRef ), veil );
 }

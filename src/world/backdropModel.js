@@ -24,7 +24,39 @@ export async function mountBackdropModel(ctx) {
     fog: false,
     toneMapped: true,
     side: THREE.DoubleSide,   // look-dev: orientation-proof
+    // The valley-floor sink below is an ALPHA fade: the sunk region lets
+    // the real inversion deck / sky render through, which matches the fog
+    // by construction (a painted constant never matched the post chain).
+    transparent: true,
+    depthWrite: false,
   });
+  // The painting's lower half is its valley floor, painted grey-olive.
+  // From ride height the terrain silhouette hides it, but from the
+  // headwall you see straight over the bowl rim onto it — a flat dull
+  // slab between the snow and the ridges. Sink everything below the
+  // inversion deck's top into the same fog the deck paints (the deck
+  // itself cannot reach this material: it is fog:false by design).
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vSohoBW;')
+      .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
+	vSohoBW = ( modelMatrix * vec4( position, 1.0 ) ).xyz;`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vSohoBW;')
+      .replace('#include <dithering_fragment>', `
+	{
+		// Band-mapped against the mounted mesh: the painted floor reaches
+		// ~y 2100 and the ridge feet start ~2200, so the fog rises to just
+		// below them — "only the tops of the mountains visible", with a
+		// graded shoulder so the midslopes emerge from haze, not a cut.
+		// A light whitening rides the shoulder so the emerging midslopes
+		// look haze-licked rather than cleanly clipped.
+		float sink = 1.0 - smoothstep( 1860.0, 2400.0, vSohoBW.y );
+		gl_FragColor.rgb = mix( gl_FragColor.rgb, vec3( 1.14, 1.22, 1.35 ), sink * 0.55 );
+		gl_FragColor.a *= 1.0 - sink * 0.97;
+	}
+	#include <dithering_fragment>`);
+  };
   mesh.material = mat;
   mesh.castShadow = false;
   mesh.receiveShadow = false;
