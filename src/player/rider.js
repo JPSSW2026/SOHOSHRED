@@ -194,6 +194,108 @@ function makeShellTexture(rng, base, size = 256) {
 }
 
 /**
+ * Cloth relief as a normal map — the half of "fabric" the albedo cannot carry.
+ *
+ * Round 6, all five critics: the kit read as "smooth plastic" because the
+ * surface had colour variation but zero relief, so grazing light (the only
+ * light this mountain has) raked across a mathematically smooth barrel. The
+ * height field here is the construction of a real shell garment:
+ *
+ *  - soft wrinkle lobes at ~3-8 cm scale (fabric never lies flat),
+ *  - the ripstop thread grid as fine grooves,
+ *  - optionally, horizontal quilt channels with a stitch dip at each seam
+ *    (the torso of an insulated jacket), rounded like a filled baffle.
+ *
+ * Sobel-differentiated into a tangent-space normal map. At the 2x3 repeat a
+ * sleeve uses, the lobes land at real-wrinkle scale on a 960 px portrait.
+ */
+function makeClothNormalTexture(rng, { quilt = 0, wrinkle = 1.0, size = 256 } = {}) {
+  const H = new Float32Array(size * size);
+
+  // Wrinkle lobes: elongated soft ridges at random angles.
+  const lobes = 26;
+  for (let l = 0; l < lobes; l++) {
+    const cx = rng() * size, cy = rng() * size;
+    const ang = rng() * Math.PI;
+    const len = size * (0.16 + rng() * 0.30);
+    const wid = size * (0.04 + rng() * 0.07);
+    const amp = (rng() - 0.35) * 0.9 * wrinkle;
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    const reach = Math.ceil(Math.max(len, wid) * 1.8);
+    for (let dy = -reach; dy <= reach; dy++) {
+      for (let dx = -reach; dx <= reach; dx++) {
+        const x = ((cx + dx | 0) + size) % size, y = ((cy + dy | 0) + size) % size;
+        const u = (dx * ca + dy * sa) / len, v = (-dx * sa + dy * ca) / wid;
+        const d2 = u * u + v * v;
+        if (d2 < 1) H[y * size + x] += amp * (1 - d2) * (1 - d2);
+      }
+    }
+  }
+
+  // Quilt channels: horizontal filled baffles with a hard stitch dip between.
+  if (quilt > 0) {
+    const channels = 7;
+    for (let y = 0; y < size; y++) {
+      const t = (y / size) * channels % 1;
+      const baffle = Math.pow(Math.sin(t * Math.PI), 0.55);      // rounded fill
+      const stitch = Math.exp(-Math.pow(Math.min(t, 1 - t) * channels * 6, 2));
+      const row = (baffle - stitch * 0.8) * quilt;
+      for (let x = 0; x < size; x++) H[y * size + x] += row;
+    }
+  }
+
+  // Ripstop grooves.
+  for (let i = 0; i < size; i += 8) {
+    for (let k = 0; k < size; k++) { H[i * size + k] -= 0.18; H[k * size + i] -= 0.18; }
+  }
+
+  // Sobel -> tangent-space normal.
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  const img = g.createImageData(size, size);
+  const d = img.data;
+  const S = 2.2; // slope scale
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const xm = (x + size - 1) % size, xp = (x + 1) % size;
+      const ym = (y + size - 1) % size, yp = (y + 1) % size;
+      const dhx = (H[y * size + xp] - H[y * size + xm]) * 0.5 * S;
+      const dhy = (H[yp * size + x] - H[ym * size + x]) * 0.5 * S;
+      const inv = 1 / Math.hypot(dhx, dhy, 1);
+      const i = (y * size + x) * 4;
+      d[i] = (-dhx * inv * 0.5 + 0.5) * 255;
+      d[i + 1] = (dhy * inv * 0.5 + 0.5) * 255;
+      d[i + 2] = (inv * 0.5 + 0.5) * 255;
+      d[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = CONFIG.render.anisotropy;
+  return tex;
+}
+
+/**
+ * A cuff / hem flare: a short flared skirt of cloth, open at the bottom but
+ * curled inward so no raw edge ever faces the lens. Hung from the END of a
+ * parent limb so it overlaps the child's top dome — the round-6 fix for
+ * "visible ring seams at every joint": the joint is still two domes, but the
+ * lens never sees where they meet.
+ */
+function cuffFlare(rTop, rBottom, len) {
+  const pts = [
+    new THREE.Vector2(rTop, 0),
+    new THREE.Vector2(lerp(rTop, rBottom, 0.55) * 1.01, -len * 0.55),
+    new THREE.Vector2(rBottom, -len * 0.9),
+    new THREE.Vector2(rBottom * 1.015, -len),
+    new THREE.Vector2(rBottom * 0.90, -len - 0.010),
+  ];
+  return new THREE.LatheGeometry(pts, 14);
+}
+
+/**
  * Board topsheet. A graphic deck, because a plain black slab reads as
  * untextured geometry in every close shot — and the topsheet is the one
  * surface in frame the camera is guaranteed to see from above.
@@ -613,22 +715,32 @@ export class Rider {
      * fuzz brightens at grazing angles in a way neither Lambert nor GGX gives
      * you (checklist 39).
      */
-    const cloth = (base, rough, sheen, repeat) => {
+    const cloth = (base, rough, sheen, repeat, normalOpts = {}) => {
       const map = makeShellTexture(rng, base);
       map.repeat.set(repeat[0], repeat[1]);
+      const normalMap = makeClothNormalTexture(rng, normalOpts);
+      normalMap.repeat.set(repeat[0], repeat[1]);
       const m = new THREE.MeshPhysicalMaterial({
         map,
+        normalMap,
+        // Strong enough that the 10.6° sun rakes real shading out of the
+        // wrinkles (round 6: "smooth plastic" was the absence of exactly
+        // this relief; the user's Shredders reference is all fold shading).
+        normalScale: new THREE.Vector2(0.95, 0.95),
         color: 0xffffff,
         roughness: rough,
         metalness: 0.0,
         sheen,
         sheenRoughness: 0.55,
-        sheenColor: new THREE.Color(base).lerp(new THREE.Color(0xffffff), 0.35),
+        // Whitening the sheen 35% was a third of the salmon wash the user
+        // called out — the grazing fuzz was painting the whole silhouette
+        // pastel. Keep the fuzz, keep it red.
+        sheenColor: new THREE.Color(base).lerp(new THREE.Color(0xffffff), 0.14),
         // A whisper of same-hue emissive keeps saturated kit colours from
         // greying out under AgX in shade - the trick every game uses to make
         // a signal jacket read as signal at all light levels.
         emissive: new THREE.Color(base),
-        emissiveIntensity: 0.055,
+        emissiveIntensity: 0.07,
       });
       return m;
     };
@@ -651,9 +763,19 @@ export class Rider {
     // yoke, hood and pants — the silhouette reads as a single red figure
     // against the snow, exactly like the instructor reference. Black stays
     // only on helmet, gloves, boots and hardware.
-    const shell = cloth(0xe22508, 0.54, 0.42, [2, 3]);
-    const shellGrey = cloth(0xe22508, 0.58, 0.40, [2, 3]);
-    const pants = cloth(0xd52206, 0.64, 0.38, [2, 3]);
+    // Matched to the user's Shredders red-jacket reference: flame red-orange,
+    // matte (the ref jacket has no specular ping at all — the life is in the
+    // FOLD SHADING), with bold wrinkle relief. Torso wrinkles biggest (loose
+    // shell over insulation), sleeves a touch finer, pants heaviest and a
+    // step darker so the garments separate tonally like the reference.
+    // AgX note (user's Shredders ref): a BRIGHT saturated red albedo gets
+    // rendered salmon — AgX desaturates high-luminance primaries. The ref
+    // jacket's red is deep (~#C33) and keeps its chroma; the highlights get
+    // their orange from shading, not from the albedo. So: darker base, and
+    // the emissive floor carries the signal in shade.
+    const shell = cloth(0xcc3208, 0.58, 0.32, [1.4, 2], { quilt: 0.3, wrinkle: 1.15 });
+    const shellGrey = cloth(0xcc3208, 0.60, 0.30, [1.4, 2], { wrinkle: 1.05 });
+    const pants = cloth(0xa82006, 0.64, 0.28, [1.4, 2], { wrinkle: 1.35 });
     const shellDark = shellGrey; // collar/hem trim reads as the black blocking
 
     const helmet = new THREE.MeshStandardMaterial({
@@ -799,7 +921,7 @@ export class Rider {
     // the ribcage — a torso mesh anchored at the chest bone and a pelvis mesh
     // anchored at the hips do not meet, and because both were open tubes the
     // hole showed their bright interiors.
-    const abdomen = part(limbGeometry(0.23, 0.150, 0.158, 1.02, 14, 0.35, 0.55), M.shell, spine, 0, 0.21, 0);
+    const abdomen = part(limbGeometry(0.23, 0.168, 0.158, 1.02, 14, 0.22, 0.55), M.shell, spine, 0, 0.21, 0);
     abdomen.scale.x = 0.82;
     // Drawcord hem, so the shell reads as a garment with an edge to it.
     const hem = part(new THREE.CylinderGeometry(0.170, 0.156, 0.052, 16), M.shellDark, spine, 0, -0.012, 0);
@@ -902,20 +1024,23 @@ export class Rider {
         DIM.chestLength * 0.86,
         -sx * DIM.shoulderWidth * Math.cos(DIM.chestOpen),
       );
-      joint(0.092, M.shellGrey, sh);
+      joint(0.076, M.shellGrey, sh);
 
       const ua = bone(`upperArm${side}`, sh, 0, 0, 0);
-      part(limbGeometry(DIM.upperArm, 0.078, 0.064, 1.14, 12, 0.95, 1.0), M.shell, ua);
+      part(limbGeometry(DIM.upperArm, 0.086, 0.064, 1.10, 12, 1.05, 1.0), M.shellGrey, ua);
       // Shoulder-yoke seam and a bicep panel seam.
       const yoke = trim(new THREE.TorusGeometry(0.070, 0.005, 6, 16), M.shellDark, ua, 0, -0.062, 0);
       yoke.rotation.x = Math.PI * 0.5;
 
       // Elbow: not a ball bearing — a squashed bunch of sleeve fabric that
       // stays inside both sleeve domes at every bend.
-      const elbow = joint(0.068, M.shell, ua, 0, -DIM.upperArm, 0);
+      const elbow = joint(0.068, M.shellGrey, ua, 0, -DIM.upperArm, 0);
       elbow.scale.y = 0.78;
+      // Upper-sleeve flare hanging past the elbow: the lens must never see
+      // where the two sleeve domes meet (round 6, all five critics).
+      part(cuffFlare(0.066, 0.072, 0.085), M.shellGrey, ua, 0, -DIM.upperArm + 0.055, 0);
       const fa = bone(`foreArm${side}`, ua, 0, -DIM.upperArm, 0);
-      part(limbGeometry(DIM.foreArm, 0.064, 0.053, 1.10, 12, 1.0, 0.95), M.shell, fa);
+      part(limbGeometry(DIM.foreArm, 0.064, 0.053, 1.10, 12, 1.0, 0.95), M.shellGrey, fa);
       // Cuff tab at the wrist.
       const cuff = trim(new THREE.TorusGeometry(0.050, 0.008, 6, 16), M.rubber, fa, 0, -DIM.foreArm + 0.012, 0);
       cuff.rotation.x = Math.PI * 0.5;
@@ -952,6 +1077,8 @@ export class Rider {
       // can.
       const knee = joint(0.094, M.pants, thigh, 0, -DIM.thighLength, 0);
       knee.scale.y = 0.80;
+      // Pant-leg flare over the knee, same reasoning as the sleeve flare.
+      part(cuffFlare(0.096, 0.104, 0.115), M.pants, thigh, 0, -DIM.thighLength + 0.075, 0);
       const shin = bone(`shin${side}`, thigh, 0, -DIM.thighLength, 0);
       part(limbGeometry(DIM.shinLength, 0.088, 0.072, 1.10, 14, 1.0, 0.6), M.pants, shin);
       // Knee panel seam below the joint (the one above rides on the thigh).
