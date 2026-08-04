@@ -986,13 +986,18 @@ export class Rider {
         // Whitening the sheen 35% was a third of the salmon wash the user
         // called out — the grazing fuzz was painting the whole silhouette
         // pastel. Keep the fuzz, keep it red.
-        sheenColor: new THREE.Color(base).lerp(new THREE.Color(0xffffff), 0.14),
+        sheenColor: new THREE.Color(base).lerp(new THREE.Color(0xffffff), 0.08),
         // A whisper of same-hue emissive keeps saturated kit colours from
         // greying out under AgX in shade - the trick every game uses to make
         // a signal jacket read as signal at all light levels.
         emissive: new THREE.Color(base),
         emissiveIntensity: 0.02,
       });
+      // The snow env probe is ~5x brighter than the kit's albedo, and its
+      // IBL contribution is what silvers the sunlit panels (round 4
+      // close-ups; halving the sheen barely moved them). Matte softgoods
+      // keep a fraction of it — enough to model the folds in shade.
+      m.envMapIntensity = 0.30;
       return m;
     };
 
@@ -1030,9 +1035,18 @@ export class Rider {
     // still model the folds, with a restrained fabric sheen. The jacket a
     // half-step lighter than the pants so the garments separate; the
     // mirrored goggle becomes the rider's single accent.
-    const shell = cloth(0x2c2e33, 0.60, 0.22, [1.4, 2], { quilt: 0.12, wrinkle: 1.1 });
-    const shellGrey = cloth(0x2c2e33, 0.60, 0.22, [1.4, 2], { wrinkle: 1.1 });
-    const pants = cloth(0x232529, 0.62, 0.20, [1.4, 2], { wrinkle: 1.2 });
+    // Round 4 (trick close-ups): in full sun the black kit washed to
+    // silver — the sheen fuzz brightening at grazing angles was painting
+    // whole sunlit panels pastel over a charcoal base. Half the sheen and
+    // a touch more roughness keeps the fabric fuzz in the rim light only;
+    // the albedo (locked charcoal, L~30-36 law) is untouched.
+    // (Round-4 note: a darker albedo was tried against the sunlit wash and
+    // measured nearly invisible — the lit panels sit on the AgX shoulder,
+    // so the wash is exposure physics, not the kit. Albedo stays at the
+    // locked charcoal.)
+    const shell = cloth(0x2c2e33, 0.66, 0.11, [1.4, 2], { quilt: 0.12, wrinkle: 1.1 });
+    const shellGrey = cloth(0x2c2e33, 0.66, 0.11, [1.4, 2], { wrinkle: 1.1 });
+    const pants = cloth(0x232529, 0.68, 0.10, [1.4, 2], { wrinkle: 1.2 });
     const shellDark = shellGrey; // collar/hem trim reads as the black blocking
 
     const helmet = new THREE.MeshStandardMaterial({
