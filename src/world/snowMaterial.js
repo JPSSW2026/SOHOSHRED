@@ -1355,7 +1355,10 @@ const SNOW_SURFACE = /* glsl */ `
 	albedo *= 1.0 - tG1.z * 0.045 * f1 * texFade;                // micro cavity
 	albedo *= 1.0 + ( tDr.z - 0.5 ) * 0.07 * sastrugiW * f3 * texFade; // scoured crests
 	albedo *= 1.0 + sin( cordPhase ) * 0.038 * cordAmp * texFade; // corduroy +-4%
-	albedo *= 1.0 - tMc.w * 0.06 * f4 * texFade * smoothstep( 0.30, 0.70, tDr.w ); // old scars
+	// Old-scar streaks removed entirely (playtest: they read as OTHER
+	// RIDERS' tracks, and the fantasy is untouched snow - only the live
+	// trail may mark the pack).
+	// albedo *= 1.0 - tMc.w * 0.06 * f4 * texFade * smoothstep( 0.30, 0.70, tDr.w );
 	albedo *= 1.0 - trkTrench * 0.15;
 	albedo *= 1.0 + trkLip * 0.05;
 	albedo *= 1.0 + snowLip * 0.05;                              // drift lip at the rock edge
