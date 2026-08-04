@@ -171,3 +171,60 @@ log-ring zone.
 OPERATIONAL LESSON (cost: nearly lost a session of work): NEVER
 stash-drop to bisect - commit WIP first, bisect in a separate worktree.
 Recovery was only possible via git fsck unreachable-commit archaeology.
+
+---
+
+# Round-6 verdicts (r13): 5.5 / 4.0 / 4.4 / 5.5 / 4.5 — avg 4.78, still 9/9 blind
+
+Scored BEFORE the bushfire-horizon fix (c360ac7) and crest-rock fix
+(3d91aa2) — the valley-vista "brown vertical smears" (4/5 critics) and part
+of the prop-confetti complaints are stale; re-verify, don't re-fix.
+
+Consensus queue, in attack order:
+
+1. **LAW 2 shadow chroma + fill (5/5, critical).** Shadow B/R 1.047-1.151
+   vs >=1.20; fill 0.586-0.654 vs <=0.55; blue-survival ch9 ~1.0 vs
+   1.4-2.1. snow-detail (macro, all sastrugi shadow) measures 1.069 —
+   shader defect, not sampling. Mechanism candidate (critic 3): the
+   occluded-bounce gate `sohoBounceOccluded * sohoSunVis` decays no faster
+   than the beam, so the NEUTRAL ground bounce fills the umbra; square
+   sohoSunVis (or smoothstep(0.35,0.9)) so bounce dies at the shadow edge
+   while sky fill (blue) remains. Also drop total fill ~20-25%.
+   Acceptance: measure.mjs shaBR >= 1.20 AND fill <= 0.55 AND ch9 in
+   [1.4,2.1] on all nine presets.
+2. **Near/far contrast (item 17) inverted (5/5).** nf 0.25-3.16 vs >=4.0.
+   Far too busy: fade detail-normal + rock speckle amplitude to zero over
+   40-250 m, multiply far shadow contrast by the haze veil gate past
+   ~1.5 km. Near too smooth: micro-relief (sastrugi/chatter) inside 40 m
+   fading by 80 m.
+3. **Props (5/5).** Tors render paler than sky with no sun shading — verify
+   rockMat/imposters receive aerial + sun uniforms; drift-lip skirt +
+   15-25% embed at every contact; per-instance rotation/scale/color jitter;
+   cull sub-1.5 m instances beyond 400 m; caster-less blob shadows: tie
+   castShadow to the same LOD/cull state as the render mesh (assert
+   castShadow === visible).
+4. **Rider garments round 2 (4/5, 3x critical).** Capsule end-rims at
+   hip/shoulder/thigh, plastic specular. Merge limb segments into
+   continuous sleeves/pant-legs with cuffs overlapping joints; ripstop
+   normal amplitude up until it reads at 960 px; wrinkle normals at
+   elbows/knees. (One critic claimed no goggle/board graphic — false,
+   check what shot hid them.)
+5. **Spray + trail (4/5).** Emission up ~2 orders at high edge angle,
+   velocity-stretched quads, two-tone sun/sky lighting, engaged-edge-only
+   cone; trail = trench with shadowed inner wall + displaced bright lip,
+   bicubic/higher-res near-camera sampling (kill texel stair-steps).
+6. **close-spray washout (4/5).** median 216 (cap 210), meanSat 0.065
+   (floor 0.18): cap tier-2 veiling glare (~12% of frame luma) and/or
+   shotExposure ~0.88; meter off sunlit-snow percentile, not frame mean.
+7. **Right-edge vertical strip, chase-carve (3/5, one critical).** ~20-30px
+   desaturated grey full-height strip (ground rgb 151,151,151; sky B/R
+   2.02 -> 1.20 inside). A UV-offsetting post pass clamps outside the
+   framebuffer (CA / sharpen / motion-blur / veil blur / AO). ABLATE pass
+   by pass before fixing; verify column means x>935 vs 850-900, delta < 2.
+8. **LAW 1 on ridge-backlight (2/5).** Sunlit B/R 1.23 vs <=1.06 — HG
+   forward-scatter lobe tinted by ambient/sky instead of sun colour.
+9. **snow-detail zigzag LOD silhouette + checkerboard box (3/5)** — LOD
+   skirt/morph at macro distance; no fallback texture may reach a shot.
+10. **f0180 rig break (1/5, from demo v4 frames)**: board detached at waist
+   height mid-air + stray edge rod — IK pin feet to bindings through
+   aerial rotation; grab-hand contact (round-5 carryover).
