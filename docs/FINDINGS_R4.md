@@ -270,3 +270,20 @@ valley-vista camera; then dump far-LUT heights along the down-valley
 azimuth at r 1700-4200 and compare with _heightAt - a spike or a datum
 step at the seam will identify itself. Skirt cap (9 m) and ramp floor
 lift are shipped regardless - both are correct on their own.
+
+## Pillar hunt round 2 — elimination table (next session: read this first)
+
+Numeric diffs PROVE each change applied (MAD 0.2-1.6 per step) yet the
+down-valley pillars survive ALL of: horizon-ramp retirement past 1 km
+(3102 px changed elsewhere), far rock cap 0.18 -> 0.05, tussock near-gate
+(no-op: inBox false on backdrop), rb zero inside 4.8 km, skirt cap 9 m.
+FACTS: pillars are on/of terrain-backdrop (hide-test), killed by UNLIT
+white override, anchored to a horizontal SKY SLOT at the wall base (the
+"lake" = sky through missing/dropped geometry - bp-nobackdrop proves the
+gradient matches the dome), evenly spaced, warm, fading up. NEXT: (a) the
+sky slot is a GEOMETRY hole - dump backdrop ring heights vs ring index
+along the down-valley azimuth and find the band that drops out of
+silhouette (suspect the FAR_R=4000 fan row or a ring whose y falls below
+the nearer ring); (b) the pillars are probably the fan row's thin
+triangles catching grazing N.L between the slot edges - fix the slot and
+they likely go with it. Probes: bluffprobe.mjs pattern in scratchpad.

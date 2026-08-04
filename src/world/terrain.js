@@ -2579,13 +2579,19 @@ export class Terrain {
       // "fixes" (the white-material probe proved the geometry clean; the
       // vertex-colour path was the painter). Deep winter wants far rock as
       // a subordinate darkening in the flutes, not full schist.
-      rb *= lerp(1, 0.18, smoothstep(2500, 6500, r2));
+      rb *= lerp(1, 0.05, smoothstep(2500, 6500, r2));
+      // ...and to zero INSIDE 2.4 km: the white-override probe (round 7)
+      // proved the down-valley "tan pillars" were this painter striping the
+      // backdrop's own inner-valley steeps at 1.9-4.2 km. On a storm-
+      // refilled deep-powder day the basin's near walls hold snow to the
+      // crests - rock is a far-range flute accent only.
+      rb *= smoothstep(2400, 4800, r2);
       // And to ZERO past 10 km: the farthest chains' schist-tinted crests,
       // half-dissolved in haze above the nearer white walls, read as smoke
       // plumes rising behind the ridge — the user called it a bushfire.
       // At that distance real Otago ranges in deep winter are white, full
       // stop.
-      rb *= 1 - smoothstep(8000, 11500, r2);
+      rb *= 1 - smoothstep(6000, 9500, r2);
       id = S_WINDPACK;
     }
 
@@ -2620,9 +2626,15 @@ export class Terrain {
     if (inBox && d < 0.25) {
       const y = this.getHeight(x, z);
       const sDeg = Math.atan(gradMag !== undefined ? gradMag : Math.tan(this.getSlope(x, z))) / DEG;
+      // Deep-powder day + round-7 probe: on the 62 m backdrop posts this
+      // per-vertex brown interpolates into the down-valley "tan pillars"
+      // and paints the distant floor as the dark band the user flagged.
+      // A storm cycle buried the far tussock anyway - only the near basin,
+      // where the fine grid can draw a patch as a patch, may show it.
       const tus = (1 - smoothstep(0.12, 0.25, d))
         * (1 - smoothstep(1500, 1570, y))
-        * (1 - smoothstep(20, 26, sDeg));
+        * (1 - smoothstep(20, 26, sDeg))
+        * (1 - smoothstep(1100, 1500, Math.hypot(x, z)));
       if (tus > 0) {
         const t = tus * 0.55;
         cr = lerp(cr, 0.58, t); cg = lerp(cg, 0.44, t); cb = lerp(cb, 0.23, t);

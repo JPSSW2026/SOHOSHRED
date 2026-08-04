@@ -1300,11 +1300,14 @@ uniform float sohoSunAlt;
 				float sohoW = 1.0 + 1.2 * smoothstep( 450.0, 1400.0, sohoDist );
 				float sohoHi = sohoSunAlt * 0.95;
 				float sohoHorizon = smoothstep( sohoHi - sohoSunAlt * 0.62 * sohoW, sohoHi, sohoNdL );
-				// Distant floor lift: a far valley floor tilted off the sun pooled
-				// into a flat "lake" of ramp shadow (demo v8 down-valley view).
-				// Beyond a few km the aerial term owns the colour; keep the beam
-				// from zeroing there so haze shades it instead of shadow.
-				sohoHorizon = max( sohoHorizon, smoothstep( 1500.0, 4200.0, sohoDist ) * 0.60 );
+				// The ramp is a NEAR-FIELD articulation tool and must retire
+				// completely with distance: on the backdrop's coarse posts the
+				// sliver case measured +-2-5 deg of normal wobble, which the eps
+				// 320 smoothing made safe under plain Lambert - but a sharpened
+				// response window re-amplifies it into the tan picket fence the
+				// user flagged in demo v8 (round-7 unlit-override probe). Beyond
+				// ~1 km aerial perspective owns all shading.
+				sohoHorizon = mix( sohoHorizon, 1.0, smoothstep( 1000.0, 2200.0, sohoDist ) );
 				sohoMicro *= sohoHorizon;
 				directLight.color *= sohoMicro;
 				sohoSunVis *= sohoMicro;
