@@ -161,8 +161,13 @@ export class BoardPhysics {
   reset(position, heading) {
     const s = this.state;
     s.position.copy(position);
-    s.velocity.set(0, 0, 0);
     s.heading = heading ?? Math.PI;
+    // Drop-in glide: a rider skates into the fall line, they don't
+    // materialise at rest - and the first human playtest found the spawn
+    // plateau flat enough to strand a stationary board. 4.5 m/s along the
+    // heading self-starts every spawn; capture scripts that want an exact
+    // speed overwrite velocity right after reset, unaffected.
+    s.velocity.set(Math.sin(s.heading), 0, Math.cos(s.heading)).multiplyScalar(4.5);
     s.pitch = 0;
     s.roll = 0;
     s.edgeAngle = 0;
