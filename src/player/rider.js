@@ -113,6 +113,21 @@ const DIM = {
 const BOARD_LIFT = 0.004;
 
 /**
+ * Ankle-bone to the underside of the sole.
+ *
+ * The `boot{side}` bone is the ANKLE, and the boot geometry hangs below it:
+ * the sole slab is centred 0.94 boot-heights down and is 24 mm thick. The
+ * IK drives the ankle, so anything that wants the boot to sit ON something
+ * has to add this — lifting by half a boot height (what the first pass did)
+ * leaves the sole 7 cm under the topsheet and the whole binding-and-boot
+ * assembly punches out through the base of the board.
+ */
+const SOLE_DROP = DIM.bootHeight * 0.94 + 0.012;
+
+/** Top of the binding baseplate above its mount — what the sole rests on. */
+const PLATE_TOP = 0.014;
+
+/**
  * Grab points on the board, in board-local space. The x column is written
  * toe-positive — the toe edge is board −X, and the arm solve negates on
  * application — so "indy grabs the toe edge" stays legible as a positive x.
@@ -1392,9 +1407,21 @@ export class Rider {
       const bt = this.bones[`boot${side}`];
       const mount = this.bones[`binding${tag}`];
       if (!bt || !mount) { console.warn(`[rider] rig check: missing boot${side}/binding${tag}`); continue; }
-      const d = this._chk.setFromMatrixPosition(bt.matrixWorld)
-        .sub(this._chk2.setFromMatrixPosition(mount.matrixWorld)).length();
-      if (d > 0.12) console.warn(`[rider] boot${side} is ${d.toFixed(3)} m off binding${tag}`);
+      // Measure the SOLE against the baseplate, not the ankle against the
+      // mount: the ankle is meant to sit a boot-height above the mount, so a
+      // bone-to-mount distance cannot tell a boot standing on the plate from
+      // one buried through the deck — which is exactly the regression that
+      // got past this check and showed up in play as the binding poking out
+      // under the board.
+      const sole = this._chk.setFromMatrixPosition(bt.matrixWorld);
+      const plate = this._chk2.setFromMatrixPosition(mount.matrixWorld);
+      const drop = sole.y - SOLE_DROP - (plate.y + PLATE_TOP);
+      const lateral = Math.hypot(sole.x - plate.x, sole.z - plate.z);
+      if (Math.abs(drop) > 0.02) {
+        console.warn(`[rider] boot${side} sole sits ${drop.toFixed(3)} m ` +
+          `${drop < 0 ? 'BELOW' : 'above'} binding${tag}'s plate`);
+      }
+      if (lateral > 0.06) console.warn(`[rider] boot${side} is ${lateral.toFixed(3)} m off binding${tag} laterally`);
     }
   }
 
@@ -1625,8 +1652,9 @@ export class Rider {
     hip.updateWorldMatrix(true, false);
     target.updateWorldMatrix(true, false);
     const p = this._v.setFromMatrixPosition(target.matrixWorld);
-    // Boots sit above the binding plate by the boot's own height.
-    p.y += DIM.bootHeight * 0.5;
+    // Stand the boot ON the baseplate: the IK target is the ankle, so it has
+    // to clear the whole drop from ankle to sole, plus the plate itself.
+    p.y += SOLE_DROP + PLATE_TOP;
     hip.worldToLocal(p);
 
     const l1 = DIM.thighLength, l2 = DIM.shinLength;
