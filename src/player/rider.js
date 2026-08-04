@@ -167,8 +167,13 @@ function makeShellTexture(rng, base, size = 256) {
   g.putImageData(img, 0, 0);
 
   // Twill: a faint diagonal, which is what actually distinguishes a coated
-  // face fabric from a flat painted surface at grazing angles.
-  g.strokeStyle = 'rgba(255,255,255,0.028)';
+  // face fabric from a flat painted surface at grazing angles. The white
+  // overlays are relative to the base: on a dark kit the bright-base
+  // opacities wash charcoal toward silver (round-8 black-out catch).
+  const bl = ((base >> 16 & 255) * 0.2126 + (base >> 8 & 255) * 0.7152 + (base & 255) * 0.0722) / 255;
+  const wA = bl > 0.3 ? 0.028 : 0.011;
+  const wB = bl > 0.3 ? 0.045 : 0.018;
+  g.strokeStyle = `rgba(255,255,255,${wA})`;
   g.lineWidth = 1;
   for (let i = -size; i < size * 2; i += 3) {
     g.beginPath(); g.moveTo(i, 0); g.lineTo(i + size, size); g.stroke();
@@ -180,7 +185,7 @@ function makeShellTexture(rng, base, size = 256) {
     g.beginPath(); g.moveTo(i + 0.5, 0); g.lineTo(i + 0.5, size); g.stroke();
     g.beginPath(); g.moveTo(0, i + 0.5); g.lineTo(size, i + 0.5); g.stroke();
   }
-  g.strokeStyle = 'rgba(255,255,255,0.045)';
+  g.strokeStyle = `rgba(255,255,255,${wB})`;
   for (let i = 0; i < size; i += 8) {
     g.beginPath(); g.moveTo(i + 1.5, 0); g.lineTo(i + 1.5, size); g.stroke();
     g.beginPath(); g.moveTo(0, i + 1.5); g.lineTo(size, i + 1.5); g.stroke();
@@ -984,7 +989,7 @@ export class Rider {
         // greying out under AgX in shade - the trick every game uses to make
         // a signal jacket read as signal at all light levels.
         emissive: new THREE.Color(base),
-        emissiveIntensity: 0.07,
+        emissiveIntensity: 0.02,
       });
       return m;
     };
@@ -1017,13 +1022,15 @@ export class Rider {
     // jacket's red is deep (~#C33) and keeps its chroma; the highlights get
     // their orange from shading, not from the albedo. So: darker base, and
     // the emissive floor carries the signal in shade.
-    // ONE kit, one cloth (user: the quilted torso against plainer limbs
-    // split the rider into a dark vest over pink arms). Same base, same
-    // roughness and sheen, quilt pulled way down; the pants sit a half-step
-    // darker only.
-    const shell = cloth(0xc42d08, 0.60, 0.26, [1.4, 2], { quilt: 0.12, wrinkle: 1.1 });
-    const shellGrey = cloth(0xc42d08, 0.60, 0.26, [1.4, 2], { wrinkle: 1.1 });
-    const pants = cloth(0xb62808, 0.60, 0.26, [1.4, 2], { wrinkle: 1.2 });
+    // ALL BLACK (user: black the rider out and let the silhouette carry).
+    // Round-3 law still binds: true-black albedo renders as a void on open
+    // snow, so the kit sits at charcoal (L~30-36) where the snow bounce can
+    // still model the folds, with a restrained fabric sheen. The jacket a
+    // half-step lighter than the pants so the garments separate; the
+    // mirrored goggle becomes the rider's single accent.
+    const shell = cloth(0x2c2e33, 0.60, 0.22, [1.4, 2], { quilt: 0.12, wrinkle: 1.1 });
+    const shellGrey = cloth(0x2c2e33, 0.60, 0.22, [1.4, 2], { wrinkle: 1.1 });
+    const pants = cloth(0x232529, 0.62, 0.20, [1.4, 2], { wrinkle: 1.2 });
     const shellDark = shellGrey; // collar/hem trim reads as the black blocking
 
     const helmet = new THREE.MeshStandardMaterial({
