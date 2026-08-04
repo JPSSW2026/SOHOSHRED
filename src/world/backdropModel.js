@@ -24,11 +24,6 @@ export async function mountBackdropModel(ctx) {
     fog: false,
     toneMapped: true,
     side: THREE.DoubleSide,   // look-dev: orientation-proof
-    // The valley-floor sink below is an ALPHA fade: the sunk region lets
-    // the real inversion deck / sky render through, which matches the fog
-    // by construction (a painted constant never matched the post chain).
-    transparent: true,
-    depthWrite: false,
   });
   // The painting's lower half is its valley floor, painted grey-olive.
   // From ride height the terrain silhouette hides it, but from the
@@ -49,11 +44,21 @@ export async function mountBackdropModel(ctx) {
 		// ~y 2100 and the ridge feet start ~2200, so the fog rises to just
 		// below them — "only the tops of the mountains visible", with a
 		// graded shoulder so the midslopes emerge from haze, not a cut.
-		// A light whitening rides the shoulder so the emerging midslopes
-		// look haze-licked rather than cleanly clipped.
+		// The fade is DITHERED DISCARD, not alpha blending: a 457k-tri
+		// full-frame transparent mesh cost SwiftShader 51 s/frame at the
+		// base area (measured, 15x). Opaque + interleaved-gradient-noise
+		// discard keeps the depth-write and the speed; the deck fog and
+		// sky behind still show through the discarded pixels, and the
+		// light whitening rides the shoulder so the emerging midslopes
+		// look haze-licked rather than screen-doored.
 		float sink = 1.0 - smoothstep( 1860.0, 2400.0, vSohoBW.y );
-		gl_FragColor.rgb = mix( gl_FragColor.rgb, vec3( 1.14, 1.22, 1.35 ), sink * 0.55 );
-		gl_FragColor.a *= 1.0 - sink * 0.97;
+		// Shoulder is PAINTED haze (pure colour mix — artifact-free); the
+		// dithered discard only begins once the pixel is already ~90%
+		// fog-coloured, so the screen-door has nothing to reveal.
+		gl_FragColor.rgb = mix( gl_FragColor.rgb, vec3( 1.14, 1.22, 1.35 ), min( sink * 1.25, 0.95 ) );
+		float cut = smoothstep( 0.70, 0.985, sink );
+		float ign = fract( 52.9829189 * fract( 0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y ) );
+		if ( cut > ign ) discard;
 	}
 	#include <dithering_fragment>`);
   };
