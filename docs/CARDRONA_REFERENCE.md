@@ -94,3 +94,27 @@ Fourteen seconds from the Soho Basin chair, ending on the demo-v6 view:
 - Confirmed from the down-valley pan: mottled brown-white rolling ranges
   on the Pisa side, tiny serrated white peaks far beyond, real lenticular
   clouds, vast smooth tracked snowfields.
+
+## 6. Shredders sizzle reel (user upload) — quality-bar notes
+
+42 s of FoamPunch's own marketing capture. What their frames actually do:
+
+- **High-key lighting.** Snow rides near the top of the tonal range with
+  GENTLE modelling; shadow shapes come from smooth dune-scale landforms
+  with wide soft penumbras — never polygonal, never harsh. Shadow colour
+  is cool but the key is bright. Our LAW-2 chroma numbers should sit on
+  top of THIS key, not on a low-key dramatic grade.
+- **Rider is silhouette-first.** At chase distance: one continuous
+  saturated shape (red shell reads as a single blob + dark head), zero
+  joint detail. Close up (pink-shell frame): the identity is the HOOD
+  MASS over the helmet, large 10-20 cm soft-edged folds, matte fabric,
+  strong crease AO, mirror goggle. No specular ping anywhere on cloth.
+- **Sun-in-frame glare is local.** A big warm glow AROUND the sun disc;
+  the rest of the frame keeps contrast and saturation. A frame-wide veil
+  wash is a defect by their own standard.
+- **Backdrop peaks are simple.** Smooth painterly masses, cool-blue
+  shadow faces, warm rim light near the sun azimuth, no high-frequency
+  noise at distance.
+- Their world is treed and parky (rails, banners, domes); ours is Soho
+  alpine — furniture ideas (course banners, marker poles) transfer, the
+  conifers do not.
