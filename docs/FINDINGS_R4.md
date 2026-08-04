@@ -249,3 +249,24 @@ Still open, in order: props lighting/aerial + contact (5/5), edge slab
 LAW-1 backlight HG sun-tint (1.277 vs <=1.06), LOD zigzag in snow-detail,
 rock TV-static albedo near camera, portrait backdrop slat fence, f0180
 air rig break, orphan shadows.
+
+## Down-valley seam artifact (user report, demo v8) — diagnosis state
+
+The "weird lines between backdrop and foreground": three stacked layers
+at the field/backdrop seam, visible down-valley (valley-vista reproduces).
+
+ESTABLISHED: (1) tan pillars are 100-300 m tall - TALLER than any clipmap
+skirt (cap to 9 m changed nothing) - so they are BACKDROP INNER-EDGE
+geometry: prime suspects are far-LUT bilinear extrapolation at the inner
+boundary (LUT undefined inside BACKDROP_INNER -> spikes) or the inner
+angular ring rows stretching; (2) the navy "lake" band sits between the
+field silhouette and the backdrop wall base - either the backdrop's own
+floor pooling dark or sky through a residual radial gap; ramp far-floor
+lift (shipped) only partially brightens it; (3) the floating-island look
+is the wall's base hidden behind layers 1-2.
+
+NEXT ATTACK: white-override probe on the backdrop alone at the
+valley-vista camera; then dump far-LUT heights along the down-valley
+azimuth at r 1700-4200 and compare with _heightAt - a spike or a datum
+step at the seam will identify itself. Skirt cap (9 m) and ramp floor
+lift are shipped regardless - both are correct on their own.

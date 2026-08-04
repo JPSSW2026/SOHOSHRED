@@ -1300,6 +1300,11 @@ uniform float sohoSunAlt;
 				float sohoW = 1.0 + 1.2 * smoothstep( 450.0, 1400.0, sohoDist );
 				float sohoHi = sohoSunAlt * 0.95;
 				float sohoHorizon = smoothstep( sohoHi - sohoSunAlt * 0.62 * sohoW, sohoHi, sohoNdL );
+				// Distant floor lift: a far valley floor tilted off the sun pooled
+				// into a flat "lake" of ramp shadow (demo v8 down-valley view).
+				// Beyond a few km the aerial term owns the colour; keep the beam
+				// from zeroing there so haze shades it instead of shadow.
+				sohoHorizon = max( sohoHorizon, smoothstep( 1500.0, 4200.0, sohoDist ) * 0.60 );
 				sohoMicro *= sohoHorizon;
 				directLight.color *= sohoMicro;
 				sohoSunVis *= sohoMicro;

@@ -2460,8 +2460,13 @@ export class Terrain {
       }
     }
 
-    // Skirt ring: duplicate the perimeter, dropped.
-    const drop = Math.max(0.6, 1.2 * s);
+    // Skirt ring: duplicate the perimeter, dropped. On the coarsest level
+    // 1.2*s is a 38 m wall, and down-valley - where the backdrop's floor
+    // falls below the field edge - that wall hangs in free view as a fence
+    // of tan pillars (vertical faces classify as rock): the user's "weird
+    // lines between backdrop and foreground". The outer seam only ever
+    // needs to cover BACKDROP_SINK plus drift-band mismatch, so cap it.
+    const drop = Math.min(Math.max(0.6, 1.2 * s), 9);
     for (let k = 0; k < perim.length; k++) {
       const src = perim[k], dst = gridV + k;
       const ps = src * 3, pd = dst * 3;
