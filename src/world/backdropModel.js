@@ -81,6 +81,17 @@ export async function mountBackdropModel(ctx) {
 		// painted valley floor was itself the brightest thing in frame.
 		gl_FragColor.rgb *= uBdGain;
 
+		// The painted art is a blue-grey range; the direction is a snowy one.
+		// Pull chroma back toward the art's own luminance and lift the value,
+		// so distant snow reads as snow rather than as weather. Proportional,
+		// not additive, so rock keeps its relative darkness and the ridge
+		// structure survives.
+		{
+			vec3 Wl = vec3( 0.2126, 0.7152, 0.0722 );
+			float aL = dot( gl_FragColor.rgb, Wl );
+			gl_FragColor.rgb = mix( gl_FragColor.rgb, vec3( aL ), 0.62 ) * 1.38;
+		}
+
 		// The painted floor reaches ~y 2100 and the ridge feet start ~2200,
 		// so the range sinks into the inversion deck from below: only the
 		// tops stay clear of it.
@@ -106,7 +117,7 @@ export async function mountBackdropModel(ctx) {
 		// Weighted to the base as well: pow() keeps the mid-slopes far clearer
 		// than a linear ramp did, so ridge structure survives instead of being
 		// washed into a single wall of blue.
-		gl_FragColor.rgb = mix( gl_FragColor.rgb, hazeTgt, min( pow( sink, 1.9 ) * 1.30, 1.0 ) );
+		gl_FragColor.rgb = mix( gl_FragColor.rgb, hazeTgt, min( pow( sink, 2.3 ) * 1.25, 1.0 ) );
 
 		// Soft ceiling, not a hard one -- and well ABOVE the horizon, not
 		// below it.
@@ -151,8 +162,8 @@ export async function mountBackdropModel(ctx) {
   // slightly closer so it subtends a larger angle. The base still sinks into
   // the inversion deck, so the extra height reads as peaks rather than as a
   // wall dropped in front of the valley.
-  root.scale.set(13500, 9200, 3500);
-  g.position.set(300, 1850, -5200);
+  root.scale.set(12200, 6400, 3500);
+  g.position.set(300, 1180, -6400);
   // The runs face down-valley (-z); the painted face looks back up at them.
   ctx.scene.add(g);
   return g;
