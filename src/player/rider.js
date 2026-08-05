@@ -1284,7 +1284,7 @@ export class Rider {
     // Shell seam and brim.
     const shellSeam = trim(new THREE.TorusGeometry(DIM.headRadius * 1.005, 0.004, 6, 22), M.rubber, head, 0, DIM.headRadius * 0.86, 0);
     shellSeam.rotation.y = Math.PI * 0.5;
-    shellSeam.scale.set(1.10, 1.06, 1.0);
+    shellSeam.scale.set(1.02, 1.04, 1.0);   // was 1.10: it punched out through the hood as a grey peg
     // HOOD UP, per the reference: the single most recognisable thing about
     // that silhouette. A cowl, not a full sphere -- pushed back off the face
     // so the goggle still reads as the brightest surface on the rider, and
@@ -1292,9 +1292,21 @@ export class Rider {
     // up and full of air. In the deep crimson, so the head reads as a darker
     // mass against the bright shell body, which is what gives the reference
     // its weight.
-    const hoodUp = part(new THREE.SphereGeometry(DIM.headRadius * 1.06, 16, 12), M.shellGrey,
-      head, 0, DIM.headRadius * 0.86, -DIM.headRadius * 0.74);
-    hoodUp.scale.set(0.98, 1.04, 1.16);
+    // Sat at z = -0.74 head radii this was BEHIND the skull, not over it, and
+    // read as a bun stuck to the back of the head with a hard scalloped
+    // intersection where it cut the helmet. A hood is a shell that wraps the
+    // skull and opens at the face, so: centred close to the head, enlarged to
+    // clear it, and pushed back only enough to leave the goggle proud.
+    const hoodUp = part(new THREE.SphereGeometry(DIM.headRadius * 1.22, 18, 14), M.shellGrey,
+      head, 0, DIM.headRadius * 0.80, -DIM.headRadius * 0.22);
+    hoodUp.scale.set(1.06, 1.10, 1.20);
+    // The opening. Without a rim a hood is just a ball -- the thick edge round
+    // the face is the whole reason a hood reads as fabric with a hole in it
+    // rather than as a helmet in another colour.
+    const hoodRim = trim(new THREE.TorusGeometry(DIM.headRadius * 0.95, DIM.headRadius * 0.17, 8, 20),
+      M.shellGrey, head, 0, DIM.headRadius * 0.80, DIM.headRadius * 0.30);
+    hoodRim.rotation.x = Math.PI * 0.5;
+    hoodRim.scale.set(1.04, 1.0, 0.72);
 
     const brim = part(new THREE.CylinderGeometry(DIM.headRadius * 1.03, DIM.headRadius * 1.0, 0.016, 18), M.helmet, head, 0, DIM.headRadius * 0.99, 0.008);
     brim.scale.z = 1.08;
