@@ -1059,7 +1059,12 @@ export class Rider {
     // measured nearly invisible — the lit panels sit on the AgX shoulder,
     // so the wash is exposure physics, not the kit. Albedo stays at the
     // locked charcoal.)
-    const shell = cloth(0x2c2e33, 0.66, 0.11, [1.4, 2], { quilt: 0.12, wrinkle: 1.1 });
+    // The jacket body carries the rider's one high-chroma colour (§6.3 names
+    // #E8531F). It had been left at the same charcoal as the grey blocking --
+    // byte-identical hex -- so the yoke and sleeve break the rig goes to the
+    // trouble of building was invisible, and the whole figure was eight
+    // shades of one charcoal against a white mountain.
+    const shell = cloth(0xe8531f, 0.66, 0.11, [1.4, 2], { quilt: 0.12, wrinkle: 1.1 });
     const shellGrey = cloth(0x2c2e33, 0.66, 0.11, [1.4, 2], { wrinkle: 1.1 });
     const pants = cloth(0x232529, 0.68, 0.10, [1.4, 2], { wrinkle: 1.2 });
     const shellDark = shellGrey; // collar/hem trim reads as the black blocking
@@ -1620,11 +1625,19 @@ export class Rider {
     // deck and — once the board roll was applied — 5.6 cm BELOW the contact
     // plane, burying the seat and back leg in the heightfield.
     let hx = Math.sin(A.incline) * 0.10 * live;
-    hips.position.y = standH - squat;
+    const MIN_PELVIS_Y = 0.30;
+    // Bound the squat itself, not only the lateral shift. absorb + tuck +
+    // compress + grab can sum to 0.72 against a 0.735 stance height, which
+    // puts the pelvis at deck level with the thighs horizontal -- a toilet
+    // squat, not a stance. The guard below could never catch it: it works by
+    // trimming hx, and hx only reaches the pelvis height through sin(roll),
+    // so on a flat board it has no authority at all. Straight-line absorb is
+    // exactly where the collapse looked worst and exactly where sin(roll) is
+    // zero.
+    hips.position.y = Math.max(standH - squat, MIN_PELVIS_Y);
     // Guard it directly: the pelvis bone, after the deck roll, must stay
     // clear of the snow. Solved rather than tuned, so it holds at any roll.
     const sr = Math.sin(rollNow), cr = Math.cos(rollNow);
-    const MIN_PELVIS_Y = 0.30;
     if (Math.abs(sr) > 1e-4 && hx * sr + hips.position.y * cr < MIN_PELVIS_Y) {
       const limit = (MIN_PELVIS_Y - hips.position.y * cr) / sr;
       if (Math.abs(limit) < Math.abs(hx)) hx = limit;
