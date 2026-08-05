@@ -119,6 +119,8 @@ export class ChaseCamera {
     // rather than easing over from wherever the camera was before.
     this._speedLP = null;
     this._offPrev = null;
+    this._chaseLen = null;
+    this._clearLP = null;
     this._computeDesired(s, 1 / 60);
     this._pos.copy(this._desired);
     this._vel.set(0, 0, 0);
@@ -392,8 +394,14 @@ export class ChaseCamera {
 
     // 1. Never below the surface under the camera itself.
     const ground = terrain.getHeight(this._pos.x, this._pos.z);
-    if (this._pos.y < ground + GROUND_CLEARANCE) {
-      this._pos.y = ground + GROUND_CLEARANCE;
+    const minY = ground + GROUND_CLEARANCE;
+    if (this._pos.y < minY) {
+      // Lifted at a rate, not assigned. The sampled ground under the camera
+      // steps as the station sweeps across new terrain -- 0.37 m of it per
+      // frame at 22 m/s -- and a hard assignment turns every one of those
+      // steps into a shove. 18 is ~55 ms, so the camera is out of the snow
+      // faster than the eye tracks, without the step.
+      this._pos.y = damp(this._pos.y, minY, 18, dt);
       if (this._vel.y < 0) this._vel.y = 0;
     }
 
@@ -405,7 +413,18 @@ export class ChaseCamera {
     // is spurious. Gating here also kills the toggling — a minimum-charge
     // ollie apexes at ~0.34 m, right on the old engage threshold, so tap
     // ollies and sastrugi chatter flipped the camera between two stations.
-    if (!s.grounded) return;
+    // Airborne: nothing to avoid, but do NOT return. Returning froze the
+    // chase length wherever it happened to be and then re-engaged from that
+    // stale value on touchdown -- a single-frame jump, and the source of the
+    // 27,000 m/s2 outlier in the straight-line-at-speed trace. Relax the leash
+    // instead, so landing continues from wherever the relaxation reached.
+    if (!s.grounded) {
+      if (this._chaseLen != null) {
+        this._v.subVectors(this._pos, s.position);
+        this._chaseLen = damp(this._chaseLen, Math.max(this._v.length(), MIN_CHASE), 4, dt);
+      }
+      return;
+    }
 
     this._v.subVectors(this._pos, s.position);
     const len = this._v.length();
@@ -447,31 +466,50 @@ export class ChaseCamera {
       }
       prevGap = gap;
     }
-    if (clear < len - 0.01) {
-      // Pull in, but keep a minimum so the camera never ends up inside the
-      // rider's own head. The floor is generous: at 1.9 m the rider filled a
-      // third of the frame every time a convex roll nudged the sweep, which
-      // read as the camera panicking. Better to let the hill clip the bottom
-      // of frame for a beat than to ride the rider's shoulder.
-      const target = Math.max(clear, MIN_CHASE);
-      // RATE-LIMITED, not a teleport. This used to assign _pos directly -- a
-      // one-frame move of 8-11 m that tripled the rider on screen in 16 ms on
-      // every touchdown. The release was spring-smoothed but the re-engage
-      // was not, so the whole thing read as a violent zoom-punch into the
-      // rider's back. Damping the distance gives the pull-in a rate.
-      const d = damp(len, target, 12, dt);
-      this._pos.copy(s.position).addScaledVector(this._v, d);
-      const g2 = terrain.getHeight(this._pos.x, this._pos.z);
-      if (this._pos.y < g2 + GROUND_CLEARANCE) this._pos.y = g2 + GROUND_CLEARANCE;
-      this._vel.multiplyScalar(0.4);
-    } else if (len < MIN_CHASE) {
-      // Nothing in the way, but the spring has overshot inward — measured at
-      // 2.1 m through hard S-turns, which is a face full of rider.
-      this._pos.copy(s.position).addScaledVector(this._v, MIN_CHASE);
-      const g3 = terrain.getHeight(this._pos.x, this._pos.z);
-      if (this._pos.y < g3 + GROUND_CLEARANCE) this._pos.y = g3 + GROUND_CLEARANCE;
+    // ---- Chase length: one continuous state, engaged or not ----------
+    //
+    // This is the whole of the high-speed judder. Measured straight-lining at
+    // 22 m/s, disabling this method took station acceleration from a p99 of
+    // 5744 m/s2 to 36 -- a 50x collapse -- while the rider itself sat at 25.
+    //
+    // The old shape had no state. While the sweep reported an intrusion it
+    // damped the camera inward and multiplied velocity by 0.4 EVERY FRAME;
+    // the moment the sweep came back clear it did nothing at all and handed
+    // the camera straight back to the spring. So engaging was a ramp, releasing
+    // was a snap, and the repeated velocity kick fought the spring throughout.
+    // At speed the sweep flickers between hit and miss many times a second as
+    // rolls pass under the ray, so the camera was being alternately dragged in
+    // and released several times a second.
+    //
+    // A single damped chase length, maintained whether or not anything is in
+    // the way, makes both directions the same continuous motion. The spring
+    // still owns the station; this only ever shortens the leash.
+    // Filter the SWEEP RESULT, not just the response to it.
+    //
+    // At 22 m/s the ray sweeps 0.37 m of new terrain every frame, so `clear`
+    // flips between "nothing in the way" and a hard pull-in many times a
+    // second as rolls pass beneath it. Damping the camera's response to a
+    // signal that noisy still tracks the noise -- which is why a damped chase
+    // length alone only got p99 from 5744 to 2852 against the 36 measured
+    // with this method disabled entirely. The instability is in the input.
+    //
+    // Terrain occlusion is a slow physical event: a hill takes a good fraction
+    // of a second to come between camera and rider. Filtering `clear` on that
+    // timescale removes the flicker without ever being late for the real
+    // thing.
+    const rawWant = clear < len - 0.01 ? Math.max(clear, MIN_CHASE) : Math.max(len, MIN_CHASE);
+    if (this._clearLP == null) this._clearLP = rawWant;
+    this._clearLP = damp(this._clearLP, rawWant, rawWant < this._clearLP ? 7 : 3, dt);
+    const want = this._clearLP;
+    if (this._chaseLen == null) this._chaseLen = want;
+    // Pull in faster than we let out: getting a hill out of the lens is
+    // urgent, giving the shot back is not.
+    this._chaseLen = damp(this._chaseLen, want, want < this._chaseLen ? 8 : 3, dt);
+    if (this._chaseLen < len - 0.01) {
+      this._pos.copy(s.position).addScaledVector(this._v, this._chaseLen);
+      const g2 = terrain.getHeight(this._pos.x, this._pos.z) + GROUND_CLEARANCE;
+      if (this._pos.y < g2) this._pos.y = damp(this._pos.y, g2, 18, dt);
     }
-
   }
 
   /* ------------------------------------------------------------------ *
