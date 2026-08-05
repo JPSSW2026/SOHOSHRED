@@ -185,6 +185,37 @@ export async function mountBackdropModel(ctx) {
   // The runs face down-valley (-z); the painted face looks back up at them.
   ctx.scene.add(g);
 
+  // RING the bowl, do not wall one side of it.
+  //
+  // A single 12.2 km slab at 6.4 km subtends about 87 degrees, so the massif
+  // existed in exactly one of nine framings: valley-vista looked at mountains
+  // and hero-basin, west-spur and chase-carve looked at empty gradient sky
+  // with the bowl rim as the only horizon event. Majesty cannot be delivered
+  // by a backdrop that covers a quarter of the view.
+  //
+  // Three more copies rotated about the basin, each yawed to face inward and
+  // nudged in radius and height so the skyline does not repeat as an obvious
+  // tiling. Clones share geometry and material with the original, so this
+  // costs three draw calls and no extra memory for a 495k-triangle mesh.
+  const CENTRE = new THREE.Vector3(300, 1180, 0);
+  const RADIUS = 6400;
+  for (const [deg, rScale, yLift] of [[92, 0.96, -60], [188, 1.04, 40], [270, 0.99, -20]]) {
+    const a = deg * Math.PI / 180;
+    const ring = new THREE.Group();
+    ring.name = `backdrop-model-${deg}`;
+    const clone = root.clone(true);
+    clone.traverse((o) => { if (o.isMesh) o.material = mat; });
+    ring.add(clone);
+    ring.position.set(
+      CENTRE.x + Math.sin(a) * RADIUS * rScale,
+      1180 + yLift,
+      CENTRE.z - Math.cos(a) * RADIUS * rScale,
+    );
+    // Face the basin centre.
+    ring.rotation.y = a;
+    ctx.scene.add(ring);
+  }
+
   // Now that the group carries its final transform, measure it and set the
   // band: the floor dissolves below 42% of the model's height, and everything
   // above 62% is clear of the deck.
