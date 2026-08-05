@@ -12,29 +12,54 @@ means the change is in and reasoned but not yet demonstrated in an image.
 
 ---
 
-## ⚠ Blocker: the capture is not deterministic
+## ⚠ Blocker: the capture is not deterministic — and it is a *renderer* problem
 
 Two runs of `tools/shoot.mjs --shots chase-carve` on the *same build* produce
 different images: **17.0% of pixels differ by more than 4 levels, max 146**.
-That is far above anti-alias jitter — it is a different sim state, and it is
-large enough to swamp the tile-contrast and channel-ratio measurements in this
-document. Every before/after comparison here, including the critics' numbers,
-carries that noise.
+That is far above anti-alias jitter, and large enough to swamp the tile-contrast
+and channel-ratio measurements in this document. Every before/after comparison
+here, including the critics' numbers, carries that noise.
 
 Treat measured deltas below the noise floor as unproven until this is fixed.
 
-Ruled out so far:
-- **Sun drift** — `_solarKey` is keyed on `CONFIG.world.timeOfDay/dayOfYear`,
-  not elapsed time, so the sun does not move between runs.
-- **The settle** — fixed count of fixed-dt steps; deterministic by construction.
-- **Accumulated fx state** — clearing the trail texture, particle pool, spray
-  debt and fx clock at the top of `shot()` made it *worse* (37.5% differing),
-  because zeroing the particle clock leaves pooled entries carrying stale
-  spawn stamps. Reverted; do not retry this shape.
+**The sim is not the culprit.** Calling `shot('chase-carve')` three times in one
+page session, capturing physics state either side of each call:
 
-Next suspect: async terrain LOD streaming completing at variable times, which
-would change geometry between runs. `physics.reset()` restores the rider but
-nothing restores streaming state.
+| run | after `reset()` | after `shot()` | image |
+|-----|-----------------|----------------|-------|
+| 1 | speed 0, x 400, z 740 | speed 5.0278, x 138.652, z 913.385 | differs |
+| 2 | speed 0, x 400, z 740 | speed 5.0069, x 138.689, z 913.076 | differs |
+| 3 | speed 0, x 400, z 740 | speed 5.0069, x 138.689, z 913.076 | differs |
+
+`reset()` lands on byte-identical state every time, and runs 2 and 3 end
+**bit-identical in physics** — yet all three render differently. Whatever moves
+the pixels is downstream of the simulation.
+
+Run 1 differing from 2 and 3 is a separate, smaller effect: until `shot()` sets
+`manualTime`, the engine runs on requestAnimationFrame, so a load-dependent
+number of wall-clock frames perturb the state the first settle starts from.
+
+### Ruled out — do not retry these shapes
+
+| hypothesis | result |
+|---|---|
+| Sun drift | `_solarKey` is keyed on `CONFIG.world.timeOfDay/dayOfYear`, not elapsed time. Not it |
+| The settle | Fixed count of fixed-dt steps; deterministic by construction |
+| Async terrain LOD streaming | **Disproven** — `_updateLod` rebuilds dirty levels synchronously inside `update()` |
+| Clearing trails + particle pool + fx clock in `shot()` | **Worse: 37.5%.** Zeroing the particle clock leaves pooled sprites carrying spawn stamps from the future |
+| Freezing `manualTime` at ready + clearing trails per shot | **Worse: 28.3%.** Reverted |
+
+Both attempted fixes measured worse than doing nothing, which is itself
+evidence: changing *what* is drawn reshuffles the noise instead of removing it.
+
+### Next suspect
+
+Temporal accumulation in the renderer — TAA history, motion-blur reprojection,
+or bloom feedback — and/or non-deterministic rasterisation in SwiftShader under
+multithreading. The check that would settle it: render the same frozen frame
+twice within one session, with no sim step between, and diff. If those differ,
+it is purely the renderer and no amount of sim hygiene will help; the capture
+path then needs temporal effects disabled for stills.
 
 ## Severity 5
 
