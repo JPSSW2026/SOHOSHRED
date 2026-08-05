@@ -41,8 +41,16 @@ import { clamp01, lerp, smoothstep } from '../core/rng.js';
 
 /** Side of the square world region the target covers, metres. */
 const REGION_SIZE = 320;
-/** Target resolution. 320 m / 2048 ≈ 15.6 cm per texel. */
-const RES = 2048;
+/**
+ * Target resolution. The region is fixed at build time around the spawn, so
+ * texel size can only come from here. At 2048 this was 6.4 texels/m, and the
+ * PROFILE below spans 3.5 half-widths -- 0.56 m for a carve, i.e. the whole
+ * six-column cross-section landed inside about three texels. The lip and
+ * feather columns collapsed onto the trench columns and the board left a
+ * two-texel scratch instead of a trench with walls. 4096 gives 12.8 texels/m,
+ * so the profile resolves; the cost is a 67 MB RGBA8 target.
+ */
+const RES = 4096;
 /** Rider travel between stamps, metres. */
 const STAMP_STEP = 0.14;
 /** Ring capacity, in strip segments, for one frame's worth of stamps. */
@@ -298,7 +306,12 @@ export class TrailSystem {
     const sink = clamp01((s.sinkDepth || 0) / Math.max(CONFIG.physics.powderDepth, 1e-3));
     const edge = clamp01(s.edgeLoad || 0);
     const slip = clamp01(Math.abs(s.lateralSpeed || 0) / 6);
-    const fast = smoothstep(2, 14, s.speed);
+    // Ramped 2->14 m/s, which meant a carve at 18 km/h -- an ordinary turn,
+    // and the speed these shots are captured at -- wrote its mark at 0.16 of
+    // full depth. A board displaces snow at walking pace; what rises with
+    // speed is how much is thrown, not whether the edge cuts. Saturate near
+    // the bottom of the range instead.
+    const fast = smoothstep(0.8, 6.0, s.speed);
 
     // No mark at all on rock, and a faint one on ice.
     const surf = s.surface;
