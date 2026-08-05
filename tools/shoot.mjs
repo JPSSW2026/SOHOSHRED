@@ -155,6 +155,13 @@ async function main() {
   }
   console.log(`[shoot] ready in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
+  // Wait for the streamed world models. isReady deliberately does not block on
+  // them -- a player should not wait on a 15 MB range wall -- but a capture
+  // must, or it photographs a world with no mountains in it.
+  const tM = Date.now();
+  await page.evaluate(() => window.__SOHO_WORLD_MODELS || Promise.resolve());
+  console.log(`[shoot] world models in ${((Date.now() - tM) / 1000).toFixed(1)}s`);
+
   await page.evaluate(([w, h]) => {
     window.__SOHO.setManual(true);
     window.__SOHO.setSize(w, h);

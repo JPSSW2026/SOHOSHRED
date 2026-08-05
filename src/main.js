@@ -136,10 +136,17 @@ async function boot() {
   // massif was mounted, scaled and shaded correctly and simply was not in
   // the scene yet at the moment of capture -- which is why changes to its
   // scale, position, haze and clamp all produced pixel-identical frames.
+  // Kept as a promise on the harness so a CAPTURE can wait for the world to
+  // finish arriving, while a player never does. These are 15 MB and 19 MB and
+  // take well over a minute to fetch and parse here, so blocking boot on them
+  // is not an option -- but a still photographed before they land is a still
+  // of a mountain range that is not there yet, which is exactly what every
+  // shot in this project has been.
   const worldModels = Promise.all([
     mountBackdropModel(ctx).catch((e) => console.warn('[backdrop-model]', e.message)),
     mountBaseStation(ctx).catch((e) => console.warn('[base-station]', e.message)),
   ]);
+  window.__SOHO_WORLD_MODELS = worldModels;
 
   // Game flow: sting -> title -> riding. Sockets for the user-supplied
   // presentation assets; the riding core is untouched.
@@ -262,14 +269,6 @@ async function boot() {
       };
     },
   };
-
-  // Let the streamed models land before declaring ready, so a capture cannot
-  // photograph the world without its mountains. Bounded, so a missing or slow
-  // asset degrades to the old behaviour instead of hanging the boot.
-  await Promise.race([
-    worldModels,
-    new Promise((r) => setTimeout(r, 20000)),
-  ]);
 
   // One warm frame so shaders compile before anyone screenshots.
   engine.tick(1 / 60);
