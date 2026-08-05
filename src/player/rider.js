@@ -1059,18 +1059,39 @@ export class Rider {
     // measured nearly invisible — the lit panels sit on the AgX shoulder,
     // so the wash is exposure physics, not the kit. Albedo stays at the
     // locked charcoal.)
-    // The jacket body carries the rider's one high-chroma colour (§6.3 names
-    // #E8531F). It had been left at the same charcoal as the grey blocking --
-    // byte-identical hex -- so the yoke and sleeve break the rig goes to the
-    // trouble of building was invisible, and the whole figure was eight
-    // shades of one charcoal against a white mountain.
-    const shell = cloth(0xe8531f, 0.66, 0.11, [1.4, 2], { quilt: 0.12, wrinkle: 1.1 });
-    const shellGrey = cloth(0x2c2e33, 0.66, 0.11, [1.4, 2], { wrinkle: 1.1 });
-    const pants = cloth(0x232529, 0.68, 0.10, [1.4, 2], { wrinkle: 1.2 });
-    const shellDark = shellGrey; // collar/hem trim reads as the black blocking
+    /**
+     * RIDER STYLE PALETTE -- sampled from the supplied reference GLB.
+     *
+     * Everything the reference changes about the rider's look lives in this
+     * one block, deliberately, so the whole style is a single revert if it
+     * does not survive contact with the game.
+     *
+     * The reference is a hooded two-tone shell -- a bright magenta body with a
+     * deeper crimson hood and yoke -- over dark plum pants, near-black gloves,
+     * pale boots and a light cyan deck. Dominant bins measured off a render of
+     * the asset: #903050 and #703050 for the shell, #501030 and #301030 for
+     * the plum, #101010/#303030 for the gloves, #70b0d0 for the board.
+     *
+     * This supersedes §6.3's #E8531F orange. The doc's rule -- ONE high-chroma
+     * garment colour carrying the figure, everything else low-chroma -- still
+     * holds; the reference simply picks a different hue for it, and the
+     * two-tone split gives the yoke and sleeve blocking something real to do.
+     */
+    const RIDER_STYLE = {
+      shell: 0xc23a70,      // jacket body: bright magenta, the one high-chroma note
+      shellDeep: 0x7a1f3d,  // hood, yoke and shoulders: deeper crimson
+      pants: 0x33203a,      // dark plum, reads near-black until the sun hits it
+      glove: 0x141416,
+      boot: 0xd6d8dd,       // pale boots -- the reference's one bright accent below the knee
+      helmet: 0x2a1830,     // plum-black, under the hood
+    };
+    const shell = cloth(RIDER_STYLE.shell, 0.66, 0.11, [1.4, 2], { quilt: 0.12, wrinkle: 1.1 });
+    const shellGrey = cloth(RIDER_STYLE.shellDeep, 0.66, 0.11, [1.4, 2], { wrinkle: 1.1 });
+    const pants = cloth(RIDER_STYLE.pants, 0.68, 0.10, [1.4, 2], { wrinkle: 1.2 });
+    const shellDark = shellGrey; // collar/hem trim reads as the deep crimson blocking
 
     const helmet = new THREE.MeshStandardMaterial({
-      color: 0x1e2126, roughness: 0.34, metalness: 0.06, envMapIntensity: 1.1,
+      color: RIDER_STYLE.helmet, roughness: 0.34, metalness: 0.06, envMapIntensity: 1.1,
     });
     const rubber = new THREE.MeshStandardMaterial({ color: 0x23262c, roughness: 0.66 });
     /**
@@ -1085,8 +1106,12 @@ export class Rider {
       color: 0x7080c8, roughness: 0.08, metalness: 1.0, envMapIntensity: 1.9,
     });
     const strap = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.66 });
-    const glove = new THREE.MeshStandardMaterial({ color: 0x24272e, roughness: 0.72 });
-    const boot = new THREE.MeshStandardMaterial({ color: 0x3a4049, roughness: 0.68 });
+    const glove = new THREE.MeshStandardMaterial({ color: RIDER_STYLE.glove, roughness: 0.72 });
+    // Pale boots are the reference's one bright note below the knee, and they
+    // do real work: against dark plum pants they separate the feet from the
+    // legs, so the stance reads at chase distance instead of merging into one
+    // dark column.
+    const boot = new THREE.MeshStandardMaterial({ color: RIDER_STYLE.boot, roughness: 0.68 });
     const sole = new THREE.MeshStandardMaterial({ color: 0x3c4048, roughness: 0.86 });
     const binding = new THREE.MeshStandardMaterial({
       color: 0x2f3238, roughness: 0.42, metalness: 0.28, envMapIntensity: 1.1,
