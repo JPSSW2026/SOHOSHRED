@@ -158,6 +158,21 @@ export class TitleFlow {
     window.addEventListener('pointerdown', this._drop);
   }
 
+  /**
+   * Everything that must go back to zero when a run starts.
+   *
+   * TrickSystem.reset() existed with no caller and HUD._runTime was only
+   * ever incremented, so run two opened with run one's score still on the
+   * counter and a HUD clock that included run one — while the DONE card's
+   * TIME had restarted from zero. Two visible clocks that disagreed, and a
+   * score that never went back to nothing.
+   */
+  _resetRun() {
+    this.ctx.tricks?.reset?.();
+    if (this.ctx.hud) this.ctx.hud._runTime = 0;
+    this.stats = { time: 0, topSpeed: 0, maxAir: 0, _air: 0 };
+  }
+
   /** First real input: music up, layer out, mountain in. */
   _begin() {
     if (this.state === 'riding') return;
@@ -189,7 +204,7 @@ export class TitleFlow {
     } catch { /* headless */ }
     if (this.ctx.input) this.ctx.input.enabled = true;
     this.el.classList.add('gone');
-    this.stats = { time: 0, topSpeed: 0, maxAir: 0, _air: 0 };
+    this._resetRun();
   }
 
   /** Tiny synthesized landing chime - thump plus a fifth, no asset. */
@@ -346,10 +361,21 @@ export class TitleFlow {
     if (this.ctx.input) this.ctx.input.enabled = false;
     const st = this.stats;
     const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+    // Score is the point of the run and was the one thing the card never
+    // mentioned: tricks collected totals and a full history that nothing on
+    // this screen has ever read. Lead with it, and name the best trick --
+    // the entry that produced totals.best -- so the number has a story.
+    const T = this.ctx.tricks;
+    const best = T?.history?.length
+      ? T.history.reduce((a, b) => (b.points > a.points ? b : a))
+      : null;
     this.endEl.querySelector('.stats').innerHTML =
+      (T ? `<span><b>SCORE</b>${Math.round(T.totals.score).toLocaleString()}</span>` : '') +
       `<span><b>TIME</b>${fmt(st.time)}</span>` +
       `<span><b>TOP</b>${Math.round(st.topSpeed * 3.6)} KM/H</span>` +
-      `<span><b>AIR</b>${st.maxAir.toFixed(1)}s</span>`;
+      `<span><b>AIR</b>${st.maxAir.toFixed(1)}s</span>` +
+      (T ? `<span><b>LANDED</b>${T.totals.landed}/${T.totals.landed + T.totals.crashed}</span>` : '') +
+      (best ? `<span><b>BEST</b>${best.name} ${Math.round(best.points).toLocaleString()}</span>` : '');
     this.endEl.classList.add('show');
     this._again = (e) => {
       if (e.type === 'keydown' && (e.metaKey || e.ctrlKey || e.altKey)) return;
@@ -360,7 +386,7 @@ export class TitleFlow {
       if (spawn) this.ctx.physics.reset(spawn.position, spawn.heading);
       this.ctx.player?.camera?.snapToTarget?.();
       if (this.ctx.input) this.ctx.input.enabled = true;
-      this.stats = { time: 0, topSpeed: 0, maxAir: 0, _air: 0 };
+      this._resetRun();
       this.state = 'riding';
     };
     // A beat of lockout so the landing keystroke cannot skip the flash.

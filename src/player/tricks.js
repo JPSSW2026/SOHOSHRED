@@ -46,6 +46,20 @@ const GRAB_NAMES = {
   nose: 'Nosegrab', tail: 'Tailgrab', method: 'Method',
 };
 
+/**
+ * Rotation grace when naming a spin, radians.
+ *
+ * This is the SAME tolerance physics uses to call a landing clean
+ * (spinResidue within 0.55 rad of a half-turn multiple). Without it the two
+ * systems disagreed about the same rotation: a 350 deg spin passed physics
+ * as a completed, potentially 'perfect' landing and was then named a "180"
+ * for 100 points instead of the 360's 250 — a 2.5x cliff at an invisible
+ * threshold. The tolerance was also one-sided, so over-rotating to 370
+ * scored the 360 while the safer 350 did not: the game rewarded the miss
+ * that risks the crash and punished the one that does not.
+ */
+const SPIN_GRACE = 0.55;
+
 /** Seconds without an air before a combo closes out. */
 const COMBO_WINDOW = 2.6;
 /** Minimum air time that counts as an air at all, seconds. */
@@ -170,15 +184,20 @@ export class TrickSystem {
     }
 
     const scored = this._score(c, quality, switchLanding);
-    if (!scored.points) return;
 
+    // Every landed air gets acknowledged. This used to return early on a
+    // zero score, which sits ABOVE the history, the totals, the callout and
+    // the audio — so hitting the biggest kicker on the hill without holding
+    // a grab printed nothing, moved nothing and made no sound. Landing a
+    // jump is an event whether or not it was worth points.
     this.history.push(scored);
     this.totals.landed++;
     this.totals.longestAir = Math.max(this.totals.longestAir, c.airTime);
     this.totals.biggestSpin = Math.max(this.totals.biggestSpin, Math.abs(c.rotation) * DEG);
     this.totals.best = Math.max(this.totals.best, scored.points);
 
-    // Combo.
+    // Combo, on scoring tricks only — a straight air is an event, not a link.
+    if (scored.points > 0) {
     if (!this.combo.active) {
       this.combo.active = true;
       this.combo.tricks = [];
@@ -189,11 +208,17 @@ export class TrickSystem {
     this.combo.score += scored.points;
     this.combo.multiplier = 1 + (this.combo.tricks.length - 1) * 0.5;
     this._comboTimer = COMBO_WINDOW;
+    }
 
+    // Name the landing on the callout as well as the trick: the player could
+    // not otherwise tell a stomped landing from a sketchy one, though the two
+    // differ by 1.25x vs 0.72x on the score.
+    const landWord = quality === 'perfect' ? 'STOMPED' : quality === 'sketchy' ? 'SKETCHY' : 'CLEAN';
     this.callout = {
       text: scored.name,
       score: scored.points,
       quality,
+      landing: landWord,
       combo: this.combo.tricks.length,
     };
     this._calloutTimer = 2.4;
@@ -206,8 +231,8 @@ export class TrickSystem {
    * ------------------------------------------------------------------ */
   _score(c, quality, switchLanding) {
     const absRot = Math.abs(c.rotation);
-    // Half-turns *completed* — a 400° spin is a 360.
-    const halves = Math.floor(absRot / Math.PI);
+    // Half-turns completed, with the same grace physics grants the landing.
+    const halves = Math.floor((absRot + SPIN_GRACE) / Math.PI);
     const capped = Math.min(halves, 8);
 
     // Flips. `c.flip` is the accumulated pitch at the last airborne frame; a
