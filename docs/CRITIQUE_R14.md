@@ -50,9 +50,7 @@ number of wall-clock frames perturb the state the first settle starts from.
 | Freezing `manualTime` at ready + clearing trails per shot | **Worse: 28.3%.** Reverted |
 | Pinning the grain seed via `ctx.frame` | **No effect: 16.8%.** `tick()` does `this.frame++; this.ctx.frame = this.frame`, so the mirror is overwritten immediately |
 | Pinning `engine.frame` itself | **Worse: 37.1%.** The counter also drives the other temporal systems; jumping it to an arbitrary value disrupts them |
-
-Both attempted fixes measured worse than doing nothing, which is itself
-evidence: changing *what* is drawn reshuffles the noise instead of removing it.
+| Pinning `uSeed` directly via a new `post.grain.fixedSeed`, bracketed around `shot()` like `shotExposure` | **Catastrophically worse: 99.2% of pixels, mean 35.** The seed itself is constant per preset, so this cannot be grain — mean 35 is far above the 0.022 amplitude. Introducing the property appears to perturb something structural, most likely the shader feature key and with it recompile timing |
 
 ### Confirmed: it is purely the render path
 
@@ -72,14 +70,37 @@ The grain seed looked like the answer — `uSeed = hash32(ctx.frame)`, and the
 seeding it deterministically changed nothing, and pinning the underlying
 counter made things worse, so grain is at most part of it.
 
-**Recommended approach for the next attempt:** stop trying to *seed* the
-temporal effects and instead *disable* them for stills — a capture flag that
-switches off grain, motion blur and any history-based pass, applied for the
-duration of `shot()` and restored afterwards, exactly as `shotExposure`
-already does for tone mapping. That sidesteps the whole class of problem
-rather than negotiating with it. Verify with the frozen-frame probe above
-(`scratchpad/frozen.mjs`): it must return four identical hashes before any
-before/after measurement in this document can be trusted.
+### The pattern across five attempts
+
+| approach | result vs 17.0% baseline |
+|---|---|
+| Clear fx accumulators | 37.5% |
+| Freeze clock + clear trails | 28.3% |
+| Pin `ctx.frame` | 16.8% (no effect) |
+| Pin `engine.frame` | 37.1% |
+| Pin `uSeed` via new config property | 99.2% |
+
+**Every intervention made it worse; the only neutral one was the no-op.** That
+is the finding. A system where each perturbation increases run-to-run variance,
+and where the magnitude is unrelated to the size of the change, does not have a
+single stray seed in it — it behaves like variance in the GPU pipeline itself:
+async shader compilation and warm-up timing under SwiftShader, where a build
+that recompiles differently captures at a different point in warm-up.
+
+**Recommended next attempt — stop touching the render path.** Instead:
+
+1. **Test the hypothesis first.** Run `tools/probe-frozen-frame.mjs` with a long
+   warm-up (render 200+ frames before the first capture). If the four hashes
+   converge to identical once the pipeline is warm, it is compilation/warm-up
+   timing and the fix is simply "warm up before capturing" — no engine change.
+2. **If it is warm-up**, add the warm-up to `shoot.mjs` only. The engine stays
+   untouched, which matters: four of the five attempts above failed precisely
+   because they changed engine behaviour.
+3. **Only if that fails** consider disabling grain and history-based passes for
+   stills — but note attempt 5 suggests that touching post config at all has
+   its own structural cost, so measure before believing it.
+
+Do not attempt another seed-pinning variant. That hypothesis is exhausted.
 
 ## Severity 5
 
