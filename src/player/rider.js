@@ -1270,7 +1270,7 @@ export class Rider {
     // Collar roll. The two-lobe packed hood read as a bulge growing off the
     // back at gameplay distance (user catch on the v9 zooms) — a snug roll
     // hugging the collar keeps the silhouette cue without the growth.
-    const hood = part(new THREE.SphereGeometry(0.082, 14, 12), M.shell, chest, 0.055, DIM.chestLength * 1.00, 0);
+    const hood = part(new THREE.SphereGeometry(0.082, 14, 12), M.shellGrey, chest, 0.055, DIM.chestLength * 1.00, 0);
     hood.scale.set(0.55, 0.42, 1.12);
 
     const head = bone('head', neck, 0, DIM.neckLength, 0);
@@ -1285,6 +1285,17 @@ export class Rider {
     const shellSeam = trim(new THREE.TorusGeometry(DIM.headRadius * 1.005, 0.004, 6, 22), M.rubber, head, 0, DIM.headRadius * 0.86, 0);
     shellSeam.rotation.y = Math.PI * 0.5;
     shellSeam.scale.set(1.10, 1.06, 1.0);
+    // HOOD UP, per the reference: the single most recognisable thing about
+    // that silhouette. A cowl, not a full sphere -- pushed back off the face
+    // so the goggle still reads as the brightest surface on the rider, and
+    // scaled long so it peaks behind the skull the way a hood sits when it is
+    // up and full of air. In the deep crimson, so the head reads as a darker
+    // mass against the bright shell body, which is what gives the reference
+    // its weight.
+    const hoodUp = part(new THREE.SphereGeometry(DIM.headRadius * 1.06, 16, 12), M.shellGrey,
+      head, 0, DIM.headRadius * 0.86, -DIM.headRadius * 0.74);
+    hoodUp.scale.set(0.98, 1.04, 1.16);
+
     const brim = part(new THREE.CylinderGeometry(DIM.headRadius * 1.03, DIM.headRadius * 1.0, 0.016, 18), M.helmet, head, 0, DIM.headRadius * 0.99, 0.008);
     brim.scale.z = 1.08;
     // Vent slots.
