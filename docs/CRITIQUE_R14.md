@@ -48,18 +48,38 @@ number of wall-clock frames perturb the state the first settle starts from.
 | Async terrain LOD streaming | **Disproven** — `_updateLod` rebuilds dirty levels synchronously inside `update()` |
 | Clearing trails + particle pool + fx clock in `shot()` | **Worse: 37.5%.** Zeroing the particle clock leaves pooled sprites carrying spawn stamps from the future |
 | Freezing `manualTime` at ready + clearing trails per shot | **Worse: 28.3%.** Reverted |
+| Pinning the grain seed via `ctx.frame` | **No effect: 16.8%.** `tick()` does `this.frame++; this.ctx.frame = this.frame`, so the mirror is overwritten immediately |
+| Pinning `engine.frame` itself | **Worse: 37.1%.** The counter also drives the other temporal systems; jumping it to an arbitrary value disrupts them |
 
 Both attempted fixes measured worse than doing nothing, which is itself
 evidence: changing *what* is drawn reshuffles the noise instead of removing it.
 
-### Next suspect
+### Confirmed: it is purely the render path
 
-Temporal accumulation in the renderer — TAA history, motion-blur reprojection,
-or bloom feedback — and/or non-deterministic rasterisation in SwiftShader under
-multithreading. The check that would settle it: render the same frozen frame
-twice within one session, with no sim step between, and diff. If those differ,
-it is purely the renderer and no amount of sim hygiene will help; the capture
-path then needs temporal effects disabled for stills.
+That check has now been run. `shot('chase-carve')` once, then `engine.tick(0,
+true)` four times — `dt = 0`, so nothing in the sim can advance — and
+screenshot after each:
+
+```
+["e6a8fa4ddc53", "219142d84b9b", "897a62106d6a", "07f1ea9a045d"]   all four differ
+```
+
+Four re-renders of one frozen frame, four different images. No sim hygiene can
+fix this.
+
+The grain seed looked like the answer — `uSeed = hash32(ctx.frame)`, and the
+0.022 grain amplitude is ~5.6/255, which brackets the observed 2.89 mean. But
+seeding it deterministically changed nothing, and pinning the underlying
+counter made things worse, so grain is at most part of it.
+
+**Recommended approach for the next attempt:** stop trying to *seed* the
+temporal effects and instead *disable* them for stills — a capture flag that
+switches off grain, motion blur and any history-based pass, applied for the
+duration of `shot()` and restored afterwards, exactly as `shotExposure`
+already does for tone mapping. That sidesteps the whole class of problem
+rather than negotiating with it. Verify with the frozen-frame probe above
+(`scratchpad/frozen.mjs`): it must return four identical hashes before any
+before/after measurement in this document can be trusted.
 
 ## Severity 5
 
