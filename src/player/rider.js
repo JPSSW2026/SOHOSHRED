@@ -1880,13 +1880,31 @@ export class Rider {
       // Free pose: arms spread along the deck for balance — one out over the
       // nose, one over the tail — held slightly ahead of the chest, with a
       // slow idle sway so a stationary rider is not a mannequin.
-      const sway = Math.sin(t * 1.7 + sx) * 0.05 * clamp01(1 - s.speed / 12);
+      // Life in the arms must SURVIVE riding. The idle sway was multiplied by
+      // clamp01(1 - speed/12), i.e. faded to exactly zero by 12 m/s -- so the
+      // only asymmetry in the whole upper body switched off precisely when the
+      // rider is moving and the camera is watching. Frozen mirrored limbs is
+      // the scarecrow read.
+      //
+      // Two sources now. A slow idle for a stationary rider, and a faster,
+      // smaller ride motion that grows with speed and edge -- the arms
+      // counter-balancing a working board rather than hanging off it. Opposite
+      // phase per side, so they never mirror.
+      const idle = Math.sin(t * 1.7 + sx) * 0.05 * clamp01(1 - s.speed / 12);
+      const ride = Math.sin(t * 3.1 * sx + sx * 1.1) * 0.035
+        * smoothstep(2, 11, s.speed) * (0.6 + 0.4 * clamp01(s.edgeLoad || 0));
+      const sway = idle + ride;
       // `A.incline` is heel-positive (+X), so the toe-ward arm swing that
       // balances a lean carries a negative incline coefficient; likewise the
       // twist term here, because +twist yaws the body heel-ward.
       let alongZ = -front * (0.52 + A.absorb * 0.14 - A.tuck * 0.30 - A.twist * front * 0.30) + sway;
       let swingT = 0.30 - A.incline * 0.35 + A.absorb * 0.16 + sway * 0.4;
-      let elbow = 0.55 + A.absorb * 0.35 + A.tuck * 0.75;
+      // The two arms do different jobs, so they must not carry one number.
+      // The nose-side arm leads and stays the straighter of the two; the
+      // tail-side arm tucks in behind the hip. `front` is +1 on the nose side.
+      let elbow = 0.55 + A.absorb * 0.35 + A.tuck * 0.75
+        - front * 0.16
+        + Math.sin(t * 2.3 + sx * 2.0) * 0.05 * smoothstep(2, 11, s.speed);
 
       // Crashed riders throw their arms up and out.
       alongZ = lerp(alongZ, -front * 1.05, A.crash);
@@ -1918,9 +1936,22 @@ export class Rider {
 
       // Toe-ward is −X, so the toe-positive swing and the elbow bend both
       // apply negated: positive rotation.z carries a hanging arm toward +X.
+      // Shoulder YAW. Without it the forearm can only swing in one body
+      // plane and can never come across the chest, which is why the arms read
+      // as pinned to a board rather than held. The lead arm reaches slightly
+      // across the deck, the trail arm opens away, and inclination pulls both
+      // toward the inside of the turn the way a rider actually balances.
+      const shoulderY = front * (0.16 + A.tuck * 0.10) - A.incline * 0.22;
       ua.rotation.x = damp(ua.rotation.x, alongZ, 12, dt);
+      ua.rotation.y = damp(ua.rotation.y || 0, shoulderY, 10, dt);
       ua.rotation.z = damp(ua.rotation.z, -swingT, 12, dt);
       fa.rotation.z = damp(fa.rotation.z, -elbow, 12, dt);
+      // A wrist, so the hand is not a continuation of the forearm tube.
+      const hand = B[`hand${side}`];
+      if (hand) {
+        hand.rotation.z = damp(hand.rotation.z || 0, -elbow * 0.22 - 0.10, 10, dt);
+        hand.rotation.y = damp(hand.rotation.y || 0, front * 0.18, 10, dt);
+      }
     }
   }
 
