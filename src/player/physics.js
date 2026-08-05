@@ -418,9 +418,27 @@ export class BoardPhysics {
     // and saturates early: at 10 m/s with the edge at 90% of its grip budget
     // the old weights produced 0.24 and thirteen alive particles, which is a
     // dusting, not a spray shot.
+    // How hard the EDGE IS CUTTING, which is not the same thing as edgeLoad.
+    //
+    // edgeLoad is a grip-budget ratio: demand over available grip. A clean
+    // carve well inside its budget reads near zero on it -- measured at
+    // 0.000-0.005 through every carve probed -- so the spray term built on it
+    // contributed nothing and every particle came from the lateral-slip term.
+    // In other words the game threw snow when you SKIDDED and nothing when you
+    // carved, which is backwards: a railed edge at speed is precisely what
+    // throws a rooster tail, and close-spray is the shot named after it.
+    //
+    // Bite is edge angle against speed and sink -- the geometry of a rail
+    // cutting snow -- and it does not care whether the turn is near the
+    // limit of grip.
+    const edgeBite = clamp01(Math.abs(s.roll || 0) / 0.62)
+      * smoothstep(3.5, 13, s.speed)
+      * (0.55 + 0.45 * clamp01((s.sinkDepth || 0) / Math.max(P.powderDepth, 1e-3)));
+
     s.sprayIntensity = clamp01(
       props.spray * (
         Math.abs(s.lateralSpeed) * 0.14 +
+        edgeBite * 0.95 +
         s.edgeLoad * smoothstep(3, 9, s.speed) * 1.10 +
         (s.sinkDepth / Math.max(P.powderDepth, 1e-3)) * smoothstep(4, 20, s.speed) * 0.45
       ),

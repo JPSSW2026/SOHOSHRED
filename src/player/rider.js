@@ -1081,8 +1081,15 @@ export class Rider {
      * two-tone split gives the yoke and sleeve blocking something real to do.
      */
     const RIDER_STYLE = {
-      shell: 0xc23a70,      // jacket body: bright magenta, the one high-chroma note
-      shellDeep: 0x7a1f3d,  // hood, yoke and shoulders: deeper crimson
+      shell: 0xa82d5e,      // jacket body: the one high-chroma note. Deeper than
+                            // the sampled magenta, which blew to flesh-pink
+                            // under grazing sun.
+      shellDeep: 0x3f2440,  // sleeves, hood, yoke: dark plum, NOT a second
+                            // crimson. Two saturated colours in one hue family
+                            // mush at distance instead of blocking, and the
+                            // sleeves were reading as bare pink arms in
+                            // close-spray. Dark limbs against a bright torso
+                            // is the block the reference actually has.
       pants: 0x33203a,      // dark plum, reads near-black until the sun hits it
       glove: 0x141416,
       boot: 0xd6d8dd,       // pale boots -- the reference's one bright accent below the knee
