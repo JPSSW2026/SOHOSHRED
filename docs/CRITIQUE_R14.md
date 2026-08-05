@@ -148,6 +148,38 @@ landed in different states. The interventions are not thereby vindicated — but
 they are not fairly condemned either, and none should be re-run without the
 three-run protocol.
 
+### Root cause identified: the LOD snap boundary
+
+Step 2 of the plan below has now been run — the spatial signature of the
+difference between the two modal images:
+
+| measurement | value |
+|---|---|
+| top quarter of frame (sky) | **0.0% differing** |
+| bottom-left blocks (near field) | 47.4% / 42.2% |
+| mean image gradient where differing | **14.04** |
+| mean image gradient elsewhere | 2.68 |
+| signed mean difference | −0.016 (i.e. none) |
+
+The sky is bit-identical, which excludes post, grade, grain and exposure —
+all of them would touch it. The difference is confined to the near field, sits
+on high-gradient pixels at 5.2x the background rate, and has no net brightness
+shift. That is **geometry resampling**, not shading.
+
+`_updateLod` centres each ring with `Math.round(px / snap) * snap`. A camera
+that lands a hair either side of a snap boundary flips that rounding — a
+**binary** decision, which is exactly the two attractors observed. The tiny
+physics differences between runs (5.0278 vs 5.0069 m/s) are more than enough to
+straddle one, and a half-cell shift in the near ring resamples every detailed
+pixel in the foreground while leaving the sky untouched.
+
+**This also rehabilitates attempt 2.** Freezing `manualTime` at ready targets
+exactly the right thing: it removes the load-dependent rAF frames that cause
+the small physics divergence in the first place. It was rejected on a
+two-sample comparison, which we now know cannot distinguish a real improvement
+from a state flip. It should be re-tested under the three-run protocol before
+anything else is tried.
+
 **Recommended next attempt — find the toggle, do not guess at it.**
 
 1. **Adopt the three-run protocol first.** Nothing else is measurable without
