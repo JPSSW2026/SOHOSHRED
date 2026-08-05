@@ -93,18 +93,41 @@ export async function mountBackdropModel(ctx) {
 		// pattern shearing across a jagged silhouette. That pattern was
 		// resolving into a woven stripe right across the horizon, and no
 		// band width fixes it, because the artefact is the dither itself.
-		gl_FragColor.rgb = mix( gl_FragColor.rgb, uBdHaze, min( sink * 1.25, 1.0 ) );
+		// Haze TARGET varies with height. Converging the whole massif to one
+		// horizon colour is what made it read as blue haze rather than as
+		// snow: the base genuinely does dissolve into the inversion deck, but
+		// the tops are snow, lit by the same sun as the foreground, and they
+		// keep their own value. So the target is the live horizon low down and
+		// a bright neutral higher up -- the range stays snowy where it is
+		// clear of the deck.
+		vec3 W3 = vec3( 0.2126, 0.7152, 0.0722 );
+		vec3 hazeHigh = mix( uBdHaze, vec3( dot( uBdHaze, W3 ) ) * 1.18, 0.68 );
+		vec3 hazeTgt = mix( hazeHigh, uBdHaze, smoothstep( 0.35, 1.0, sink ) );
+		// Weighted to the base as well: pow() keeps the mid-slopes far clearer
+		// than a linear ramp did, so ridge structure survives instead of being
+		// washed into a single wall of blue.
+		gl_FragColor.rgb = mix( gl_FragColor.rgb, hazeTgt, min( pow( sink, 1.9 ) * 1.30, 1.0 ) );
 
-		// A range 5.6 km out cannot be brighter than the sky behind it. This
-		// is the one artefact that reads as "matte painting" instead of
-		// "mountain" (tell #28), and the baked-in atmosphere cannot prevent
-		// it because the painter did not know our exposure. Extinction wins
-		// at this distance, so clamp luma to just under the horizon haze
-		// rather than trusting the art.
+		// Soft ceiling, not a hard one -- and well ABOVE the horizon, not
+		// below it.
+		//
+		// This used to clamp the range to 0.96x the horizon luma, on the
+		// reading that a distant range can never be brighter than its own sky
+		// (tell #28). That is true of a range dissolving in haze; it is false
+		// of sunlit snow. Real sunlit peaks at this distance are markedly
+		// brighter than a deep blue sky, which is exactly what makes a big
+		// massif read as majestic instead of as weather. The hard clamp was
+		// crushing every peak to below sky value and flattening the whole
+		// thing into the blue wash it was meant to prevent.
+		//
+		// A saturating curve keeps the guarantee that matters -- nothing can
+		// run away and blow out -- while leaving the art's own value structure
+		// intact right up to the ceiling.
 		const vec3 W = vec3( 0.2126, 0.7152, 0.0722 );
-		float ceilL = dot( uBdHaze, W ) * 0.96;
+		float ceilL = dot( uBdHaze, W ) * 2.60;
 		float artL = dot( gl_FragColor.rgb, W );
-		gl_FragColor.rgb *= ( artL > ceilL ) ? ( ceilL / max( artL, 1e-4 ) ) : 1.0;
+		float soft = ceilL * ( 1.0 - exp( -artL / max( ceilL, 1e-4 ) ) );
+		gl_FragColor.rgb *= soft / max( artL, 1e-4 );
 	}
 	#include <dithering_fragment>`);
   };
