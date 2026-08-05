@@ -498,6 +498,7 @@ export class ParticleFX {
 
     const s = ctx.physics?.state;
     if (s) this._rideEmission(dt, s);
+    this._ambientSnow(dt, ctx, s);
 
     this._updateAmbient(dt, cam);
 
@@ -510,6 +511,73 @@ export class ParticleFX {
    * as debt between frames, so a low rate still produces an even trickle
    * instead of nothing at all.
    */
+  /**
+   * Occasional drifting snow showers around the rider.
+   *
+   * Weather as ATMOSPHERE, not as an obstacle. These are sparse, slow, small
+   * and lit to catch the sun -- the flakes that hang in the air on a bluebird
+   * day after wind has stripped a cornice, not a storm. Density is set well
+   * below anything that could obscure the line: at full intensity this is a
+   * few hundred sprites spread through a 90 m box, so a flake crosses the eye
+   * every second or so and the mountain behind it is never hidden.
+   */
+  _ambientSnow(dt, ctx, s) {
+    if (!this.dynamic) return;
+    const rng = this._rng;
+
+    // Cycle: long quiet stretches, then a shower that fades up and down.
+    // Deterministic from the fx clock -- no Math.random, so a capture of the
+    // same moment shows the same weather.
+    this._snowPhase = (this._snowPhase || 0) + dt;
+    const period = 95;
+    const p = (this._snowPhase % period) / period;
+    // One shower per period, ramping over the middle third, so most of the
+    // time there is nothing at all.
+    const shower = p > 0.42 && p < 0.63
+      ? Math.sin((p - 0.42) / 0.21 * Math.PI)          // 0 -> 1 -> 0
+      : 0;
+    if (shower <= 0.01) return;
+
+    const cam = ctx?.camera;
+    if (!cam) return;
+
+    // ~70/s at the peak, against 2.6-4.8 s lifetimes: a couple of hundred
+    // alive at once spread through a 90 m box. Measured at the first setting,
+    // showers ran 58% of the time at 147/s peak, which is weather rather than
+    // a passing shower; this window is ~20% of the cycle.
+    this._snowDebt = (this._snowDebt || 0) + shower * 70 * dt;
+    if (this._snowDebt < 1) return;
+    const n = Math.min(Math.floor(this._snowDebt), 24);
+    this._snowDebt -= n;
+
+    const t = this._time;
+    const cx = cam.position.x, cy = cam.position.y, cz = cam.position.z;
+    for (let i = 0; i < n; i++) {
+      // Seeded around and ABOVE the camera so flakes drift down through
+      // frame rather than popping into it.
+      const px = cx + (rng() - 0.5) * 90;
+      const py = cy + 14 + rng() * 26;
+      const pz = cz + (rng() - 0.5) * 90;
+      // Slow fall with a lateral drift: snow in still air does not fall
+      // straight, it wanders, and that wander is most of what reads as
+      // "beautiful" rather than "particle effect".
+      const drift = 0.7 + rng() * 1.1;
+      this.dynamic.spawn(
+        px, py, pz,
+        Math.sin(t * 0.21 + i) * drift, -(0.5 + rng() * 0.7), Math.cos(t * 0.17 + i * 1.7) * drift,
+        t,
+        2.6 + rng() * 2.2,          // long life: they hang
+        0.010 + rng() * 0.016,      // small: 1-2.6 cm, inside the spec band
+        0.55 + rng() * 0.35,        // light drag so they float
+        0, rng() * 100,
+        // Bright, with a wide spread, so a few of them flare in the sun and
+        // the rest stay quiet. The glisten is the point.
+        1.15 + rng() * 1.05,
+        (rng() - 0.5) * 2.2,
+      );
+    }
+  }
+
   _rideEmission(dt, s) {
     if (!s.grounded || s.speed < 1.2) return;
 
