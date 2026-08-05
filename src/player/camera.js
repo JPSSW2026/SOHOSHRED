@@ -82,6 +82,10 @@ export class ChaseCamera {
     // Scratch.
     this._v = new THREE.Vector3();
     this._v2 = new THREE.Vector3();
+    this._off = new THREE.Vector3();
+    this._sp1 = new THREE.Vector3();
+    this._sp2 = new THREE.Vector3();
+    this._offPrev = null;   // null until the first station is computed
     this._dir = new THREE.Vector3();
     this._flat = new THREE.Vector3();
     this._up = new THREE.Vector3(0, 1, 0);
@@ -114,6 +118,7 @@ export class ChaseCamera {
     // Drop the smoothed speed so a snap adopts the new state immediately
     // rather than easing over from wherever the camera was before.
     this._speedLP = null;
+    this._offPrev = null;
     this._computeDesired(s, 1 / 60);
     this._pos.copy(this._desired);
     this._vel.set(0, 0, 0);
@@ -146,11 +151,26 @@ export class ChaseCamera {
     // the camera arrives without overshoot; overshoot on a chase camera reads
     // as the world wobbling, not as the camera being lively.
     const omega = CONFIG.camera.stiffness * (this.mode === 'cinematic' ? 0.55 : 1.0);
-    const zeta = CONFIG.camera.damping;
-    this._v.subVectors(this._pos, this._desired);
-    this._vel.addScaledVector(this._v, -omega * omega * dt);
-    this._vel.addScaledVector(this._vel, -2 * zeta * omega * dt);
-    this._pos.addScaledVector(this._vel, dt);
+
+    // Analytic critically-damped spring, not semi-implicit Euler.
+    //
+    // Two faults compounded here. The comment above claimed zeta = 1 "so the
+    // camera arrives without overshoot", but the config ships damping 0.86 --
+    // under-damped, so it always overshot and rang. And explicit integration
+    // of a spring injects energy, which makes that ringing grow rather than
+    // decay. The result was a station accelerating at a p99 of ~900 m/s^2 and
+    // momentarily travelling at 66-86 m/s while the rider held 12: the camera
+    // was manufacturing the judder itself, not inheriting it. It got worse
+    // with speed because a faster target drives the spring harder.
+    //
+    // The closed-form critically damped solution is exact for any dt and
+    // cannot ring or diverge, so the chase stays smooth at any frame rate and
+    // any speed.
+    const e = Math.exp(-omega * dt);
+    this._sp1.subVectors(this._pos, this._desired);                 // change
+    this._sp2.copy(this._vel).addScaledVector(this._sp1, omega).multiplyScalar(dt);
+    this._pos.copy(this._desired).addScaledVector(this._sp1.add(this._sp2), e);
+    this._vel.addScaledVector(this._sp2, -omega).multiplyScalar(e);
 
     // ---- Range lock --------------------------------------------------
     // Hold the DISTANCE, let the ANGLE lag.
@@ -174,6 +194,16 @@ export class ChaseCamera {
         const kR = 1 - Math.exp(-dt * 26);
         const want = r + (this._desiredRange - r) * kR;
         this._pos.copy(s.position).addScaledVector(this._v, want / r);
+        // Correct the VELOCITY by the same amount, or the spring integrates
+        // momentum that the position correction has already spent. That is an
+        // energy source: each frame the lock pulled the station in, the spring
+        // still carried the old outward velocity, and the pair wound each
+        // other up -- the station reached 92 m/s while the rider held 18, and
+        // it got worse with speed because a faster turn drives the lock
+        // harder. Damp the radial component at the lock's own rate; the
+        // tangential component, which is the angular catch-up, is untouched.
+        this._sp1.copy(this._v).multiplyScalar(1 / r);
+        this._vel.addScaledVector(this._sp1, -this._vel.dot(this._sp1) * kR);
       }
     }
 
@@ -277,6 +307,34 @@ export class ChaseCamera {
       const pitchLean = clamp01(s.slope / 0.9);
       this._desired.addScaledVector(this._up, -pitchLean * dist * 0.22);
     }
+
+    // ---- Station slew limit -------------------------------------------
+    // Limit how fast the station OFFSET may move -- the offset being where the
+    // camera wants to sit relative to the rider, so the rider's own motion
+    // passes through untouched and this cannot make the camera lag them.
+    //
+    // Several terms feeding the station can step discontinuously: the follow
+    // direction blends toward the velocity vector, which swings hard when a
+    // carve reverses (and flips outright if the board ever tracks backwards),
+    // and the pitch-lean offset is scaled by a terrain slope sampled fresh
+    // each frame. The spring then converts each of those steps into a spike --
+    // measured at a p99 station acceleration of 1000-1700 m/s^2, with the
+    // station momentarily travelling faster than 60 m/s while the rider was
+    // doing 5-15. That is the judder.
+    //
+    // A rate limit turns a step into a short slew. 9 m/s is far above anything
+    // the framing does deliberately, so normal response is untouched and only
+    // the discontinuities are caught.
+    this._off.subVectors(this._desired, s.position);
+    if (this._offPrev) {
+      this._v2.subVectors(this._off, this._offPrev);
+      const step = this._v2.length(), maxStep = 9 * dt;
+      if (step > maxStep) this._off.copy(this._offPrev).addScaledVector(this._v2, maxStep / step);
+      this._desired.copy(s.position).add(this._off);
+    } else {
+      this._offPrev = new THREE.Vector3();
+    }
+    this._offPrev.copy(this._off);
 
     this._desiredRange = this._desired.distanceTo(s.position);
 
@@ -394,6 +452,7 @@ export class ChaseCamera {
       const g3 = terrain.getHeight(this._pos.x, this._pos.z);
       if (this._pos.y < g3 + GROUND_CLEARANCE) this._pos.y = g3 + GROUND_CLEARANCE;
     }
+
   }
 
   /* ------------------------------------------------------------------ *
