@@ -294,3 +294,66 @@ A critic observed that converging the matte to a single horizon colour is
 itself the flat single-colour fade §5.2 warns about. The clamp is a ceiling and
 should stay, but the *fade* wants depth variation rather than one colour —
 worth addressing alongside item 3, since both are the same missing atmosphere.
+
+---
+
+# r18 round — outcomes, including where the critics were wrong
+
+Three critics graded the r18 set (the first capture containing the mountain
+range, and the restyled rider). Most findings were sound and are fixed. Three
+were checked against measurement and did **not** survive, recorded here so
+nobody "fixes" them later.
+
+## Wrong: "carve trails are decal stripes"
+
+The claim was that `slip` derives from a zeroed `lateralSpeed`, so a carve
+gets `lip` at its 0.15 floor and `halfWidth` at its 0.16 m minimum.
+
+Measured lateral speed through a real carve is 5.56–8.49 m/s, so
+`slip = clamp01(|lat| / 6)` is 0.93–1.00. Substituting into the trail
+formulas:
+
+| lateral | slip | depth | lip | halfWidth |
+|---|---|---|---|---|
+| 5.56 | 0.93 | 0.82 | **1.00** | 0.436 m |
+| 8.49 | 1.00 | 0.79 | **1.00** | 0.455 m |
+
+`lip` is saturated at its maximum and width is near its maximum — the
+opposite of the finding. If the trails still read as decals, the cause is in
+how the trail texture is rendered, not in these parameters. Do not "restore"
+a lip that is already at 1.0.
+
+## Wrong: "hero-basin and west-spur show empty sky a wider backdrop would fill"
+
+Both framings look UP-slope. The near rim is their horizon, and what fills
+their upper third is terrain, not sky. Shot before and after ringing the
+basin with three more copies of the massif: both frames unchanged. Getting a
+massif into those views is a camera or landform problem.
+
+## Overstated: "the flanking backdrop copies read paler"
+
+That was mine, not a critic's. Measured left/centre/right at 164.2 / 163.6 /
+163.2 — a spread of 0.7 levels, invisible, and inside the capture's own
+noise.
+
+## Right, and fixed
+
+- Grey shelf under the range: the fade used world heights that predated a
+  rescale, leaving two thirds of raw paint surviving. Band now derived from
+  the mesh's own bounds at mount.
+- Shadow chroma capped below the doc's own target by a 0.52 tint ceiling —
+  arithmetically unreachable. Raised to 0.80.
+- The chair-sit: an ABSENCE, not a stray rotation. The torso's only fold term
+  is a function of board roll and therefore zero riding flat.
+- See-through rider: jacket hem, pant legs, pelvis bridge and sleeve cuffs
+  all built as open tubes.
+- Hood sat behind the skull rather than over it.
+- Sleeves reading as bare arms: two saturated colours in one hue family mush
+  rather than block.
+
+## Right, and still open
+
+- `west-spur` shadow-map acne on the coarse clipmap ring (severity 4).
+- Mannequin arms: no shoulder Y, no wrist, `sway` zeroed at riding speed (4).
+- Nothing breaks the skyline; rock classification is zeroed past 2.4 km so
+  props have no candidates on the crests (3).
