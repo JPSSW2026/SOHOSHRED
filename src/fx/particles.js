@@ -346,10 +346,18 @@ export class ParticleFX {
    * Edge spray. `direction` is the board's travel; the sheet leaves the edge
    * roughly perpendicular to it and slightly upward.
    */
-  emitSpray(position, direction, intensity) {
+  /**
+   * @param {number} [count] particles to emit, from the caller's per-SECOND
+   *   budget. Without it the count is derived from intensity, which makes
+   *   emission per-FRAME — see _rideEmission.
+   */
+  emitSpray(position, direction, intensity, count) {
     if (!this.dynamic || intensity <= 0.001) return;
     const rng = this._rng;
-    const n = Math.min(Math.floor(intensity * 60), 96);
+    // Hard per-call cap: the engine clamps dt to 0.1 s, so a tab restore or a
+    // GC pause could otherwise hand us a frame's worth of several hundred and
+    // flush the whole pool in one go.
+    const n = count != null ? Math.min(count, 160) : Math.min(Math.floor(intensity * 60), 96);
     const t = this._time;
 
     this._fwd.copy(direction).setY(0);
@@ -511,9 +519,21 @@ export class ParticleFX {
     // board is moving sideways through the snow.
     const spray = clamp01(s.sprayIntensity || 0);
     if (spray > 0.02) {
-      // 46/s at full intensity was a trickle: a spray wall needs hundreds of
-      // sprites in the air at once against a 2600 pool with ~2 s lifetimes.
-      this._sprayDebt += spray * 340 * dt;
+      // A spray wall needs hundreds of sprites in the air at once. This debt
+      // is a per-SECOND budget, and it used to be thrown away: the count it
+      // produced was folded into an intensity multiplier and emitSpray then
+      // re-derived its own count, once per frame. Output was therefore
+      // per-FRAME — 78 particles every frame at full spray, which is 2340/s
+      // at 30 fps but 4680/s at 60 and 8000/s at 144. The spray wall was
+      // literally twice as dense on a faster machine, and at any decent frame
+      // rate it overran the pool, so the top of the plume blinked out of
+      // existence mid-flight instead of fading.
+      //
+      // The count now goes through as a count, and intensity is left to do
+      // the one job it is good at: shaping launch velocity and lifetime.
+      // 2400/s against a ~1.15 s mean life holds ~2800 alive, inside the
+      // 4200 budget with headroom for the landing burst.
+      this._sprayDebt += spray * 2400 * dt;
       if (this._sprayDebt >= 1) {
         const count = Math.floor(this._sprayDebt);
         this._sprayDebt -= count;
@@ -521,7 +541,7 @@ export class ParticleFX {
         const sign = (s.lateralSpeed || 0) >= 0 ? -1 : 1;
         this._v.copy(s.position);
         this._v2.copy(this._fwd).multiplyScalar(sign);
-        this.emitSpray(this._v, this._v2, spray * clamp01(count / 3));
+        this.emitSpray(this._v, this._v2, spray, count);
       }
     }
 
