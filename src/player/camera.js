@@ -111,6 +111,9 @@ export class ChaseCamera {
   snapToTarget() {
     const s = this.ctx.physics?.state;
     if (!s) return;
+    // Drop the smoothed speed so a snap adopts the new state immediately
+    // rather than easing over from wherever the camera was before.
+    this._speedLP = null;
     this._computeDesired(s, 1 / 60);
     this._pos.copy(this._desired);
     this._vel.set(0, 0, 0);
@@ -148,6 +151,31 @@ export class ChaseCamera {
     this._vel.addScaledVector(this._v, -omega * omega * dt);
     this._vel.addScaledVector(this._vel, -2 * zeta * omega * dt);
     this._pos.addScaledVector(this._vel, dt);
+
+    // ---- Range lock --------------------------------------------------
+    // Hold the DISTANCE, let the ANGLE lag.
+    //
+    // As the rider turns, _dir swings and the desired station orbits around
+    // them. A position spring cannot tell "behind by 20 degrees" from "too far
+    // away": it chases along a chord, and a chord is shorter than the arc it
+    // is cutting, so the camera dives in through every turn and drifts back
+    // out after it. Measured over linked turns that was 6.67 m peak-to-peak
+    // against a nominal 8.6 m follow -- the camera visibly pumping in and out
+    // once per turn.
+    //
+    // The radius is the part a viewer reads as pumping, so it is corrected
+    // stiffly; the angular catch-up is left to the soft spring above, which is
+    // what gives the chase its lazy, filmed quality. Splitting them keeps that
+    // feel without the surge.
+    if (this._desiredRange != null) {
+      this._v.subVectors(this._pos, s.position);
+      const r = this._v.length();
+      if (r > 1e-3) {
+        const kR = 1 - Math.exp(-dt * 26);
+        const want = r + (this._desiredRange - r) * kR;
+        this._pos.copy(s.position).addScaledVector(this._v, want / r);
+      }
+    }
 
     // Divergence guard — see MAX_CHASE.
     this._v.subVectors(this._pos, s.position);
@@ -215,7 +243,22 @@ export class ChaseCamera {
 
     // Distance and height grow with speed and with air time — pulling back in
     // the air is what makes a jump read as big.
-    const speedT = smoothstep(0, 26, s.speed);
+    // Framing speed is LOW-PASSED, and this matters more than it sounds.
+    //
+    // A carve scrubs speed against the edge and wins it back down the fall
+    // line, so instantaneous speed ripples every single turn. speedT feeds
+    // three things at once -- the follow distance (0.42 of 8.6 m, so ~3.6 m of
+    // travel), the height, and a 7 m look-point lead -- so that ripple became
+    // the camera visibly pulling in and out of the rider once per turn, with
+    // the aim point surging at the same time. The framing should track how
+    // fast the rider *is going*, not the within-turn ripple.
+    //
+    // ~1.2 s follow: fast enough that dropping into a steep pitch still opens
+    // the shot out, slow enough that a turn cannot pump it. Exponential so it
+    // is frame-rate independent.
+    if (this._speedLP == null) this._speedLP = s.speed;   // no ramp-in on the first frame
+    this._speedLP += (s.speed - this._speedLP) * (dt > 0 ? 1 - Math.exp(-dt / 1.2) : 1);
+    const speedT = smoothstep(0, 26, this._speedLP);
     const airT = clamp01((s.airHeight || 0) / 6);
     const wide = this.mode === 'cinematic' ? 1.45 : 1.0;
     const dist = C.followDistance * wide * (1 + speedT * 0.42 + airT * 0.55);
@@ -224,6 +267,9 @@ export class ChaseCamera {
     this._desired.copy(s.position)
       .addScaledVector(this._dir, -dist)
       .addScaledVector(this._up, height);
+    // Range the station actually wants, recorded for the range lock in
+    // update(). Taken after every offset below has been applied.
+    this._desiredRange = null;
 
     // On a steep pitch the camera has to sit further *down* the hill or it
     // ends up staring at the back of the rider's helmet with no run in frame.
@@ -231,6 +277,8 @@ export class ChaseCamera {
       const pitchLean = clamp01(s.slope / 0.9);
       this._desired.addScaledVector(this._up, -pitchLean * dist * 0.22);
     }
+
+    this._desiredRange = this._desired.distanceTo(s.position);
 
     // Look point: ahead of the rider along the direction of travel, lifted to
     // chest height, dropping as they get airborne so the landing stays framed.
