@@ -29,7 +29,7 @@ export async function mountBackdropModel(ctx) {
     // the whole frame at the end (see postprocess.js), so this matte is
     // tone-mapped no matter what the material asks for.
     toneMapped: true,
-    side: THREE.DoubleSide,   // look-dev: orientation-proof
+    side: THREE.FrontSide,    // orientation settled; DoubleSide bled a warm back face down the cut edge
   });
 
   // ...which is why the painting needs a gain. The art is authored as FINAL
@@ -52,6 +52,16 @@ export async function mountBackdropModel(ctx) {
   // constructor's default -- a fixed colour the sky had never rendered, which
   // is why clamping against it moved the matte without ever reaching the sky.
   mat.userData.haze = SOHO_HORIZON;
+  // Band derived from the MESH, not from constants.
+  //
+  // The fade used hardcoded world heights of 1700 and 2600. Those were true
+  // of an earlier mount; rescaling to 12.2 x 6.4 km at y 1180 moved every
+  // feature of the model without moving them, so the painted valley floor
+  // ended up at sink 0.58 -- where the curve below passed roughly a third of
+  // the haze -- and two thirds of raw grey-olive paint survived as a flat
+  // slab across 12% of the frame. Measuring the model means the band cannot
+  // drift out of step with it again.
+  mat.userData.band = { value: new THREE.Vector2(0, 1) };
   // The painting's lower half is its valley floor, painted grey-olive.
   // From ride height the terrain silhouette hides it, but from the
   // headwall you see straight over the bowl rim onto it — a flat dull
@@ -61,8 +71,9 @@ export async function mountBackdropModel(ctx) {
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uBdGain = mat.userData.gain;
     sh.uniforms.uBdHaze = mat.userData.haze;
+    sh.uniforms.uBdBand = mat.userData.band;
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uBdGain;\nuniform vec3 uBdHaze;');
+      .replace('#include <common>', '#include <common>\nuniform float uBdGain;\nuniform vec3 uBdHaze;\nuniform vec2 uBdBand;');
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vSohoBW;')
       .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
@@ -89,13 +100,13 @@ export async function mountBackdropModel(ctx) {
 		{
 			vec3 Wl = vec3( 0.2126, 0.7152, 0.0722 );
 			float aL = dot( gl_FragColor.rgb, Wl );
-			gl_FragColor.rgb = mix( gl_FragColor.rgb, vec3( aL ), 0.62 ) * 1.38;
+			gl_FragColor.rgb = mix( gl_FragColor.rgb, vec3( aL ), 0.40 ) * 1.30;
 		}
 
 		// The painted floor reaches ~y 2100 and the ridge feet start ~2200,
 		// so the range sinks into the inversion deck from below: only the
 		// tops stay clear of it.
-		float sink = 1.0 - smoothstep( 1700.0, 2600.0, vSohoBW.y );
+		float sink = 1.0 - smoothstep( uBdBand.x, uBdBand.y, vSohoBW.y );
 		// Converge to the LIVE horizon colour rather than a baked constant.
 		// Reaching a full 1.0 is what lets the dithered discard go: at the
 		// bottom of the band the matte is now exactly the colour the deck
@@ -113,11 +124,18 @@ export async function mountBackdropModel(ctx) {
 		// clear of the deck.
 		vec3 W3 = vec3( 0.2126, 0.7152, 0.0722 );
 		vec3 hazeHigh = mix( uBdHaze, vec3( dot( uBdHaze, W3 ) ) * 1.18, 0.68 );
-		vec3 hazeTgt = mix( hazeHigh, uBdHaze, smoothstep( 0.35, 1.0, sink ) );
+		// Below the ridge feet the target is the horizon, flatly. The painted
+		// valley floor is not snow catching sun, it is ground that should have
+		// dissolved into the inversion deck, and converging it toward the
+		// bright neutral meant for summits is what made it glow as a shelf.
+		vec3 hazeTgt = mix( hazeHigh, uBdHaze, smoothstep( 0.10, 0.55, sink ) );
 		// Weighted to the base as well: pow() keeps the mid-slopes far clearer
 		// than a linear ramp did, so ridge structure survives instead of being
 		// washed into a single wall of blue.
-		gl_FragColor.rgb = mix( gl_FragColor.rgb, hazeTgt, min( pow( sink, 2.3 ) * 1.25, 1.0 ) );
+		// Linear, not pow(). The exponent was there to protect mid-slope
+		// structure, but it also held the floor at a third of its haze, and the
+		// band above now does that job properly by height instead.
+		gl_FragColor.rgb = mix( gl_FragColor.rgb, hazeTgt, min( sink * 1.30, 1.0 ) );
 
 		// Soft ceiling, not a hard one -- and well ABOVE the horizon, not
 		// below it.
@@ -166,6 +184,15 @@ export async function mountBackdropModel(ctx) {
   g.position.set(300, 1180, -6400);
   // The runs face down-valley (-z); the painted face looks back up at them.
   ctx.scene.add(g);
+
+  // Now that the group carries its final transform, measure it and set the
+  // band: the floor dissolves below 42% of the model's height, and everything
+  // above 62% is clear of the deck.
+  g.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(g);
+  const span = Math.max(1, bb.max.y - bb.min.y);
+  mat.userData.band.value.set(bb.min.y + span * 0.42, bb.min.y + span * 0.62);
+
   return g;
 }
 

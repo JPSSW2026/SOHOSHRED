@@ -1047,7 +1047,20 @@ const INDIRECT_TINT = /* glsl */ `
 		// shadow.  The knee sits low so penumbra ramps rather than steps.
 		float sunOccl = 1.0 - smoothstep( 0.04, 0.32, beamLum / max( fillLum, 1.0e-5 ) );
 		float concav = saturate( sohoSSSAmount );
-		float shadowTint = max( concav, 0.52 * max( sunAway, sunOccl ) * sohoSnowness );
+		// 0.52 made the target arithmetically unreachable. With uSkyFillTint at
+		// (0.63, 0.76, 1.0) the strongest tint this could mix was
+		// 0.48 + 0.52*fill = (0.808, 0.875, 1.0), i.e. B/R 1.238 -- below the
+		// 1.25 floor of LAW 3's own band before the neutral inscatter in
+		// sky.js dilutes it further. Measured shadow B/R across the set came
+		// in at 1.096-1.159: grey shadows, the first tell in the book, and no
+		// amount of tuning elsewhere could have fixed it because the ceiling
+		// was in the way.
+		//
+		// 0.80 puts the reachable maximum at (0.704, 0.808, 1.0) = B/R 1.42,
+		// which lands inside the band with headroom for the dilution. The unit
+		// luminance normalisation below stays: this must rotate hue only, never
+		// lift value, or it would break LAW 3's fill ratio.
+		float shadowTint = max( concav, 0.80 * max( sunAway, sunOccl ) * sohoSnowness );
 		// Chromaticity of the light that survives into shadow: the 15,000 K sky
 		// (§4.2), pulled toward the pack's own red-depleted transport colour only
 		// where the concavity gate says the photons took a long path (§3.2).
