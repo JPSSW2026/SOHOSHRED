@@ -134,7 +134,11 @@ export class TitleFlow {
       // gesture - fail silent; the drop gesture starts the riding track.
       try {
         this._titleMusic = new Audio('audio/soho-valley-tonight.mp3');
-        this._titleMusic.loop = true;
+        // Plays ONCE. A player who sits on the card reading it hears the
+        // theme repeat on a short loop, which wears out fast (playtest:
+        // "too repetitive"). It lands better as a title cue that finishes
+        // and leaves the card quiet than as background that keeps going.
+        this._titleMusic.loop = false;
         this._titleMusic.volume = 0.45;
         this._titleMusic.play().catch(() => {});
       } catch { /* headless */ }
