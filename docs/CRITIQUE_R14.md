@@ -70,6 +70,34 @@ The grain seed looked like the answer — `uSeed = hash32(ctx.frame)`, and the
 seeding it deterministically changed nothing, and pinning the underlying
 counter made things worse, so grain is at most part of it.
 
+### Grain is exonerated; the frozen-frame probe was flawed
+
+Two corrections to the section above, both from direct measurement.
+
+**Grain is not the cause.** Disabling it outright via the existing
+`CONFIG.post.grain.enabled` flag — no new property, no bracketing — leaves
+divergence at **16.98%** against the 17.04% baseline. Unchanged. Every
+seed-related hypothesis is therefore dead, including the one attempt 5 was
+built on.
+
+**The frozen-frame probe proves less than claimed.** `engine.tick` increments
+the frame counter regardless of `dt`, so grain necessarily changes on every
+call. Four differing hashes only demonstrated that grain animates. The
+"purely the render path" conclusion over-read it, and a 40-frame warm-up
+before measuring did not converge the hashes either. The probe needs the
+frame counter held still to say anything — as written it cannot.
+
+What still stands, because it does not depend on that probe: two consecutive
+shots in one session end **bit-identical in physics** and still render
+differently. Something downstream of the sim varies, and it is not grain.
+
+Remaining candidates, none tested: the AO rotation and DoF sampling (the
+postprocess header notes these are frame-indexed like grain was), motion-blur
+reprojection, or non-deterministic rasterisation under SwiftShader. Test each
+by disabling it with its existing flag and re-running the two-shoot
+comparison — that method is cheap, needs no engine change, and just produced
+a clean answer for grain.
+
 ### The pattern across five attempts
 
 | approach | result vs 17.0% baseline |
@@ -79,6 +107,7 @@ counter made things worse, so grain is at most part of it.
 | Pin `ctx.frame` | 16.8% (no effect) |
 | Pin `engine.frame` | 37.1% |
 | Pin `uSeed` via new config property | 99.2% |
+| Disable grain entirely (existing flag) | 17.0% — unchanged, and it exonerates grain |
 
 **Every intervention made it worse; the only neutral one was the no-op.** That
 is the finding. A system where each perturbation increases run-to-run variance,
