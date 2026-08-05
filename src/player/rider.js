@@ -1597,19 +1597,49 @@ export class Rider {
     // by tucking harder, and without that extra drop the hand is left waving a
     // half-metre above a board it is nominally holding.
     const squat = A.absorb * 0.20 + A.tuck * 0.26 + A.compress * 0.13 + A.grabBlend * 0.13;
+    // ---- Inclination -------------------------------------------------
+    // The body hangs off boardPivot, which is ALREADY rolled to s.roll, so
+    // inclination is an angle from the surface — not something to add on top
+    // of the deck. Adding it was a jackknife: at a held full-steer carve the
+    // per-bone terms summed to roll(-0.97) + hips(0.55) + spine(0.34) +
+    // chest(0.25) = +0.18 rad, i.e. the torso finished 10 degrees tilted to
+    // the OUTSIDE of a 2.5 g turn while the deck was over at 55.
+    //
+    // Pick the total tilt the body should show in the root frame, then hand
+    // the bones only what the board has not already provided. A shade under
+    // the deck's own roll is the angulated look a real carve has: board
+    // edged hardest, body stacked slightly more upright over it.
+    const rollNow = s.roll || 0;
+    const residual = rollNow * 0.85 - rollNow;
+    // Old per-bone weights, normalised so they distribute the residual
+    // exactly rather than scaling it by their sum.
+    const WSUM = 0.45 + 0.28 + 0.20;
+
+    // Lean the mass across the board to balance the carve. The gain used to
+    // be 0.30 + 0.18*absorb, which put the pelvis 70 cm outboard of a 25 cm
+    // deck and — once the board roll was applied — 5.6 cm BELOW the contact
+    // plane, burying the seat and back leg in the heightfield.
+    let hx = Math.sin(A.incline) * 0.10 * live;
     hips.position.y = standH - squat;
-    // Lean the mass across the board to balance the carve.
-    hips.position.x = Math.sin(A.incline) * (0.30 + 0.18 * A.absorb) * live;
+    // Guard it directly: the pelvis bone, after the deck roll, must stay
+    // clear of the snow. Solved rather than tuned, so it holds at any roll.
+    const sr = Math.sin(rollNow), cr = Math.cos(rollNow);
+    const MIN_PELVIS_Y = 0.30;
+    if (Math.abs(sr) > 1e-4 && hx * sr + hips.position.y * cr < MIN_PELVIS_Y) {
+      const limit = (MIN_PELVIS_Y - hips.position.y * cr) / sr;
+      if (Math.abs(limit) < Math.abs(hx)) hx = limit;
+    }
+    hips.position.x = hx;
     hips.position.z = (A.tuck * -0.02) + (s.pitch || 0) * 0.06;
-    hips.rotation.z = A.incline * 0.45 * live - crash * 0.9;
+    hips.rotation.z = residual * (0.45 / WSUM) - crash * 0.9;
     hips.rotation.y = Rider.STANCE_YAW.hips + A.twist * 0.35;
     hips.rotation.x = A.tuck * 0.30 + A.absorb * 0.12 + crash * 0.5;
 
     // ---- Spine / chest ----------------------------------------------
-    B.spine.rotation.z = A.incline * 0.28 * live;
+    B.spine.rotation.z = residual * (0.28 / WSUM);
     B.spine.rotation.x = A.tuck * 0.22 + A.absorb * 0.10;
     B.chest.rotation.y = (Rider.STANCE_YAW.chest - Rider.STANCE_YAW.hips) + A.twist * 0.62;
-    B.chest.rotation.z = A.incline * 0.20 * live + crash * 0.6;
+    B.chest.rotation.z = residual * (0.20 / WSUM) + crash * 0.6;
     B.chest.rotation.x = -A.tuck * 0.10 + A.absorb * 0.16 + crash * 0.7;
 
     // ---- Head -------------------------------------------------------
