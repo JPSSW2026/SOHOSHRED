@@ -250,7 +250,13 @@ export class AudioSystem {
       this._burst(180 + 900 * i, 0.16 + 0.12 * i, 0.28 + 0.5 * i, 'lowpass');
       this._thump(52 + 26 * i, 0.22, 0.3 + 0.5 * i);
     }
-    if (s.crashed && this._lastGrounded && !grounded) this._burst(700, 0.5, 0.7, 'lowpass');
+    // Edge-trigger on the crash itself. The old condition also required
+    // "was grounded last frame and is airborne now", which a crash can never
+    // satisfy: s.crashed is only ever raised in _land, on the frame the
+    // rider touches down, so grounded is true and _lastGrounded is false.
+    // The crash burst was unreachable for the life of the codebase.
+    if (s.crashed && !this._wasCrashed) this._burst(700, 0.5, 0.7, 'lowpass');
+    this._wasCrashed = s.crashed;
     this._lastGrounded = grounded;
 
     // Fade the bus in once, on the first running frame.

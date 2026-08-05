@@ -286,7 +286,11 @@ export class TitleFlow {
       if (this.stats._air > this.stats.maxAir) this.stats.maxAir = this.stats._air;
     } else {
       // Landing chime for a real air (playtest ask): synthesized, no asset.
-      if (this.stats._air > 0.4) this._sfxLand(Math.min(1, this.stats._air / 1.4));
+      // Only for one you RODE AWAY FROM. It used to fire on air time alone,
+      // so catching an edge at 20 m/s played a cheerful rising major chime —
+      // the game congratulating you for crashing — and on a full wipeout it
+      // congratulated and buzzed at the same time.
+      if (this.stats._air > 0.4 && !s.crashed) this._sfxLand(Math.min(1, this.stats._air / 1.4));
       this.stats._air = 0;
     }
     // Wipeout: an unsalvageable landing — inverted, or an impact far past a
