@@ -41,6 +41,12 @@ export async function mountBackdropModel(ctx) {
   // it - the same inverse-exposure trick the AO luminance thresholds use.
   const exposure = ctx.renderer?.toneMappingExposure || CONFIG.render?.exposure || 1;
   mat.userData.gain = { value: 1 / Math.max(0.05, exposure) };
+  // The colour the sky converges to at the horizon, in scene-linear. The
+  // matte is fog:false, so this is the only way it can know what it is
+  // standing in front of — and a range that does not know that is exactly
+  // the range that ends up brighter than its own sky.
+  const fogCol = ctx.scene?.fog?.color || new THREE.Color(0.55, 0.66, 0.82);
+  mat.userData.haze = { value: new THREE.Color().copy(fogCol) };
   // The painting's lower half is its valley floor, painted grey-olive.
   // From ride height the terrain silhouette hides it, but from the
   // headwall you see straight over the bowl rim onto it — a flat dull
@@ -49,8 +55,9 @@ export async function mountBackdropModel(ctx) {
   // itself cannot reach this material: it is fog:false by design).
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uBdGain = mat.userData.gain;
+    sh.uniforms.uBdHaze = mat.userData.haze;
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uBdGain;');
+      .replace('#include <common>', '#include <common>\nuniform float uBdGain;\nuniform vec3 uBdHaze;');
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vSohoBW;')
       .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
@@ -59,37 +66,40 @@ export async function mountBackdropModel(ctx) {
       .replace('#include <common>', '#include <common>\nvarying vec3 vSohoBW;')
       .replace('#include <dithering_fragment>', `
 	{
-		// Band-mapped against the mounted mesh: the painted floor reaches
-		// ~y 2100 and the ridge feet start ~2200, so the fog rises to just
-		// below them — "only the tops of the mountains visible", with a
-		// graded shoulder so the midslopes emerge from haze, not a cut.
-		// The fade is DITHERED DISCARD, not alpha blending: a 457k-tri
-		// full-frame transparent mesh cost SwiftShader 51 s/frame at the
-		// base area (measured, 15x). Opaque + interleaved-gradient-noise
-		// discard keeps the depth-write and the speed; the deck fog and
-		// sky behind still show through the discarded pixels, and the
-		// light whitening rides the shoulder so the emerging midslopes
-		// look haze-licked rather than screen-doored.
-		// Widened from a 540 m band. The dither is a screen-space pattern on a
-		// jagged silhouette, so the narrower the band the more it resolves into
-		// a hatched stripe across the horizon rather than a gradient — and
-		// brightening the art to its authored values (above) made that stripe
-		// far more visible, because the screen door now separates bright snow
-		// from sky instead of grey from grey. Spreading it over 900 m drops the
-		// pattern's frequency relative to the shoulder.
-		float sink = 1.0 - smoothstep( 1700.0, 2600.0, vSohoBW.y );
-		// Shoulder is PAINTED haze (pure colour mix — artifact-free); the
-		// dithered discard only begins once the pixel is already ~90%
-		// fog-coloured, so the screen-door has nothing to reveal.
-		gl_FragColor.rgb = mix( gl_FragColor.rgb, vec3( 0.92, 0.96, 1.02 ), min( sink * 1.25, 0.95 ) );
-		// ...and the discard holds off until the pixel is almost entirely haze
-		// coloured, so the door has as little as possible left to reveal.
-		float cut = smoothstep( 0.86, 0.995, sink );
-		float ign = fract( 52.9829189 * fract( 0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y ) );
-		if ( cut > ign ) discard;
-		// Art and haze are both display-referred above; one gain takes the
-		// pair into the scene-linear space the tone mapper expects.
+		// Gain FIRST. The art is display-referred - painted as final pixels -
+		// and everything below compares it against the sky, which only means
+		// anything in the scene-linear space the tone mapper works in. Doing
+		// the haze mix before the gain was the bug: the fade mixed toward a
+		// near-white (0.92,0.96,1.02) in display space and *then* multiplied
+		// by 1/exposure, landing at ~(2.7,2.8,3.0) linear - about four times
+		// the fog colour the sky converges to. The haze meant to sink the
+		// painted valley floor was itself the brightest thing in frame.
 		gl_FragColor.rgb *= uBdGain;
+
+		// The painted floor reaches ~y 2100 and the ridge feet start ~2200,
+		// so the range sinks into the inversion deck from below: only the
+		// tops stay clear of it.
+		float sink = 1.0 - smoothstep( 1700.0, 2600.0, vSohoBW.y );
+		// Converge to the LIVE horizon colour rather than a baked constant.
+		// Reaching a full 1.0 is what lets the dithered discard go: at the
+		// bottom of the band the matte is now exactly the colour the deck
+		// and sky behind it would have painted, so an opaque pixel is
+		// indistinguishable from a discarded one - without a screen-space
+		// pattern shearing across a jagged silhouette. That pattern was
+		// resolving into a woven stripe right across the horizon, and no
+		// band width fixes it, because the artefact is the dither itself.
+		gl_FragColor.rgb = mix( gl_FragColor.rgb, uBdHaze, min( sink * 1.25, 1.0 ) );
+
+		// A range 5.6 km out cannot be brighter than the sky behind it. This
+		// is the one artefact that reads as "matte painting" instead of
+		// "mountain" (tell #28), and the baked-in atmosphere cannot prevent
+		// it because the painter did not know our exposure. Extinction wins
+		// at this distance, so clamp luma to just under the horizon haze
+		// rather than trusting the art.
+		const vec3 W = vec3( 0.2126, 0.7152, 0.0722 );
+		float ceilL = dot( uBdHaze, W ) * 0.96;
+		float artL = dot( gl_FragColor.rgb, W );
+		gl_FragColor.rgb *= ( artL > ceilL ) ? ( ceilL / max( artL, 1e-4 ) ) : 1.0;
 	}
 	#include <dithering_fragment>`);
   };
@@ -127,7 +137,9 @@ export async function mountBaseStation(ctx) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   const m = mesh.material;
-  m.side = THREE.DoubleSide;
+  // FrontSide: DoubleSide was drawing the building's interior back faces,
+  // which read as loose shards hanging around the roofline.
+  m.side = THREE.FrontSide;
   m.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vSohoWN;')
@@ -151,7 +163,9 @@ export async function mountBaseStation(ctx) {
   g.name = 'base-station-model';
   g.add(root);
   root.scale.set(58, 44, 58);
-  g.position.set(320, gy + 5.0, -560);
+  // Buried, not perched. At +5.0 there were five metres of daylight under
+  // the foundation and the whole thing read as a slab floating over the snow.
+  g.position.set(320, gy - 3.0, -560);
   g.rotation.y = yaw;
   ctx.scene.add(g);
 
