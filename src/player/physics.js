@@ -625,7 +625,15 @@ export class BoardPhysics {
     const travel = this._tmp2.copy(s.velocity);
     travel.y = 0;
     const travelLen = travel.length();
-    const slip = travelLen > 1.2 ? Math.abs(angleDelta(Math.atan2(travel.x, travel.z), Math.atan2(fwdFlat.x, fwdFlat.z))) : 0;
+    const slipRaw = travelLen > 1.2 ? Math.abs(angleDelta(Math.atan2(travel.x, travel.z), Math.atan2(fwdFlat.x, fwdFlat.z))) : 0;
+    // Fold onto the board's LINE, not its facing. A snowboard is bidirectional
+    // — riding away from a 180 means travelling tail-first, which is switch,
+    // which is a landing, not a catch. What actually catches an edge is travel
+    // ACROSS the board. Unfolded, a completed 180 read as ~180 degrees of slip
+    // against a 58 degree threshold, so the most basic trick in snowboarding
+    // was an instant bail every time and the game's own switch-landing bonus
+    // could never be earned.
+    const slip = Math.min(slipRaw, Math.PI - slipRaw);
 
     // Rotation has to be finished. Coming down 40° into a 360 is a crash no
     // matter how gently you touch the snow.
