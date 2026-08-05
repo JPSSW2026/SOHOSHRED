@@ -238,22 +238,39 @@ export class ChaseCamera {
     this._look.copy(s.position)
       .addScaledVector(this._dir, lead)
       .addScaledVector(this._up, 1.15 - airT * 0.5);
-    // Steep-descent framing (playtest: rider drops out the BOTTOM of frame
-    // on steep pitches): the look-ahead point sits on the slope ahead, and
-    // on a steep face that point is far BELOW the rider, pitching the lens
-    // down past them. Blend the look target's height toward the rider's own
-    // altitude as descent rate grows, so the rider stays in frame and the
-    // slope ahead reads below them.
-    if (s.grounded && s.velocity.y < -2) {
-      const steep = Math.min(1, (-s.velocity.y - 2) / 10);
-      this._look.y += (s.position.y + 0.9 - this._look.y) * 0.6 * steep;
+    // Put the aim point ON the slope ahead, not on the rider's horizontal
+    // plane. _dir is horizontal by construction, so the look point used to
+    // float above the snow by however much the hill dropped over the lead
+    // distance -- at 22 m/s on a 34 deg pitch that is 7.8 m of float, which
+    // aimed the lens ~30 deg above the fall line (measured) with a half-FOV
+    // of only 34.7. The whole run ahead compressed into the bottom sliver of
+    // frame and the top half was sky.
+    if (terrain && s.grounded) {
+      const ah = terrain.getHeight(this._look.x, this._look.z);
+      if (Number.isFinite(ah)) {
+        // Blend rather than snap: full tracking on the steeps where it
+        // matters, and on the flat the two agree anyway.
+        const track = clamp01((s.slope || 0) / 0.45);
+        this._look.y += (ah + 1.6 - this._look.y) * track;
+      }
     }
+    // (A guard used to sit here that claimed to fix the same steep-pitch
+    // framing by pulling the look point back UP toward the rider's altitude.
+    // It was a no-op and pointed the wrong way: this._look.y is already
+    // s.position.y + 1.15, so the correction it computed was -0.15 m, about
+    // 0.6 deg. Tracking the slope above is the actual fix.)
 
     // In the air, aim at where they will actually come down.
     if (!s.grounded && terrain && s.velocity.y < 0) {
       const g = CONFIG.physics.gravity;
       // Time to fall back to the height they left at — good enough to frame.
-      const tFall = clamp((-s.velocity.y + Math.sqrt(Math.max(s.velocity.y * s.velocity.y + 2 * g * (s.airHeight || 0), 0))) / g, 0, 2.2);
+      // Descending root. Negating velocity.y here took the ASCENDING root of
+      // the fall quadratic even though this branch only runs when the rider
+      // is already falling, so the predicted touchdown ran 1.4x long at
+      // -2 m/s and 9x long at -11 m/s -- pinned to the 2.2 s clamp for the
+      // back half of any real air, aiming 40 m past where the rider actually
+      // lands, with the aim blended 70% toward it.
+      const tFall = clamp((s.velocity.y + Math.sqrt(Math.max(s.velocity.y * s.velocity.y + 2 * g * (s.airHeight || 0), 0))) / g, 0, 2.2);
       this._v2.copy(s.position).addScaledVector(s.velocity, tFall);
       this._v2.y = terrain.getHeight(this._v2.x, this._v2.z) + 1.0;
       this._look.lerp(this._v2, clamp01(airT * 0.7));
