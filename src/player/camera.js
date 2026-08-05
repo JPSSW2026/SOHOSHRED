@@ -36,6 +36,28 @@ const GROUND_CLEARANCE = 0.85;
 /** How many samples the occlusion sweep takes between rider and camera. */
 const SWEEP_STEPS = 10;
 
+/**
+ * Closest the camera may ever sit to the rider, metres.
+ *
+ * Enforced whether or not the avoidance sweep fired: the follow spring
+ * overshoots inward on hard direction changes, and inside this the rider
+ * stops being a figure in a landscape and becomes a wall of jacket.
+ */
+const MIN_CHASE = 4.2;
+
+/**
+ * Hard bound on how far behind the rider the camera may ever be, metres.
+ *
+ * The follow spring is stable on paper, but it chases a target derived from
+ * terrain samples and a LOD rebuild can hand it a wild height for a frame.
+ * The old avoidance clamp fired EVERY frame and multiplied the spring's
+ * velocity by 0.4 as a side effect, which silently masked that; with the
+ * clamp now firing only when something is genuinely in the way, the brake is
+ * gone and a transient can run away (caught once in four probe runs, camera
+ * at 1e28 m). A chase camera 30 m back is broken by definition, so bound it.
+ */
+const MAX_CHASE = 30;
+
 export class ChaseCamera {
   constructor(ctx) {
     this.ctx = ctx;
@@ -127,8 +149,16 @@ export class ChaseCamera {
     this._vel.addScaledVector(this._vel, -2 * zeta * omega * dt);
     this._pos.addScaledVector(this._vel, dt);
 
+    // Divergence guard — see MAX_CHASE.
+    this._v.subVectors(this._pos, s.position);
+    const chase = this._v.length();
+    if (chase > MAX_CHASE) {
+      this._pos.copy(s.position).addScaledVector(this._v, MAX_CHASE / chase);
+      this._vel.multiplyScalar(0.2);
+    }
+
     // ---- Keep it out of the hill ------------------------------------
-    this._avoidTerrain(s);
+    this._avoidTerrain(s, dt);
 
     // ---- Look target -------------------------------------------------
     // Lead the rider: look where they are going, further ahead the faster
@@ -233,7 +263,7 @@ export class ChaseCamera {
   /* ------------------------------------------------------------------ *
    * Terrain avoidance
    * ------------------------------------------------------------------ */
-  _avoidTerrain(s) {
+  _avoidTerrain(s, dt) {
     const terrain = this.ctx.terrain;
     if (!terrain) return;
 
@@ -247,6 +277,13 @@ export class ChaseCamera {
     // 2. Nothing between the camera and the rider. March the line back from
     //    the rider and stop at the first sample the hill intrudes on — a
     //    convex rollover on a real slope will otherwise eat the camera whole.
+    // Airborne there is nothing to avoid: the rider is above the snow by
+    // construction and the camera is above them, so any hit the sweep reports
+    // is spurious. Gating here also kills the toggling — a minimum-charge
+    // ollie apexes at ~0.34 m, right on the old engage threshold, so tap
+    // ollies and sastrugi chatter flipped the camera between two stations.
+    if (!s.grounded) return;
+
     this._v.subVectors(this._pos, s.position);
     const len = this._v.length();
     if (len < 0.5) return;
@@ -256,7 +293,16 @@ export class ChaseCamera {
     for (let i = 1; i <= SWEEP_STEPS; i++) {
       const d = (i / SWEEP_STEPS) * len;
       this._v2.copy(s.position).addScaledVector(this._v, d);
-      const h = terrain.getHeight(this._v2.x, this._v2.z) + GROUND_CLEARANCE * 0.75;
+      // Required clearance RAMPS from nothing at the rider to full at the
+      // camera. Flat, it was full clearance at every sample including the
+      // first — but the ray starts at the board sitting ON the snow, so
+      // sample 1 is ~0.1-0.3 m up while the test demanded 0.64 m. It failed
+      // on its first sample every frame on every slope, which pinned the
+      // chase at the 4.2 m floor forever: the configured 8.6 m follow
+      // distance was never once used, and the rider filled a third of the
+      // frame instead of the intended eighth.
+      const need = GROUND_CLEARANCE * 0.75 * (i / SWEEP_STEPS);
+      const h = terrain.getHeight(this._v2.x, this._v2.z) + need;
       if (this._v2.y < h) { clear = (i - 1) / SWEEP_STEPS * len; break; }
     }
     if (clear < len - 0.01) {
@@ -265,11 +311,23 @@ export class ChaseCamera {
       // third of the frame every time a convex roll nudged the sweep, which
       // read as the camera panicking. Better to let the hill clip the bottom
       // of frame for a beat than to ride the rider's shoulder.
-      const d = Math.max(clear, 4.2);
+      const target = Math.max(clear, MIN_CHASE);
+      // RATE-LIMITED, not a teleport. This used to assign _pos directly -- a
+      // one-frame move of 8-11 m that tripled the rider on screen in 16 ms on
+      // every touchdown. The release was spring-smoothed but the re-engage
+      // was not, so the whole thing read as a violent zoom-punch into the
+      // rider's back. Damping the distance gives the pull-in a rate.
+      const d = damp(len, target, 12, dt);
       this._pos.copy(s.position).addScaledVector(this._v, d);
       const g2 = terrain.getHeight(this._pos.x, this._pos.z);
       if (this._pos.y < g2 + GROUND_CLEARANCE) this._pos.y = g2 + GROUND_CLEARANCE;
       this._vel.multiplyScalar(0.4);
+    } else if (len < MIN_CHASE) {
+      // Nothing in the way, but the spring has overshot inward — measured at
+      // 2.1 m through hard S-turns, which is a face full of rider.
+      this._pos.copy(s.position).addScaledVector(this._v, MIN_CHASE);
+      const g3 = terrain.getHeight(this._pos.x, this._pos.z);
+      if (this._pos.y < g3 + GROUND_CLEARANCE) this._pos.y = g3 + GROUND_CLEARANCE;
     }
   }
 
