@@ -321,15 +321,42 @@ export class AudioSystem {
     // quiet and brief — a call-out should acknowledge the trick, not applaud.
     const ac = this.ac;
     const t = ac.currentTime;
-    const root = quality === 'perfect' ? 660 : 550;
-    for (let i = 0; i < 2; i++) {
+
+    // The figure is built FROM the trick. It used to ignore `scored`
+    // entirely: a 180 and a 1080 with a held method were bit-identical, and
+    // 'clean' and 'sketchy' were too, while the HUD showed a combo
+    // multiplier climbing that the ears never heard.
+    const points = Math.max(0, scored?.points || 0);
+    const size = clamp01(points / 1400);                 // 0 at a straight air
+    const combo = Math.max(1, this.ctx?.tricks?.combo?.tricks?.length || 1);
+    // One note per combo link, so a linked run literally arpeggiates further
+    // up the chord each time.
+    const notes = Math.min(2 + Math.floor(size * 2) + (combo - 1), 6);
+    // Root climbs a whole tone per link; a stomp sits a fourth above clean.
+    const root = (quality === 'perfect' ? 660 : 550) * Math.pow(1.122, combo - 1);
+    // Sketchy voices flat and dull rather than merely quieter.
+    const ratios = quality === 'sketchy'
+      ? [1, 1.41, 1.78, 2.0, 2.51, 3.0]                  // tritone, unresolved
+      : [1, 1.5, 2.0, 2.5, 3.0, 4.0];                    // stacked fifths
+    const peak = 0.18 + size * 0.12;
+
+    // Duck the continuous bed so the call-out sits on top of it instead of
+    // inside it — edge, wind and base are all already on setTargetAtTime.
+    for (const [node, amt] of [[this.edgeAmp, 0.63], [this.windAmp, 0.63], [this.baseAmp, 0.63]]) {
+      if (!node) continue;
+      const now = node.gain.value;
+      node.gain.setTargetAtTime(now * amt, t, 0.05);
+      node.gain.setTargetAtTime(now, t + 0.25, 0.12);
+    }
+
+    for (let i = 0; i < notes; i++) {
       const o = ac.createOscillator();
-      o.type = 'triangle';
-      o.frequency.value = root * (i === 0 ? 1 : 1.5);
+      o.type = quality === 'sketchy' ? 'sine' : 'triangle';
+      o.frequency.value = root * ratios[i];
       const g = ac.createGain();
-      const at = t + i * 0.09;
+      const at = t + i * 0.075;
       g.gain.setValueAtTime(0.0001, at);
-      g.gain.exponentialRampToValueAtTime(0.12, at + 0.01);
+      g.gain.exponentialRampToValueAtTime(peak, at + 0.01);
       g.gain.exponentialRampToValueAtTime(0.0001, at + 0.22);
       o.connect(g).connect(this.master);
       o.start(at);
