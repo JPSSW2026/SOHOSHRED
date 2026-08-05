@@ -1498,6 +1498,15 @@ function installSoftShadows(C) {
 }
 
 /** The one shared uniform payload every material in the scene points at. */
+/**
+ * The sky's own horizon radiance, in renderer units, refreshed every frame.
+ * Exported because surfaces that opt OUT of aerial perspective still have to
+ * know what colour the horizon is this frame -- the modelled backdrop being
+ * the case in point. `scene.fog` cannot serve: it is null on the main path
+ * and is only maintained as a fallback carrier.
+ */
+export const SOHO_HORIZON = { value: new THREE.Color(0.55, 0.66, 0.82) };
+
 const AP_UNIFORMS = {
   sohoAtmo: { value: new Float32Array(9 * 4) },
   sohoSkyR: { value: new Float32Array(LUT_N * 4) },
@@ -2642,8 +2651,11 @@ export class Sky {
 
     // --- Fog carrier (fallback path only) ----------------------------------
     const scene = this.ctx.scene;
+    // Sampled every frame regardless of the fog carrier: the backdrop matte
+    // clamps itself against this, and it is fog:false by design.
+    const hz = this._skyRadianceCPU(0.02, Math.PI * 0.5);
+    SOHO_HORIZON.value.setRGB(hz[0], hz[1], hz[2]);
     if (scene && scene.fog) {
-      const hz = this._skyRadianceCPU(0.02, Math.PI * 0.5);
       scene.fog.color.setRGB(hz[0] * 0.35, hz[1] * 0.35, hz[2] * 0.35);
       scene.fog.density = Math.sqrt(Math.max(1e-9, (cfg.hazeDensity ?? w.haze) * 0.35));
     }
@@ -2813,7 +2825,17 @@ export class Sky {
     // that reads as belonging to something; beyond it, N·L carries the field.
     const riderPos = this.ctx?.physics?.state?.position;
     const riderD = riderPos ? camera.position.distanceTo(riderPos) : 1e9;
-    const far = cfg.shadowDistance ?? clamp(riderD * 2.2, 280, 520);
+    // The floor was 280 m, which is the whole reason the rider has no shadow.
+    // A portrait shot puts the subject ~3 m from the lens and still fitted a
+    // 280 m box: 0.167 m texels, which then demand a depth bias of ~0.5 m
+    // along the beam, and under a 10.6 degrees sun that is 2.7 m of lateral
+    // peter-pan applied to a 1.8 m caster. The shadow was not missing, it was
+    // parked several metres away. Track the subject down to 90 m so a close
+    // shot gets a tight map and can afford a small bias; wide framings, where
+    // riderD is large and no rider shadow is on screen to protect, still open
+    // to the full range. It also shrinks the 280-520 m slice that was turning
+    // coarse-LOD facet steps into caster-less smudges over the mid-field.
+    const far = cfg.shadowDistance ?? clamp(riderD * 2.2, 90, 520);
     const near = Math.max(camera.near, 0.05);
 
     // Minimal bounding sphere of the frustum slice [near, far], in view space.
@@ -2899,11 +2921,17 @@ export class Sky {
     // peter-panning at this sun angle.
     const sinAlt = Math.max(0.12, Math.abs(L.y));
     const nbScale = cfg.shadowNormalBiasScale ?? 1.8;
-    const nbMax = cfg.shadowNormalBiasMax ?? 0.28;
-    const dbScale = cfg.shadowDepthBiasScale ?? 0.55;
+    // Both ceilings were sized for the old 280 m floor. With a tight map the
+    // texel is ~5x smaller, so the same scales would over-bias by that factor.
+    const nbMax = cfg.shadowNormalBiasMax ?? 0.12;
+    const dbScale = cfg.shadowDepthBiasScale ?? 0.35;
     light.shadow.normalBias = clamp(texel * nbScale, 0.02, nbMax);
     const depthRange = Math.max(1e-3, cam.far - cam.near);
-    light.shadow.bias = -clamp(texel * dbScale / sinAlt, 0.05, 1.2) / depthRange;
+    // 1/sinAlt is the standard low-sun allowance, but at 10.6 degrees it
+    // inflates the bias 5.4x, and it is a lateral error at exactly the angle
+    // where a shadow is longest and most visible. Floor the divisor: the
+    // tighter fit above already removed the texel-scale reason for it.
+    light.shadow.bias = -clamp(texel * dbScale / Math.max(sinAlt, 0.30), 0.02, 1.2) / depthRange;
 
     // The penumbra probe, in the same normalised depth units the shadow
     // coordinate carries.  An orthographic shadow camera makes that a pure

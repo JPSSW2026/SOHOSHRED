@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CONFIG } from '../core/config.js';
+import { SOHO_HORIZON } from './sky.js';
 
 export async function mountBackdropModel(ctx) {
   const gltf = await new GLTFLoader().loadAsync('models/backdrop-ranges.glb');
@@ -45,8 +46,12 @@ export async function mountBackdropModel(ctx) {
   // matte is fog:false, so this is the only way it can know what it is
   // standing in front of — and a range that does not know that is exactly
   // the range that ends up brighter than its own sky.
-  const fogCol = ctx.scene?.fog?.color || new THREE.Color(0.55, 0.66, 0.82);
-  mat.userData.haze = { value: new THREE.Color().copy(fogCol) };
+  // The sky's live horizon radiance, shared by reference so it tracks every
+  // frame. scene.fog cannot serve here: the main path nulls it and keeps it
+  // only as a fallback carrier, so reading it at mount yielded the Fog
+  // constructor's default -- a fixed colour the sky had never rendered, which
+  // is why clamping against it moved the matte without ever reaching the sky.
+  mat.userData.haze = SOHO_HORIZON;
   // The painting's lower half is its valley floor, painted grey-olive.
   // From ride height the terrain silhouette hides it, but from the
   // headwall you see straight over the bowl rim onto it — a flat dull
