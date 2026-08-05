@@ -412,7 +412,7 @@ export class ChaseCamera {
     if (len < 0.5) return;
     this._v.multiplyScalar(1 / len);
 
-    let clear = len;
+    let clear = len, prevGap = null;
     for (let i = 1; i <= SWEEP_STEPS; i++) {
       const d = (i / SWEEP_STEPS) * len;
       this._v2.copy(s.position).addScaledVector(this._v, d);
@@ -426,7 +426,26 @@ export class ChaseCamera {
       // frame instead of the intended eighth.
       const need = GROUND_CLEARANCE * 0.75 * (i / SWEEP_STEPS);
       const h = terrain.getHeight(this._v2.x, this._v2.z) + need;
-      if (this._v2.y < h) { clear = (i - 1) / SWEEP_STEPS * len; break; }
+      const gap = this._v2.y - h;
+      if (gap < 0) {
+        // Interpolate the crossing; do NOT snap back to the previous sample.
+        //
+        // This used to report the last CLEAR sample index, which quantises the
+        // answer to whole sweep steps: as the camera drifts, the sample that
+        // first intrudes flips between i and i+1 and the reported clearance
+        // jumps by len/SWEEP_STEPS -- on a 9 m chase, about a metre, in a
+        // single frame. That is the ~1.5 m shove behind the judder, and it
+        // gets worse with speed because the ray sweeps across more terrain per
+        // frame and so flips more often.
+        //
+        // The gap either side of the crossing gives its position directly, and
+        // a linearly interpolated crossing moves continuously as the geometry
+        // slides under the ray, so the pull-in target stops stepping.
+        const t = prevGap != null && prevGap > 0 ? prevGap / (prevGap - gap) : 0;
+        clear = ((i - 1) + t) / SWEEP_STEPS * len;
+        break;
+      }
+      prevGap = gap;
     }
     if (clear < len - 0.01) {
       // Pull in, but keep a minimum so the camera never ends up inside the
