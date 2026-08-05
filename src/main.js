@@ -126,10 +126,20 @@ async function boot() {
   engine._onResize();
   engine.start();
 
-  // The modelled range wall (user's look-dev GLB) mounts async - the game
-  // is playable before it streams in.
-  mountBackdropModel(ctx).catch((e) => console.warn('[backdrop-model]', e.message));
-  mountBaseStation(ctx).catch((e) => console.warn('[base-station]', e.message));
+  // The modelled range wall and base station mount async so the game is
+  // playable before they stream in -- but the PROMISES ARE KEPT, and waited
+  // on before the ready flag goes up.
+  //
+  // Fire-and-forget was hiding the range completely from every still ever
+  // captured: shoot.mjs waits for __SOHO.isReady, and isReady was raised
+  // without reference to a 15 MB GLB that had not finished loading. The
+  // massif was mounted, scaled and shaded correctly and simply was not in
+  // the scene yet at the moment of capture -- which is why changes to its
+  // scale, position, haze and clamp all produced pixel-identical frames.
+  const worldModels = Promise.all([
+    mountBackdropModel(ctx).catch((e) => console.warn('[backdrop-model]', e.message)),
+    mountBaseStation(ctx).catch((e) => console.warn('[base-station]', e.message)),
+  ]);
 
   // Game flow: sting -> title -> riding. Sockets for the user-supplied
   // presentation assets; the riding core is untouched.
@@ -252,6 +262,14 @@ async function boot() {
       };
     },
   };
+
+  // Let the streamed models land before declaring ready, so a capture cannot
+  // photograph the world without its mountains. Bounded, so a missing or slow
+  // asset degrades to the old behaviour instead of hanging the boot.
+  await Promise.race([
+    worldModels,
+    new Promise((r) => setTimeout(r, 20000)),
+  ]);
 
   // One warm frame so shaders compile before anyone screenshots.
   engine.tick(1 / 60);

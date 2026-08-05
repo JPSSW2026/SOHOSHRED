@@ -140,8 +140,19 @@ export async function mountBackdropModel(ctx) {
   const g = new THREE.Group();
   g.name = 'backdrop-model';
   g.add(root);
-  root.scale.set(11000, 6000, 3500);
-  g.position.set(300, 1250, -5600);
+  // Scale and height are the difference between a horizon detail and a
+  // mountain range. At 11 km x 6 km mounted at y 1250 the massif cleared the
+  // bowl rim by about ten pixels in a 720-line frame -- structurally present,
+  // visually absent, which is why the wide shots read as an empty white bowl
+  // under sky rather than as a place ringed by mountains. Nothing in the
+  // shading could fix that; there was almost nothing on screen to shade.
+  //
+  // Taller and lifted so the tops stand well clear of the rim, and pulled
+  // slightly closer so it subtends a larger angle. The base still sinks into
+  // the inversion deck, so the extra height reads as peaks rather than as a
+  // wall dropped in front of the valley.
+  root.scale.set(13500, 9200, 3500);
+  g.position.set(300, 1850, -5200);
   // The runs face down-valley (-z); the painted face looks back up at them.
   ctx.scene.add(g);
   return g;
