@@ -928,7 +928,10 @@ export class Rider {
         { bone: `thigh${side}`,  pos: jointPos(`shin${side}`, 0.05),   r: 0.100 },
         { bone: `shin${side}`,   pos: jointPos(`shin${side}`, -0.04),  r: 0.094 },
         { bone: `shin${side}`,   pos: jointPos(`boot${side}`, 0.05),   r: 0.085 },
-      ], M.pants);
+        // Capped BOTH ends. Open tubes are why the rider was see-through:
+        // with front-side culling you look straight down the inside of the
+        // garment, and in close-spray the snow showed through the pelvis.
+      ], M.pants, { capStart: true, capEnd: true });
     }
     /* Pelvis / seat, bridging the two legs under the jacket hem. */
     {
@@ -936,7 +939,7 @@ export class Rider {
       tube([
         { bone: 'hips', pos: hips.clone().setY(hips.y - 0.10), r: 0.150, sx: 0.86 },
         { bone: 'hips', pos: hips.clone().setY(hips.y + 0.12), r: 0.158, sx: 0.86 },
-      ], M.pants);
+      ], M.pants, { capStart: true, capEnd: true });
     }
     /* Jacket body: hem below the hips to the collar, one surface. */
     {
@@ -950,7 +953,7 @@ export class Rider {
         { bone: 'chest', pos: chest.clone().setY(chest.y + 0.02), r: 0.172, sx: 0.76 },
         { bone: 'chest', pos: chest.clone().setY(collarY * 0.55 + chest.y * 0.45), r: 0.166, sx: 0.74 },
         { bone: 'chest', pos: chest.clone().setY(collarY - 0.012), r: 0.144, sx: 0.74 },
-      ], M.shell, { capEnd: true });
+      ], M.shell, { capStart: true, capEnd: true });
     }
     /* Sleeves: a short yoke on the chest, then upper arm and forearm. */
     for (const side of ['L', 'R']) {
@@ -961,7 +964,7 @@ export class Rider {
         { bone: `upperArm${side}`, pos: jointPos(`foreArm${side}`, 0.045), r: 0.070 },
         { bone: `foreArm${side}`,  pos: jointPos(`foreArm${side}`, -0.04), r: 0.066 },
         { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.015),    r: 0.055 },
-      ], M.shellGrey, { capEnd: false, capStart: true });
+      ], M.shellGrey, { capEnd: true, capStart: true });
     }
   }
 
@@ -1684,7 +1687,21 @@ export class Rider {
     // be 0.30 + 0.18*absorb, which put the pelvis 70 cm outboard of a 25 cm
     // deck and — once the board roll was applied — 5.6 cm BELOW the contact
     // plane, burying the seat and back leg in the heightfield.
-    let hx = Math.sin(A.incline) * 0.10 * live;
+    // Flexing folds the rider FORWARD over the toes; it does not merely lower
+    // the pelvis. This is the chair-sit, and it has survived two previous
+    // attempts because both went looking for a stray backward rotation. There
+    // is none. The fault is an ABSENCE: the only term on the torso's fold axis
+    // is `residual`, which is a function of board roll and therefore exactly
+    // zero riding flat, so absorb/tuck/compress dropped the hips straight down
+    // with the spine left standing erect on top of them. That is a man sitting
+    // on a stool, and no amount of pelvis-height tuning could have fixed it.
+    //
+    // A rotation about +Z tips the head toward -X, which is the toe edge, so
+    // this folds the chest out over the board the way a flexed rider actually
+    // stands. The hips travel the other way as they drop -- heel-side, the
+    // counterweight that keeps the mass over the deck rather than off the nose.
+    const fold = squat * 0.46;
+    let hx = Math.sin(A.incline) * 0.10 * live + squat * 0.085;
     const MIN_PELVIS_Y = 0.30;
     // Bound the squat itself, not only the lateral shift. absorb + tuck +
     // compress + grab can sum to 0.72 against a 0.735 stance height, which
@@ -1704,15 +1721,15 @@ export class Rider {
     }
     hips.position.x = hx;
     hips.position.z = (A.tuck * -0.02) + (s.pitch || 0) * 0.06;
-    hips.rotation.z = residual * (0.45 / WSUM) - crash * 0.9 + wobble * 0.30 - crunch * 0.35;
+    hips.rotation.z = residual * (0.45 / WSUM) + fold * 0.42 - crash * 0.9 + wobble * 0.30 - crunch * 0.35;
     hips.rotation.y = Rider.STANCE_YAW.hips + A.twist * 0.35;
     hips.rotation.x = A.tuck * 0.30 + A.absorb * 0.12 + crash * 0.5 + crunch * 0.85;
 
     // ---- Spine / chest ----------------------------------------------
-    B.spine.rotation.z = residual * (0.28 / WSUM);
+    B.spine.rotation.z = residual * (0.28 / WSUM) + fold * 0.34;
     B.spine.rotation.x = A.tuck * 0.22 + A.absorb * 0.10 + crunch * 0.70;
     B.chest.rotation.y = (Rider.STANCE_YAW.chest - Rider.STANCE_YAW.hips) + A.twist * 0.62;
-    B.chest.rotation.z = residual * (0.20 / WSUM) + crash * 0.6;
+    B.chest.rotation.z = residual * (0.20 / WSUM) + fold * 0.24 + crash * 0.6;
     B.chest.rotation.x = -A.tuck * 0.10 + A.absorb * 0.16 + crash * 0.7;
 
     // ---- Head -------------------------------------------------------
