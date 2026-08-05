@@ -353,7 +353,22 @@ noise.
 
 ## Right, and still open
 
-- `west-spur` shadow-map acne on the coarse clipmap ring (severity 4).
+- `west-spur` navy patch (severity 4). **Still present, attribution UNPROVEN.**
+  A hard-edged flat blue-grey plate mid-frame (rows ~330-420, cols ~180-780)
+  with a regular horizontal dashed stipple.
+  - The critic called it shadow-map acne on a coarse clipmap ring.
+  - Hazard netting is ruled out: that prop is orange alpha-tested lattice,
+    the patch is blue-grey.
+  - Quartering `shadowMapSize` (4096 -> 1024) moved the patch region by 14.1%
+    while the whole frame moved 12.8%, and the patch's mean RGB was unchanged
+    (116,130,151 vs 117,130,151). Against a 17% capture noise floor that
+    proves nothing either way.
+  This one cannot be attributed by re-shooting and diffing, because the effect
+  is smaller than the noise. It needs either a deterministic capture or
+  geometric isolation — render the region with prop/terrain groups toggled
+  through a path that yields valid images. Note that toggling visibility and
+  calling `page.screenshot()` does NOT work: it returned an identical 0.1%
+  diff for every object tried, including ones that certainly matter.
 - Mannequin arms: no shoulder Y, no wrist, `sway` zeroed at riding speed (4).
 - Nothing breaks the skyline; rock classification is zeroed past 2.4 km so
   props have no candidates on the crests (3).
