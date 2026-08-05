@@ -180,7 +180,50 @@ two-sample comparison, which we now know cannot distinguish a real improvement
 from a state flip. It should be re-tested under the three-run protocol before
 anything else is tried.
 
-**Recommended next attempt — find the toggle, do not guess at it.**
+### Attempt 2 re-tested under the three-run protocol — genuinely dead
+
+Freezing `manualTime` at ready, harness-only, no engine change:
+
+| pair | baseline | clock frozen at ready |
+|---|---|---|
+| 1 vs 2 | 17.16% | **95.93%** |
+| 2 vs 3 | 17.15% | 23.94% |
+| 1 vs 3 | **0.05%** | 95.87% |
+
+Run 1 becomes a 96% outlier and the other pair is worse than baseline. Freezing
+at "ready" stops the clock *before the world has settled*, so the first shot
+photographs an unbuilt state. This is now a valid negative, measured under the
+protocol — not a bimodal artefact. The rehabilitation in the previous section
+was wrong; attempt 2 is dead on its own merits.
+
+That is nine interventions, none of which improved on doing nothing.
+
+### Recommendation: work around it, do not keep fixing it
+
+The root cause is understood (LOD snap boundary, driven by sub-metre camera
+differences) but every attempt to remove the *source* of those differences has
+made the capture worse, because the state that varies is also the state the
+world needs in order to settle correctly.
+
+The pragmatic position, and the one I would take next:
+
+1. **Adopt the modal protocol as the measurement standard.** Capture 3 runs,
+   keep the two that agree (they agree to 0.05%, which is effectively exact),
+   discard the odd one. This gives an exact reference image with no engine
+   change at all, and it is the only thing here that has actually worked.
+2. **Only trust deltas above ~17%** for any comparison not using that protocol.
+   Several items in this document clear that easily — the horizon cross-hatch
+   and the jacket colour were both visible, structural changes.
+3. **If a real fix is wanted later**, the direction implied by the root cause is
+   a fixed number of warm-up ticks after `reset()` and before the first shot, so
+   every run reaches the same settled state — rather than freezing the clock,
+   which prevents settling. Untested; measure with the modal protocol.
+
+Exhausted, do not retry: seed pinning of any kind, frame-parity normalisation,
+clearing fx accumulators, disabling post effects wholesale, and freezing the
+clock at ready.
+
+**Superseded — recommendation kept for the record:**
 
 1. **Adopt the three-run protocol first.** Nothing else is measurable without
    it. Capture N=5 runs of one preset, hash each, and confirm the hashes fall
