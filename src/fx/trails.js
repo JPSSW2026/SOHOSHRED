@@ -221,7 +221,7 @@ export class TrailSystem {
     } else {
       // Airborne: break the strip so the trench does not draw a straight line
       // across the gap from take-off to landing.
-      this._hasLast = false;
+      this._breakStrip();
     }
 
     if (this._pending === 0) return;
@@ -273,7 +273,7 @@ export class TrailSystem {
     // Outside the box there is nothing to write.
     if (pos.x < region.minX || pos.x > region.minX + region.size ||
         pos.z < region.minZ || pos.z > region.minZ + region.size) {
-      this._hasLast = false;
+      this._breakStrip();
       return;
     }
 
@@ -335,6 +335,22 @@ export class TrailSystem {
   }
 
   /** Write one segment: the previous cross-section and the new one. */
+  /**
+   * End the current strip.
+   *
+   * Both halves matter and they were not paired: clearing `_hasLast` alone
+   * stops the strip advancing, but `_emit` still opens its next segment from
+   * `_prevSection` — the cross-section from BEFORE the break. The first stamp
+   * after touchdown then spanned take-off XZ straight to landing XZ, so every
+   * jump stitched a full-depth trench across the gap it was airborne over,
+   * and because the trail target is MAX-blended and never cleared mid-run, it
+   * stayed there for the rest of the run.
+   */
+  _breakStrip() {
+    this._hasLast = false;
+    this._prevSection = null;
+  }
+
   _emit(centre, right, halfWidth, depth, lip, compaction) {
     if (this._pending >= MAX_SEGMENTS) return;
     const seg = this._pending++;
