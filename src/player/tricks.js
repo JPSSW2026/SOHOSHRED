@@ -175,11 +175,28 @@ export class TrickSystem {
     const s = this.ctx.physics?.state;
     const switchLanding = s && (s.forwardSpeed ?? 1) * this._stanceAtTakeoff < 0;
 
+    // Three grades of bad landing, three different call-outs. "BAILED" for
+    // everything was the note: it made every scuffed landing look like the
+    // same disaster.
+    if (quality === 'failed') {
+      this.totals.crashed++;
+      this.callout = { text: 'FAILED', score: 0, quality: 'failed' };
+      this._calloutTimer = 2.6;
+      this._breakCombo();
+      return;
+    }
     if (quality === 'crash') {
       this.totals.crashed++;
       this.callout = { text: 'BAILED', score: 0, quality: 'crash' };
       this._calloutTimer = 2.0;
       this._breakCombo();
+      return;
+    }
+    if (quality === 'oof') {
+      // Rode away from it. The combo survives -- staying on your feet is the
+      // whole point -- but it does not score.
+      this.callout = { text: 'OOF', score: 0, quality: 'oof' };
+      this._calloutTimer = 1.2;
       return;
     }
 

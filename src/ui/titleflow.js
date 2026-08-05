@@ -236,6 +236,11 @@ export class TitleFlow {
         [180, 48, 0.55, 0.55, 'triangle'],   // body: the impact, pitched down
         [300, 90, 0.30, 0.42, 'sawtooth'],   // detuned against it: the sour note
         [92, 40, 0.42, 0.70, 'sine'],        // low tail
+        // The buzzer proper. A flat, held square against the falling impact
+        // is what makes this read as a VERDICT rather than as another thud --
+        // the run is over, and it should sound like a klaxon, not a landing.
+        [155, 150, 0.26, 0.60, 'square'],
+        [104, 100, 0.22, 0.60, 'square'],
       ]) {
         const o = ac.createOscillator(), gn = ac.createGain();
         o.type = type;

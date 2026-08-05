@@ -1570,6 +1570,16 @@ export class Rider {
     A.compress = damp(A.compress, clamp01((s.landingImpact || 0) / 12), s.landingImpact ? 26 : 6, dt);
     A.edge = damp(A.edge, s.edgeAngle || 0, 10, dt);
     A.crash = damp(A.crash, s.crashed ? 1 : 0, s.crashed ? 12 : 2.5, dt);
+    // CRUNCH: the failed tier folds the rider up rather than just putting
+    // them down. Driven off the wipeout flag, which only the unsalvageable
+    // landings raise, so an ordinary bail still reads as a bail.
+    A.crunch = damp(A.crunch || 0, s.wipeout || (s.crashed && s.stumble === 0 && A.crunch > 0.02) ? 1 : 0,
+      s.wipeout ? 16 : 1.6, dt);
+    // WOBBLE: the oof tier. A quick lateral shudder that decays over the
+    // stumble timer -- caught out, rode away, never left their feet.
+    A.wobble = (s.stumble || 0) > 0
+      ? Math.sin((s.stumble || 0) * 46) * (s.stumble || 0) * 0.85
+      : damp(A.wobble || 0, 0, 8, dt);
     A.grabBlend = damp(A.grabBlend, grabName ? 1 : 0, 9, dt);
     if (grabName) this._grab = grabName;
 
@@ -1581,6 +1591,8 @@ export class Rider {
     A.twist = damp(A.twist, clamp((s.edgeAngle || 0) * 0.55 - (s.slipAngle || 0) * 0.5, -0.7, 0.7), 8, dt);
 
     const crash = A.crash;
+    const crunch = A.crunch || 0;
+    const wobble = A.wobble || 0;
     const live = 1 - crash;
 
     // ---- Board ------------------------------------------------------
@@ -1634,7 +1646,7 @@ export class Rider {
     // so on a flat board it has no authority at all. Straight-line absorb is
     // exactly where the collapse looked worst and exactly where sin(roll) is
     // zero.
-    hips.position.y = Math.max(standH - squat, MIN_PELVIS_Y);
+    hips.position.y = Math.max(standH - squat - crunch * 0.22, MIN_PELVIS_Y * (1.0 - crunch * 0.45));
     // Guard it directly: the pelvis bone, after the deck roll, must stay
     // clear of the snow. Solved rather than tuned, so it holds at any roll.
     const sr = Math.sin(rollNow), cr = Math.cos(rollNow);
@@ -1644,13 +1656,13 @@ export class Rider {
     }
     hips.position.x = hx;
     hips.position.z = (A.tuck * -0.02) + (s.pitch || 0) * 0.06;
-    hips.rotation.z = residual * (0.45 / WSUM) - crash * 0.9;
+    hips.rotation.z = residual * (0.45 / WSUM) - crash * 0.9 + wobble * 0.30 - crunch * 0.35;
     hips.rotation.y = Rider.STANCE_YAW.hips + A.twist * 0.35;
-    hips.rotation.x = A.tuck * 0.30 + A.absorb * 0.12 + crash * 0.5;
+    hips.rotation.x = A.tuck * 0.30 + A.absorb * 0.12 + crash * 0.5 + crunch * 0.85;
 
     // ---- Spine / chest ----------------------------------------------
     B.spine.rotation.z = residual * (0.28 / WSUM);
-    B.spine.rotation.x = A.tuck * 0.22 + A.absorb * 0.10;
+    B.spine.rotation.x = A.tuck * 0.22 + A.absorb * 0.10 + crunch * 0.70;
     B.chest.rotation.y = (Rider.STANCE_YAW.chest - Rider.STANCE_YAW.hips) + A.twist * 0.62;
     B.chest.rotation.z = residual * (0.20 / WSUM) + crash * 0.6;
     B.chest.rotation.x = -A.tuck * 0.10 + A.absorb * 0.16 + crash * 0.7;

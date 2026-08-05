@@ -72,12 +72,29 @@ const CSS = `
   position: absolute; left: 50%; top: 71vh; transform: translateX(-50%);
   text-align: center; opacity: 0;
 }
+/* Type matched to the end frame: Archivo, heavy, italic, tight tracking on
+   the name; wide-tracked small caps underneath. The call-out used to be a
+   light 300 with open tracking, which read as a different product from the
+   title and result cards it sits between. */
 .soho-trick .n {
-  font-size: 3.4vh; font-weight: 300; letter-spacing: 0.04em; white-space: nowrap;
+  font-size: 4.0vh; font-weight: 900; font-style: italic; letter-spacing: -0.012em;
+  white-space: nowrap; text-transform: uppercase;
 }
-.soho-trick .p { font-size: 2.0vh; font-weight: 500; opacity: 0.85; margin-top: 0.15em; }
-.soho-trick .c { font-size: 1.4vh; letter-spacing: 0.22em; opacity: 0.7; margin-top: 0.35em; }
+.soho-trick .p {
+  font-size: 2.0vh; font-weight: 700; letter-spacing: 0.10em; opacity: 0.9;
+  margin-top: 0.15em;
+}
+.soho-trick .c {
+  font-size: 1.3vh; font-weight: 600; letter-spacing: 0.34em; opacity: 0.75;
+  margin-top: 0.4em; text-transform: uppercase;
+}
+/* Three grades of bad landing, three readings. OOF is a shrug, BAILED is a
+   warning, FAILED is the run ending -- so it takes the title card's red and
+   the most size. */
+.soho-trick.oof .n { color: #ffd9a8; font-size: 3.2vh; }
 .soho-trick.crash .n { color: #ff8c6b; }
+.soho-trick.failed .n { color: #e02310; font-size: 5.2vh; letter-spacing: 0.02em; }
+.soho-trick.failed .c { color: #e02310; opacity: 0.9; }
 
 .soho-run { position: absolute; right: 3.2vw; bottom: 4.2vh; text-align: right; }
 .soho-run .s {
@@ -191,7 +208,10 @@ export class HUD {
       this.el.trickN.textContent = callout.text || '';
       this.el.trickP.textContent = callout.score ? `+${callout.score.toLocaleString()}` : '';
       this.el.trickC.textContent = callout.combo > 1 ? `${callout.combo}× COMBO` : '';
-      this.el.trick.classList.toggle('crash', callout.quality === 'crash');
+      // One class per grade, so the CSS above can read them differently.
+      for (const q of ['oof', 'crash', 'failed']) {
+        this.el.trick.classList.toggle(q, callout.quality === q);
+      }
     }
     if (!callout) this._lastCallout = null;
 

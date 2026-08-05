@@ -132,6 +132,8 @@ export class BoardPhysics {
       crashed: false,
       /** One-shot: an unsalvageable landing. Consumed and cleared by the run flow. */
       wipeout: false,
+      /** Minor bail: a wobble the rider rides out. Seconds remaining. */
+      stumble: 0,
       /** 0…1, how hard the edge is working against its grip budget. */
       edgeLoad: 0,
       /** 0…1 board flex from pop charge + landing compression. */
@@ -186,6 +188,7 @@ export class BoardPhysics {
     s.pitch = 0;
     s.flipRot = 0;
     s.wipeout = false;
+    s.stumble = 0;
     s.landingImpact = 0;
     s.popped = false;
     s.gPeak = 0;
@@ -267,6 +270,7 @@ export class BoardPhysics {
     // the player tobogganing the whole headwall with no control (playtest:
     // "BAILED and stuck"). Riders get back up moving; so do we.
     if (s.crashed) {
+      if (s.stumble > 0) s.stumble = Math.max(0, s.stumble - h);
       s.crashTime += h;
       if ((s.speed < 1.4 && s.crashTime > 1.2) || s.crashTime > 2.2) {
         s.crashed = false;
@@ -654,14 +658,39 @@ export class BoardPhysics {
     // on — but landing on your head is the end of the run, so it is flagged
     // for the run flow to sting and reset (playtest ask).
     const inverted = flipResidue > WIPEOUT_FLIP && s.airTime > 0.35;
-    if (inverted || closing > WIPEOUT_CLOSING) s.wipeout = true;
 
-    if (tooHard || caughtEdge || spunOut || s.wipeout) {
+    // THREE tiers of bad landing, not one.
+    //
+    // Everything short of clean used to collapse into a full crash, so the
+    // rider hit the deck for landings a real snowboarder rides out with a
+    // wobble and a swear word -- which is why "bailed" read as constant.
+    // The band between "that cost you" and "you are on the ground" is where
+    // most real bad landings live, and it now has its own tier.
+    const marginalEdge = slip > CRASH_SLIP_ANGLE * 0.58 && s.speed > 5;
+    const marginalDrop = closing > HARD_LANDING * 1.12;
+    const marginalSpin = (!spinClean || !flipClean) && s.airTime > 0.28;
+
+    if (inverted || closing > WIPEOUT_CLOSING) {
+      // FAILED: unsalvageable. Landed on your head or took an impact far past
+      // what a crash already is. The run is over; the flow resets to the drop.
+      s.wipeout = true;
+      s.crashed = true;
+      s.crashTime = 0;
+      s.velocity.multiplyScalar(0.22);
+      this.ctx.tricks?.onLanded?.('failed');
+    } else if (tooHard || caughtEdge || spunOut) {
+      // BAILED: on the ground, but the run continues.
       s.crashed = true;
       s.crashTime = 0;
       // A crash dumps most of the speed instantly and the rest to friction.
       s.velocity.multiplyScalar(0.34);
       this.ctx.tricks?.onLanded?.('crash');
+    } else if (marginalEdge || marginalDrop || marginalSpin) {
+      // OOF: caught out, wobbled, rode away. Costs speed and composure, not
+      // the run. No crash flag -- the rider never leaves their feet.
+      s.stumble = 0.85;
+      s.velocity.multiplyScalar(0.78);
+      this.ctx.tricks?.onLanded?.('oof');
     } else if (closing > HARD_LANDING) {
       // Absorbed but expensive: the legs compress and the landing costs speed.
       s.velocity.multiplyScalar(lerp(1.0, 0.86, smoothstep(HARD_LANDING, CRASH_LANDING, closing)));
