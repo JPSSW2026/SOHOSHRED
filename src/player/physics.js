@@ -420,17 +420,18 @@ export class BoardPhysics {
     // dusting, not a spray shot.
     // How hard the EDGE IS CUTTING, which is not the same thing as edgeLoad.
     //
-    // edgeLoad is a grip-budget ratio: demand over available grip. A clean
-    // carve well inside its budget reads near zero on it -- measured at
-    // 0.000-0.005 through every carve probed -- so the spray term built on it
-    // contributed nothing and every particle came from the lateral-slip term.
-    // In other words the game threw snow when you SKIDDED and nothing when you
-    // carved, which is backwards: a railed edge at speed is precisely what
-    // throws a rooster tail, and close-spray is the shot named after it.
-    //
     // Bite is edge angle against speed and sink -- the geometry of a rail
-    // cutting snow -- and it does not care whether the turn is near the
-    // limit of grip.
+    // cutting snow. It complements edgeLoad, which is a grip-BUDGET ratio
+    // (demand over available grip) and therefore says how close the turn is to
+    // washing out rather than how much snow the edge is moving.
+    //
+    // CORRECTION to an earlier note here: that note claimed edgeLoad measures
+    // 0.000-0.005 through every carve. It does not. That reading came from a
+    // probe that never exceeded 3 m/s, because holding a constant steer from a
+    // standstill scrubs to a halt. Building speed on a straight first and then
+    // rolling on -- the way the shot presets do it -- gives edgeLoad 0.687 at
+    // 13 m/s. The edgeLoad spray term was working; bite is an addition, not a
+    // rescue, which is why its weight is modest.
     const edgeBite = clamp01(Math.abs(s.roll || 0) / 0.62)
       * smoothstep(3.5, 13, s.speed)
       * (0.55 + 0.45 * clamp01((s.sinkDepth || 0) / Math.max(P.powderDepth, 1e-3)));
@@ -438,7 +439,7 @@ export class BoardPhysics {
     s.sprayIntensity = clamp01(
       props.spray * (
         Math.abs(s.lateralSpeed) * 0.14 +
-        edgeBite * 0.95 +
+        edgeBite * 0.42 +
         s.edgeLoad * smoothstep(3, 9, s.speed) * 1.10 +
         (s.sinkDepth / Math.max(P.powderDepth, 1e-3)) * smoothstep(4, 20, s.speed) * 0.45
       ),
