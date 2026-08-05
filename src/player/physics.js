@@ -445,7 +445,24 @@ export class BoardPhysics {
       ),
     );
 
-    s.carving = s.grounded && !s.sliding && absIncl > 0.16 && s.speed > 4.5;
+    // Carving is judged on GRIP, not on drift.
+    //
+    // This used to borrow `!s.sliding`, and sliding trips on either the grip
+    // budget being exceeded OR lateral speed over 2.6 m/s. Measured through a
+    // real carve at 12 m/s: the grip ratio never once passes 1.06, but lateral
+    // speed averages 5.56 m/s and sits above 2.6 for 85% of the turn -- so
+    // sliding is true 93% of the time and s.carving was true 0% of the time.
+    // Every consumer of the flag has therefore been reading a signal that
+    // never fires: the camera's fall-line blend and the trail lip both.
+    //
+    // The two conditions mean different things. Exceeding the grip budget is
+    // washing out; carrying lateral speed while the edge still holds is a
+    // drifty carve, which is what this board does and what the handling was
+    // tuned around. `sliding` keeps both tests because it gates the skid
+    // scrub force and changing it would change how the board feels. `carving`
+    // gets the test it actually wants -- edge engaged, grip intact, moving --
+    // so this fixes the classification without touching the physics.
+    s.carving = s.grounded && s.edgeLoad < 1.0 && absIncl > 0.16 && s.speed > 4.5;
     s.flex = damp(s.flex, this._popCharge * 0.7 + clamp01(s.gForce - 1) * 0.4, 10, h);
     // landingImpact and popped are NOT cleared here. They used to be, and it
     // silently killed every landing and takeoff cue in the game: both are
