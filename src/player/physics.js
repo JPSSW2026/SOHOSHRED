@@ -128,6 +128,7 @@ export class BoardPhysics {
 
       carving: false,
       sliding: false,
+      gPeak: 0,
       crashed: false,
       /** One-shot: an unsalvageable landing. Consumed and cleared by the run flow. */
       wipeout: false,
@@ -185,6 +186,9 @@ export class BoardPhysics {
     s.pitch = 0;
     s.flipRot = 0;
     s.wipeout = false;
+    s.landingImpact = 0;
+    s.popped = false;
+    s.gPeak = 0;
     s.roll = 0;
     s.edgeAngle = 0;
     s.grounded = true;
@@ -391,6 +395,10 @@ export class BoardPhysics {
     this._tmp.subVectors(s.velocity, this._prevVel).multiplyScalar(1 / Math.max(h, 1e-6));
     this._tmp.y += g;
     s.gForce = s.grounded ? clamp(this._tmp.length() / g, 0, 6) : 0;
+    // gForce is recomputed per substep against a per-substep _prevVel, so the
+    // clamped touchdown spike only survives to update() about half the time
+    // at 60 fps. Peak-hold it across the frame; postRender clears it.
+    s.gPeak = Math.max(s.gPeak || 0, s.gForce);
 
     // Board attitude follows the surface when grounded and the rider's own
     // axis in the air.
@@ -416,8 +424,28 @@ export class BoardPhysics {
 
     s.carving = s.grounded && !s.sliding && absIncl > 0.16 && s.speed > 4.5;
     s.flex = damp(s.flex, this._popCharge * 0.7 + clamp01(s.gForce - 1) * 0.4, 10, h);
-    s.landingImpact *= 0.0; // one-frame event; consumers read it the frame it fires
+    // landingImpact and popped are NOT cleared here. They used to be, and it
+    // silently killed every landing and takeoff cue in the game: both are
+    // written earlier in this same fixedUpdate (_land and _groundStep), and
+    // engine.js drains every fixed substep before it runs a single update(),
+    // so no consumer could ever observe them. The pop whoosh, the landing
+    // thump, the camera impact punch and the rider's knee compression were
+    // all reading zero, forever. They are cleared in postRender() instead —
+    // after everything that reads them has run.
+  }
+
+  /**
+   * End-of-frame clear for the one-shot contact events.
+   *
+   * Runs after update() and the draw, which is the whole point: these are
+   * edge events, they cannot be re-derived from state, and anything that
+   * clears them earlier than this makes them unobservable.
+   */
+  postRender() {
+    const s = this.state;
+    s.landingImpact = 0;
     s.popped = false;
+    s.gPeak = 0;
   }
 
   /* ------------------------------------------------------------------ *
@@ -588,7 +616,9 @@ export class BoardPhysics {
     // on a slope that matches the trajectory is nearly free; landing flat off
     // the same jump is what breaks ankles.
     const closing = Math.max(-s.velocity.dot(n), 0);
-    s.landingImpact = closing;
+    // Max, not assign: at 60 fps two 1/120 s substeps run per frame, and a
+    // touchdown in the first must not be flattened by the quiet second one.
+    s.landingImpact = Math.max(s.landingImpact, closing);
 
     // Slip angle at touchdown decides whether this is a landing or a catch.
     const fwdFlat = this._tmp.set(Math.sin(s.heading), 0, Math.cos(s.heading));
