@@ -199,7 +199,13 @@ export async function mountBackdropModel(ctx) {
   // costs three draw calls and no extra memory for a 495k-triangle mesh.
   const CENTRE = new THREE.Vector3(300, 1180, 0);
   const RADIUS = 6400;
-  for (const [deg, rScale, yLift] of [[92, 0.96, -60], [188, 1.04, 40], [270, 0.99, -20]]) {
+  // All copies sit at the SAME height as the original. The haze band is one
+  // shared uniform derived from the first mesh's bounds, so a copy lifted off
+  // that height samples a different part of the fade and reads paler than the
+  // range it is supposed to continue -- which is exactly what the flanks were
+  // doing. Radius still varies, so the skyline does not repeat; height cannot,
+  // until each copy carries its own band.
+  for (const [deg, rScale, yLift] of [[92, 0.96, 0], [188, 1.04, 0], [270, 0.99, 0]]) {
     const a = deg * Math.PI / 180;
     const ring = new THREE.Group();
     ring.name = `backdrop-model-${deg}`;
