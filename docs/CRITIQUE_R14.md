@@ -98,7 +98,37 @@ by disabling it with its existing flag and re-running the two-shoot
 comparison — that method is cheap, needs no engine change, and just produced
 a clean answer for grain.
 
-### The pattern across five attempts
+### The decisive observation: it is bimodal, and it *can* be reproducible
+
+Three runs of one preset on one build, nothing changed between them:
+
+| pair | mean | >4 levels |
+|---|---|---|
+| run 1 vs run 2 | 2.923 | 17.16% |
+| run 2 vs run 3 | 2.922 | 17.15% |
+| **run 1 vs run 3** | **0.006** | **0.05%** |
+
+Runs 1 and 3 are *the same image*. The capture is not randomly noisy — it
+lands in one of (at least) two states, and two runs that land in the same one
+agree to within a rounding error. **Reproducible capture is achievable**; what
+is missing is control over which state a run lands in.
+
+This also invalidates every earlier A/B in this document, including the ones
+that condemned the attempted fixes. A two-sample comparison of a bimodal
+process measures which states the two samples happened to land in, not the
+change under test. **Any future comparison needs at least three runs per
+build**, and should compare the modal image, not run 1 against run 1.
+
+Two further results, both from the existing-flag method:
+
+- **All eight post effects disabled at once: 99.67%, mean 36.5.** Worse than
+  leaving them on, which rules out "a post effect in isolation" as the story.
+- **Frame-parity normalisation failed twice.** Forcing the capture onto an even
+  `engine.frame` gave 24.2/17.3/17.1%, and doing the same with a `dt = 0` tick
+  so the phase moved without the sim gave 25.6/29.7/34.5%. The two-phase
+  temporal-effect reading of the bimodality is therefore *not* supported.
+
+### The pattern across attempts
 
 | approach | result vs 17.0% baseline |
 |---|---|
@@ -108,28 +138,30 @@ a clean answer for grain.
 | Pin `engine.frame` | 37.1% |
 | Pin `uSeed` via new config property | 99.2% |
 | Disable grain entirely (existing flag) | 17.0% — unchanged, and it exonerates grain |
+| Disable all eight post effects | 99.7% |
+| Normalise capture frame parity (dt = 1/60) | 24.2 / 17.3 / 17.1% |
+| Normalise capture frame parity (dt = 0) | 25.6 / 29.7 / 34.5% |
 
-**Every intervention made it worse; the only neutral one was the no-op.** That
-is the finding. A system where each perturbation increases run-to-run variance,
-and where the magnitude is unrelated to the size of the change, does not have a
-single stray seed in it — it behaves like variance in the GPU pipeline itself:
-async shader compilation and warm-up timing under SwiftShader, where a build
-that recompiles differently captures at a different point in warm-up.
+**Read these with the bimodality in mind.** Each is a two-sample comparison of
+a process with two attractors, so a "worse" number may only mean the two runs
+landed in different states. The interventions are not thereby vindicated — but
+they are not fairly condemned either, and none should be re-run without the
+three-run protocol.
 
-**Recommended next attempt — stop touching the render path.** Instead:
+**Recommended next attempt — find the toggle, do not guess at it.**
 
-1. **Test the hypothesis first.** Run `tools/probe-frozen-frame.mjs` with a long
-   warm-up (render 200+ frames before the first capture). If the four hashes
-   converge to identical once the pipeline is warm, it is compilation/warm-up
-   timing and the fix is simply "warm up before capturing" — no engine change.
-2. **If it is warm-up**, add the warm-up to `shoot.mjs` only. The engine stays
-   untouched, which matters: four of the five attempts above failed precisely
-   because they changed engine behaviour.
-3. **Only if that fails** consider disabling grain and history-based passes for
-   stills — but note attempt 5 suggests that touching post config at all has
-   its own structural cost, so measure before believing it.
+1. **Adopt the three-run protocol first.** Nothing else is measurable without
+   it. Capture N=5 runs of one preset, hash each, and confirm the hashes fall
+   into a small number of clusters rather than all differing.
+2. **Diff the two modal images and look at *where* they differ.** 17% of pixels
+   at mean 2.9 is a specific spatial signature. If it is confined to shadowed
+   regions it is the shadow path; if it tracks edges it is a jitter/AA phase;
+   if it is uniform it is exposure or grade. That picture names the subsystem
+   directly and replaces this whole guessing sequence.
+3. **Only then intervene**, and re-measure with the three-run protocol.
 
-Do not attempt another seed-pinning variant. That hypothesis is exhausted.
+Exhausted, do not retry: seed pinning of any kind, frame-parity normalisation,
+clearing fx accumulators, and disabling post effects wholesale.
 
 ## Severity 5
 
