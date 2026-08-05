@@ -12,6 +12,30 @@ means the change is in and reasoned but not yet demonstrated in an image.
 
 ---
 
+## ⚠ Blocker: the capture is not deterministic
+
+Two runs of `tools/shoot.mjs --shots chase-carve` on the *same build* produce
+different images: **17.0% of pixels differ by more than 4 levels, max 146**.
+That is far above anti-alias jitter — it is a different sim state, and it is
+large enough to swamp the tile-contrast and channel-ratio measurements in this
+document. Every before/after comparison here, including the critics' numbers,
+carries that noise.
+
+Treat measured deltas below the noise floor as unproven until this is fixed.
+
+Ruled out so far:
+- **Sun drift** — `_solarKey` is keyed on `CONFIG.world.timeOfDay/dayOfYear`,
+  not elapsed time, so the sun does not move between runs.
+- **The settle** — fixed count of fixed-dt steps; deterministic by construction.
+- **Accumulated fx state** — clearing the trail texture, particle pool, spray
+  debt and fx clock at the top of `shot()` made it *worse* (37.5% differing),
+  because zeroing the particle clock leaves pooled entries carrying stale
+  spawn stamps. Reverted; do not retry this shape.
+
+Next suspect: async terrain LOD streaming completing at variable times, which
+would change geometry between runs. `physics.reset()` restores the rider but
+nothing restores streaming state.
+
 ## Severity 5
 
 | # | Defect | Mechanism | Status |
@@ -21,7 +45,7 @@ means the change is in and reasoned but not yet demonstrated in an image.
 | 3 | No aerial perspective. Near/far 32px tile σ: hero-basin 0.66, chase-carve 1.66, valley-vista 1.91, west-spur 2.32 vs checklist 17's ≥4.0. `hero-basin` **inverted** — far ridge carries more local contrast than foreground | Blue-extinction gate is 0.00 at 400 m, 0.06 at 900 m; playable box is ±1010 m, so nothing in the bowl gets any depth cue. Also `visibility: 110000` (§5.3 derives 42000) and `haze: 2.6e-5` (doc: 8e-5) | **open** |
 | 4 | Rider casts no shadow; board has no contact darkening (checklist 12, 13, 40) | `sky.js` fit floor of 280 m → 0.167 m texel → ~0.5 m depth bias along beam → **2.7 m lateral peter-pan** on a 1.8 m caster at 10.6° sun, plus normalBias pinned at its 0.28 ceiling | **fixed (unverified)** — floor to 90 m, both bias ceilings rescaled, 1/sinAlt floored |
 | 5 | Rider is sitting in a chair — pelvis at deck height, thighs horizontal, torso reclined ~30° backward | Pelvis height: `absorb+tuck+compress+grab` sums to 0.72 against `standH` 0.735, and the guard trims `hx`, which only reaches pelvis height via sin(roll) — zero authority on a flat board. Recline: cause **unresolved** | **partially fixed** — pelvis floored. The backward recline persists and is the dominant half. The critique blamed `chest.rotation.x`'s `+A.absorb*0.16`; flipping that sign produced a pixel-identical frame, so `A.absorb` is ≈0 in these captures and that term is not the driver. Reverted rather than shipped unverified. Needs a pose probe that reports the live `A.*` values before the next attempt |
-| 6 | Nothing in nine frames cuts the surface (checklist 44) | Three stacked: `VISUAL_SINK_CAP = 0.010` (1 cm vs 0.55 m powder); `trails.js` 2048/320 m = 6.4 texels/m so a 0.16 m halfWidth is a **two-texel** trench; `fast = smoothstep(2,14,speed)` = 0.16 at the captured 18 km/h | **open** |
+| 6 | Nothing in nine frames cuts the surface (checklist 44) | Three stacked: `VISUAL_SINK_CAP = 0.010` (1 cm vs 0.55 m powder); `trails.js` 2048/320 m = 6.4 texels/m so a 0.16 m halfWidth is a **two-texel** trench; `fast = smoothstep(2,14,speed)` = 0.16 at the captured 18 km/h | **2 of 3 fixed** — RES 4096 (12.8 texels/m, profile resolves) and the speed gate now saturates at carving speed; probed peak trench 235/255. `VISUAL_SINK_CAP` left alone: the deck is 13 mm thick, so sinking the board further needs the trench feeding back into the height it is drawn against, and that coupling does not exist yet |
 | 7 | Spray is grey exhaust — darker than the snow it came from, hard rectangular banding, detached from the board, symmetric about the board axis (tell #47) | `col = mix(uSkyColor*1.15, lit, sunAmount)` puts the shadow term below snow value; puff sizes 16–42 cm vs §11's 2–8 cm exceed the `gl_PointSize` clamp → clipped squares; launch line is centred on the board, only velocity is one-sided | **open** |
 
 ## Severity 4
