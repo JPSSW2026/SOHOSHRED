@@ -1541,9 +1541,26 @@ export class Rider {
     // sits, it goes back to being a moulding line.
     const brim = part(new THREE.CylinderGeometry(DIM.headRadius * 0.62, DIM.headRadius * 0.54, 0.014, 18), M.helmet, head, 0, DIM.headRadius * 1.06, 0.008);
     brim.scale.z = 1.10;
-    // Vent slots.
-    for (const vz of [-0.055, 0.0, 0.055]) {
-      trim(new THREE.BoxGeometry(0.052, 0.010, 0.020), M.rubber, head, 0, DIM.headRadius * 1.72, vz);
+    // Vent slots, ON THE SHELL rather than inside it.
+    //
+    // These sat at a flat y = 1.72 r for every slot, which is 2.3 cm INSIDE
+    // the skull -- head-extents measured them at proud -0.0231, i.e. they have
+    // never been visible on any frame. A helmet's crown is an ellipsoid, so
+    // the height of a point on it depends on where along the crown it is; a
+    // constant y can only be right for one slot and buries the rest.
+    //
+    // Solved from the skull's own semi-axes (0.96, 1.02, 1.10 on headRadius,
+    // centred at 0.85 r) so each slot lands on the surface at its own z, then
+    // lifted a hair so it reads as a dark inset rather than z-fighting.
+    {
+      const cy = DIM.headRadius * 0.85;
+      const sy = DIM.headRadius * 1.02;
+      const sz = DIM.headRadius * 1.10;
+      for (const vz of [-0.062, 0.0, 0.062]) {
+        const t = Math.min(0.999, Math.abs(vz) / sz);
+        const vy = cy + sy * Math.sqrt(1 - t * t) - 0.004;
+        trim(new THREE.BoxGeometry(0.060, 0.014, 0.024), M.rubber, head, 0, vy, vz);
+      }
     }
 
     /**
