@@ -1126,8 +1126,17 @@ export class Rider {
      * `scene.environment` bound to sky.js's PMREM it picks up the sky gradient
      * and the snow horizon line for free.
      */
+    // A goggle lens has to read as a bright band on its own, not only where
+    // the environment happens to reflect in it. At metalness 1.0 a standard
+    // material has no diffuse term at all, so away from a strong reflection
+    // the lens rendered as a black void with a single specular dot in it --
+    // which on a dark head is an eye, and is most of why this looked like an
+    // alien. Dropping metalness gives it a body colour that survives any
+    // lighting; the emissive keeps it live in shadow, where a mirrored lens
+    // still glows against a shaded face.
     const goggle = new THREE.MeshStandardMaterial({
-      color: 0x7080c8, roughness: 0.08, metalness: 1.0, envMapIntensity: 1.9,
+      color: 0x9fb4e8, roughness: 0.14, metalness: 0.45, envMapIntensity: 1.9,
+      emissive: 0x22304f, emissiveIntensity: 0.55,
     });
     const strap = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.66 });
     const glove = new THREE.MeshStandardMaterial({ color: RIDER_STYLE.glove, roughness: 0.72 });
@@ -1321,26 +1330,43 @@ export class Rider {
     // intersection where it cut the helmet. A hood is a shell that wraps the
     // skull and opens at the face, so: centred close to the head, enlarged to
     // clear it, and pushed back only enough to leave the goggle proud.
-    const hoodUp = part(new THREE.SphereGeometry(DIM.headRadius * 1.22, 18, 14), M.shellGrey,
-      head, 0, DIM.headRadius * 0.80, -DIM.headRadius * 0.22);
+    // OPEN AT THE FRONT. This was a full sphere, so it enclosed the whole head
+    // -- face, goggle and all -- and left a featureless dark ovoid. Rendered
+    // from four angles the head was a uniform near-black egg with the goggle
+    // strap poking out sideways as a bar, and the lens was not visible from
+    // ANY view. That is the round-headed alien: less a shape problem than a
+    // hood eating the face.
+    //
+    // A partial sphere leaves a face opening; phiStart/phiLength cut the shell
+    // around Y so the gap faces the direction the head looks.
+    const hoodUp = part(new THREE.SphereGeometry(
+      // phi = PI/2 is +Z in three's sphere parameterisation -- the direction
+      // the head looks. To leave a 108 deg gap centred there the shell must
+      // START at PI/2 + 54 deg = 0.80 PI. At 0.30 PI the opening sat off the
+      // side of the head and the face stayed covered.
+      DIM.headRadius * 1.20, 20, 14, Math.PI * 0.80, Math.PI * 1.40,
+    ), M.shellGrey, head, 0, DIM.headRadius * 0.80, -DIM.headRadius * 0.30);
     // Narrower across, LONGER front-to-back. At 1.06 x 1.10 x 1.20 this was
     // near-spherical, and a sphere over a sphere reads as one bowling ball --
     // the head was the least garment-like thing on the figure. A hood is a
     // cowl with a peak behind the skull and an opening in front, so the axes
     // have to disagree.
-    hoodUp.scale.set(0.96, 1.04, 1.38);
-    // The opening. Without a rim a hood is just a ball -- the thick edge round
-    // the face is the whole reason a hood reads as fabric with a hole in it
-    // rather than as a helmet in another colour.
-    const hoodRim = trim(new THREE.TorusGeometry(DIM.headRadius * 0.95, DIM.headRadius * 0.17, 8, 20),
-      M.shellGrey, head, 0, DIM.headRadius * 0.80, DIM.headRadius * 0.30);
-    hoodRim.rotation.x = Math.PI * 0.5;
-    // The opening reads only if it is proud of the cowl, so the rim sits
-    // wider than the hood is at that point rather than flush with it.
-    hoodRim.scale.set(1.14, 1.0, 0.66);
+    hoodUp.scale.set(1.00, 1.08, 1.30);
+    // The rim torus that used to sit here WAS the bar through the head.
+    // Tube radius 0.17 r on a 0.95 r ring, lying horizontally at exactly
+    // goggle height and scaled 1.14 across, it reached 1.28 r -- well past
+    // the skull -- so every view showed a rod driven through the face. It was
+    // added to give the hood an opening edge; the partial-sphere hood now has
+    // a real opening, so the rim has no job left.
 
-    const brim = part(new THREE.CylinderGeometry(DIM.headRadius * 1.03, DIM.headRadius * 1.0, 0.016, 18), M.helmet, head, 0, DIM.headRadius * 0.99, 0.008);
-    brim.scale.z = 1.08;
+    // The bar through the head. This is a flat disc of radius 1.03 r sat at
+    // y = 0.99 r -- up where the skull ellipsoid has tapered well inside that
+    // radius -- so it stuck out past the silhouette on both sides and read as
+    // a rod driven through the helmet. It survived every goggle and hood fix
+    // because it is neither. Sized to the skull at the height it actually
+    // sits, it goes back to being a moulding line.
+    const brim = part(new THREE.CylinderGeometry(DIM.headRadius * 0.62, DIM.headRadius * 0.54, 0.014, 18), M.helmet, head, 0, DIM.headRadius * 1.06, 0.008);
+    brim.scale.z = 1.10;
     // Vent slots.
     for (const vz of [-0.055, 0.0, 0.055]) {
       trim(new THREE.BoxGeometry(0.052, 0.010, 0.020), M.rubber, head, 0, DIM.headRadius * 1.72, vz);
@@ -1360,19 +1386,32 @@ export class Rider {
     const lensGeo = new THREE.SphereGeometry(DIM.headRadius, 24, 14, 0, Math.PI * 2, 0, 0.92);
     lensGeo.rotateX(Math.PI * 0.5);
     const lens = part(lensGeo, M.goggle, head, 0, DIM.headRadius * 0.80, 0.004);
-    lens.scale.set(1.06, 0.82, 1.22);
+    // Flatter: a goggle is a band across the face. At 0.82 in Y this domed
+    // over most of the head and read as a full-face visor.
+    lens.scale.set(1.06, 0.62, 1.20);
     lens.castShadow = false;
 
     const frameGeo = new THREE.SphereGeometry(DIM.headRadius * 1.005, 24, 14, 0, Math.PI * 2, 0, 1.06);
     frameGeo.rotateX(Math.PI * 0.5);
     const frame = trim(frameGeo, M.rubber, head, 0, DIM.headRadius * 0.80, 0.002);
-    frame.scale.set(1.09, 0.88, 1.17);
+    // BEHIND the lens, not around it. Any axis of this cap that exceeds the
+    // lens shows up as dark geometry laid across the goggle: at 1.10 in X it
+    // was a bar through the middle, and at 1.075 uniformly proud it covered
+    // the lens outright. Kept inside the lens on every axis it does its real
+    // job -- an opaque backing so the goggle is not a window through the head
+    // -- and contributes nothing to the silhouette.
+    frame.scale.set(1.00, 0.56, 1.10);
 
     const strapGeo = new THREE.TorusGeometry(DIM.headRadius * 1.03, 0.011, 6, 26, 4.05);
     strapGeo.rotateZ(2.68);          // centre the covered arc on the back of the head
     strapGeo.rotateX(Math.PI * 0.5);
-    const gstrap = trim(strapGeo, M.strap, head, 0, DIM.headRadius * 0.82, 0);
-    gstrap.scale.set(1.06, 1.0, 1.08);
+    // Raised clear of the lens. Both sat at ~0.8 r, and since the lens is
+    // scaled proud of the skull it pushed straight through the strap, so the
+    // front view had a dark bar cutting across the middle of the goggle.
+    const gstrap = trim(strapGeo, M.strap, head, 0, DIM.headRadius * 1.04, 0);
+    // Tucked against the shell. At 1.06/1.08 this stood proud of the skull and,
+    // on a head with no other feature, read as a bar through an egg.
+    gstrap.scale.set(1.005, 1.0, 1.01);
 
     /* --- arms -------------------------------------------------------- */
     // Shoulders sit on the **Z** axis: a snowboarder's shoulder line runs along
