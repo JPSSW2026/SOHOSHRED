@@ -15,10 +15,41 @@
       body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
       #app { position: fixed; inset: 0; }
       canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+      /* Boot overlay.
+         Inline and static so it paints on the FIRST frame the browser draws,
+         before the module bundle is fetched and long before terrain has been
+         generated. Without it the page is #05070c -- pure black -- for the
+         whole boot, which is indistinguishable from the game failing to run. */
+      #boot {
+        position: fixed; inset: 0; z-index: 10;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 22px;
+        background: #05070c; color: #e8edf5;
+        transition: opacity .5s ease;
+      }
+      #boot.gone { opacity: 0; pointer-events: none; }
+      #boot h1 {
+        font-size: clamp(28px, 6vw, 62px); font-weight: 300;
+        letter-spacing: .34em; text-indent: .34em; text-transform: uppercase;
+      }
+      #boot .sub {
+        font-size: 11px; letter-spacing: .3em; text-transform: uppercase;
+        color: #7d8ba3;
+      }
+      #boot .bar { width: min(280px, 54vw); height: 2px; background: #1b2330; overflow: hidden; }
+      #boot .bar i { display: block; height: 100%; width: 0%; background: #cfe0f5; transition: width .35s ease; }
+      #boot .step { font-size: 11px; letter-spacing: .18em; color: #55617a; min-height: 1em; }
     </style>
   </head>
   <body>
     <div id="app"></div>
+    <div id="boot">
+      <h1>Soho Shred</h1>
+      <div class="sub">Soho Basin &middot; Cardrona</div>
+      <div class="bar"><i id="boot-bar"></i></div>
+      <div class="step" id="boot-step">loading</div>
+    </div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

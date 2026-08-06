@@ -106,14 +106,25 @@ async function boot() {
   engine.add(audio);
 
   // --- Build phase ---------------------------------------------------------
-  await sky.build?.();
-  await terrain.build?.();
-  await props.build?.();
-  await trails.build?.();
-  await rider.build?.();
-  await fx.build?.();
-  await hud.build?.();
-  await audio.build?.();
+  // Each step reports to the boot overlay. Terrain and props are the long
+  // ones, and a player staring at an unchanging black screen has no way to
+  // tell "generating a mountain" from "crashed on load".
+  const bootBar = document.getElementById('boot-bar');
+  const bootStep = document.getElementById('boot-step');
+  const steps = [
+    ['sky', sky], ['terrain', terrain], ['props', props], ['trails', trails],
+    ['rider', rider], ['effects', fx], ['hud', hud], ['audio', audio],
+  ];
+  for (let i = 0; i < steps.length; i++) {
+    const [label, sys] = steps[i];
+    if (bootStep) bootStep.textContent = label;
+    if (bootBar) bootBar.style.width = `${Math.round((i / steps.length) * 100)}%`;
+    // Yield to the compositor so the overlay actually repaints before the
+    // next build step blocks the main thread.
+    await new Promise((r) => requestAnimationFrame(() => r()));
+    await sys.build?.();
+  }
+  if (bootBar) bootBar.style.width = '100%';
 
   // Place the rider on the mountain now that terrain exists.
   const spawn = terrain.getSpawn();
@@ -125,6 +136,15 @@ async function boot() {
 
   engine._onResize();
   engine.start();
+
+  // Overlay goes as soon as there is a real frame to look at. The streamed
+  // GLBs below are deliberately NOT waited on -- the game is playable without
+  // them and they take well over a minute -- so boot ends here.
+  const boot = document.getElementById('boot');
+  if (boot) {
+    boot.classList.add('gone');
+    setTimeout(() => boot.remove(), 600);
+  }
 
   // The modelled range wall and base station mount async so the game is
   // playable before they stream in -- but the PROMISES ARE KEPT, and waited
