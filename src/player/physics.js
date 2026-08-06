@@ -725,6 +725,7 @@ export class BoardPhysics {
     if (inverted || closing > WIPEOUT_CLOSING) {
       // FAILED: unsalvageable. Landed on your head or took an impact far past
       // what a crash already is. The run is over; the flow resets to the drop.
+      s.crashReason = inverted ? 'inverted' : 'impact';
       s.wipeout = true;
       s.crashed = true;
       s.crashTime = 0;
@@ -732,6 +733,10 @@ export class BoardPhysics {
       this.ctx.tricks?.onLanded?.('failed');
     } else if (tooHard || caughtEdge || spunOut) {
       // BAILED: on the ground, but the run continues.
+      // Which of the three fired. Tuning the bail RATE without this is
+      // guesswork -- three unrelated conditions share one outcome, and the
+      // one that dominates in play is not obvious from reading them.
+      s.crashReason = tooHard ? 'hard' : caughtEdge ? 'edge' : 'spin';
       s.crashed = true;
       s.crashTime = 0;
       // A crash dumps most of the speed instantly and the rest to friction.
@@ -740,6 +745,7 @@ export class BoardPhysics {
     } else if (marginalEdge || marginalDrop || marginalSpin) {
       // OOF: caught out, wobbled, rode away. Costs speed and composure, not
       // the run. No crash flag -- the rider never leaves their feet.
+      s.crashReason = marginalEdge ? 'oof-edge' : marginalDrop ? 'oof-drop' : 'oof-spin';
       s.stumble = 0.85;
       s.velocity.multiplyScalar(0.78);
       this.ctx.tricks?.onLanded?.('oof');

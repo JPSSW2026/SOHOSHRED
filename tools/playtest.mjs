@@ -112,7 +112,8 @@ const out = await page.evaluate(async ({ SECONDS, RUNS }) => {
       const c = tricks?.callout;
       const tag = c ? `${c.text}:${c.score}` : null;
       if (tag && tag !== lastCallout) {
-        events.push({ t: +(i * dt).toFixed(1), text: c.text, score: c.score, quality: c.quality });
+        events.push({ t: +(i * dt).toFixed(1), text: c.text, score: c.score,
+                      quality: c.quality, reason: s.crashReason || null });
       }
       lastCallout = tag;
     }
@@ -124,6 +125,9 @@ const out = await page.evaluate(async ({ SECONDS, RUNS }) => {
     const q = (f) => +sorted[Math.floor(sorted.length * f)].toFixed(1);
     const byQ = {};
     for (const e of events) byQ[e.quality || e.text] = (byQ[e.quality || e.text] || 0) + 1;
+    const byReason = {};
+    for (const e of events) if (e.reason) byReason[e.reason] = (byReason[e.reason] || 0) + 1;
+    const bailPct = +(100 * (byQ.crash || 0) / Math.max(1, events.length)).toFixed(1);
 
     runs.push({
       seconds: SECONDS,
@@ -137,7 +141,7 @@ const out = await page.evaluate(async ({ SECONDS, RUNS }) => {
       poppedFrames: popped, maxAirTime: +maxAirTime.toFixed(2),
       wipeoutFrames: wipeouts, crashFrames: crashes, stumbleFrames,
       calloutCount: events.length,
-      byQuality: byQ,
+      bailPct, byQuality: byQ, byReason,
       firstEvents: events.slice(0, 10),
     });
   }

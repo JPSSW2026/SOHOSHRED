@@ -668,6 +668,103 @@ function buildPole(opt = {}) {
 }
 
 /**
+ * Snow gun — a tower-lance snowmaker, as used on the Cardrona groomers.
+ *
+ * The user's reference is the common NZ/alpine lance type rather than a fan
+ * gun: a squat yellow hydrant body sitting on the piste edge, with a long thin
+ * steel lance raked up and out over the run and the plume leaving from its
+ * tip. Two details do the recognition work at any distance — the yellow, which
+ * is the only saturated warm mass anywhere on a white slope, and the RAKE of
+ * the lance, which is what separates it from the bamboo marker poles it would
+ * otherwise share a silhouette with.
+ *
+ * Built at unit scale in metres, base at y = 0, lance leaning toward local +X
+ * (the placement yaws that to point across the piste). Vertex-coloured so the
+ * whole field is one draw call, like every other prop here.
+ */
+function buildSnowGun(opt = {}) {
+  const bodyH = opt.bodyH ?? 1.15;
+  const bodyR = opt.bodyR ?? 0.34;
+  const lanceLen = opt.lanceLen ?? 7.4;
+  const lanceR = opt.lanceR ?? 0.055;
+  const rake = opt.rake ?? (58 * DEG);      // from horizontal
+  const radial = opt.radial ?? 8;
+  const YELLOW = opt.yellow || [0.855, 0.620, 0.055];
+  const YELLOW_D = [YELLOW[0] * 0.62, YELLOW[1] * 0.62, YELLOW[2] * 0.62];
+  const STEEL = opt.steel || [0.395, 0.410, 0.436];
+  const DARK = [0.120, 0.126, 0.138];
+
+  const B = new TriBuilder();
+  const ring = (cx, cy, cz, r, ax, ay, az, bx, by, bz) => {
+    const pts = [];
+    for (let i = 0; i < radial; i++) {
+      const a = (i / radial) * TAU;
+      const c = Math.cos(a) * r, sn = Math.sin(a) * r;
+      pts.push([cx + ax * c + bx * sn, cy + ay * c + by * sn, cz + az * c + bz * sn]);
+    }
+    return pts;
+  };
+  const tube = (rings, cols) => {
+    for (let s = 1; s < rings.length; s++) {
+      const prev = rings[s - 1], cur = rings[s];
+      for (let i = 0; i < radial; i++) {
+        const j = (i + 1) % radial;
+        B.quad(prev[i], cur[i], cur[j], prev[j], cols[s - 1], cols[s], cols[s], cols[s - 1]);
+      }
+    }
+  };
+
+  // --- hydrant body: a barrel with a slight taper and a dark collar --------
+  const bodyRings = [], bodyCols = [];
+  const steps = 4;
+  for (let k = 0; k <= steps; k++) {
+    const t = k / steps;
+    const r = bodyR * lerp(1.0, 0.86, t);
+    bodyRings.push(ring(0, -0.16 + (bodyH + 0.16) * t, 0, r, 1, 0, 0, 0, 0, 1));
+    bodyCols.push(t < 0.12 ? DARK : YELLOW);
+  }
+  tube(bodyRings, bodyCols);
+  B.fan(bodyRings[bodyRings.length - 1], true, YELLOW);
+
+  // --- lance: raked up and out over the piste ------------------------------
+  const dx = Math.cos(rake), dy = Math.sin(rake);
+  // Perpendicular basis for the lance's circular section.
+  const px = -dy, py = dx;              // in the XY plane
+  const lanceRings = [], lanceCols = [];
+  const lsteps = 3;
+  const baseY = bodyH * 0.78;
+  for (let k = 0; k <= lsteps; k++) {
+    const t = k / lsteps;
+    const r = lanceR * lerp(1.0, 0.55, t);
+    lanceRings.push(ring(
+      dx * lanceLen * t, baseY + dy * lanceLen * t, 0,
+      r, px, py, 0, 0, 0, 1,
+    ));
+    lanceCols.push(STEEL);
+  }
+  tube(lanceRings, lanceCols);
+  B.fan(lanceRings[lanceRings.length - 1], true, STEEL);
+
+  // --- nozzle head at the tip, and a brace back to the body ---------------
+  const tipX = dx * lanceLen, tipY = baseY + dy * lanceLen;
+  const head = [
+    ring(tipX, tipY, 0, lanceR * 1.9, px, py, 0, 0, 0, 1),
+    ring(tipX + dx * 0.34, tipY + dy * 0.34, 0, lanceR * 1.5, px, py, 0, 0, 0, 1),
+  ];
+  tube(head, [YELLOW_D, YELLOW_D]);
+  B.fan(head[1], true, YELLOW_D);
+
+  // Brace strut: a real lance is guyed off its own body, and the triangle is
+  // most of what stops the silhouette reading as a bare stick.
+  const bs = 0.020;
+  const braceA = ring(bodyR * 0.55, bodyH * 0.30, 0, bs, 0, 1, 0, 0, 0, 1);
+  const braceB = ring(dx * lanceLen * 0.42, baseY + dy * lanceLen * 0.42, 0, bs, 0, 1, 0, 0, 0, 1);
+  tube([braceA, braceB], [STEEL, STEEL]);
+
+  return B.build('soho-snowgun');
+}
+
+/**
  * Marker flag: a small rectangle cantilevered off the pole top. `aBend` runs
  * 0 at the pole to 1 at the free edge and drives the vertex-shader flutter.
  */
@@ -1680,6 +1777,7 @@ export class Props {
     this._safe('debris', () => this._placeAvalancheDebris());
     this._safe('cornices', () => this._buildCornices());
     this._safe('poles', () => this._placePoles());
+    this._safe('snow-guns', () => this._placeSnowGuns());
     this._safe('fences', () => this._placeFences());
     this._safe('lift', () => this._buildLift());
     this._safe('tussock', () => this._placeTussock());
@@ -1769,6 +1867,13 @@ export class Props {
 
     // Flag: light coated nylon. Fluttering fast and shallow, and translucent
     // enough that a low sun behind it lights the fabric through.
+    // Snow guns. Painted steel: rougher than the lift hardware, and it takes
+    // vertex colour so the yellow body and the grey lance are one draw call.
+    this.gunMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff, vertexColors: true, roughness: 0.62, metalness: 0.12,
+    });
+    this.gunMat.name = 'props-snowgun';
+
     this.flagMat = new THREE.MeshStandardMaterial({
       name: 'props-flag',
       color: new THREE.Color(0.760, 0.086, 0.020),
@@ -1811,7 +1916,7 @@ export class Props {
 
     this.materials.push(
       this.rockMat, this.snowMat, this.poleMat, this.steelMat,
-      this.ropeMat, this.netMat, this.flagMat, this.tussockMat,
+      this.ropeMat, this.netMat, this.flagMat, this.tussockMat, this.gunMat,
     );
   }
 
@@ -1861,6 +1966,13 @@ export class Props {
       snowBlock: [
         { geometry: buildSlabStack(makeRng(this._seed('geo.slabdebris')), { slabs: 2, sides: 5, taper: 0.86, jag: 0.30, flatten: 0.72, dip: 12 * DEG, batter: 0.90 }), angular: 0.030 },
         { geometry: buildSlabStack(makeRng(this._seed('geo.slabdebris')), { slabs: 1, sides: 4, taper: 0.9, jag: 0.30, flatten: 0.72, dip: 12 * DEG }), angular: 0.0 },
+      ],
+      snowGun: [
+        { geometry: buildSnowGun(), angular: 0.012 },
+        // Far level keeps the body and the rake but drops the brace and the
+        // nozzle detail; at 300 m the lance is a two-pixel line and only the
+        // yellow blob and its lean survive.
+        { geometry: buildSnowGun({ radial: 5, lanceLen: 7.0 }), angular: 0.0 },
       ],
       pole: [
         { geometry: buildPole({ tipFrac: 0.14 }), angular: 0.010 },
@@ -2617,6 +2729,71 @@ export class Props {
         const hB = P.height(x - px * off, z - pz * off);
         const s = hA < hB ? 1 : -1;
         plant(x + px * off * s, z + pz * off * s, true);
+      });
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * snow guns
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Tower-lance snowmakers down the groomed corridors.
+   *
+   * REAL POSITIONS, not a scatter. Snowmaking is plumbed: the guns sit on
+   * hydrants along a buried main that follows the piste, so they stand in a
+   * line down ONE edge of a groomed run at a regular spacing, never in the
+   * middle of the corridor and never out on the open faces. Cardrona's mains
+   * run the length of its main groomers, which is exactly what
+   * `features.corridors` describes, so the corridor polylines are the plumbing
+   * and the guns hang off them.
+   *
+   * Placement rules, all of which are what makes a line of them read as
+   * infrastructure rather than as scenery:
+   *   · one edge per corridor, not both — a main is a single pipe
+   *   · ~52 m apart, the real hydrant interval for lances of this throw
+   *   · yawed to fire ACROSS and slightly down the run, so the lances all
+   *     rake the same way and the row reads as one installation
+   *   · skipped where the ground is too steep to stand a hydrant on
+   */
+  _placeSnowGuns() {
+    const T = this.tune;
+    const rng = makeRng(this._seed('snowgun'));
+    const P = this.probe;
+
+    this.gunField = this._field('snow-gun', this.gunMat, this.geo.snowGun, {
+      castShadow: true, receiveShadow: true, shadowLevels: 2, cullAngular: 0.0022,
+    });
+
+    const SPACING = T.snowGun?.spacing ?? 52;
+    const LIMIT = Math.round((T.snowGun?.limit ?? 46) * clamp(T.density ?? 1, 0.05, 4));
+    let placed = 0;
+
+    for (const c of this.features.corridors || []) {
+      if (placed >= LIMIT) break;
+      const off = (c.halfWidth ?? 20) + 2.2;
+      // One side only. Pick it per corridor rather than globally so a basin
+      // with corridors running both ways does not end up with every gun on
+      // the same compass side.
+      const side = rng() < 0.5 ? 1 : -1;
+      walkPolyline(c.pts, SPACING, (x, z, tx, tz) => {
+        if (placed >= LIMIT) return;
+        const px = -tz * side, pz = tx * side;
+        const gx = x + px * off, gz = z + pz * off;
+        const st = P.sample(gx, gz);
+        if (!st || !Number.isFinite(st.height)) return;
+        // A hydrant needs ground you can stand a base on.
+        if (st.slope / DEG > 26) return;
+        // Face the lance in over the corridor, with a little scatter so the
+        // row is not mechanically identical.
+        const yaw = Math.atan2(-px, -pz) + rng.range(-0.22, 0.22);
+        _e.set(0, yaw, 0);
+        _q.setFromEuler(_e);
+        _v3.set(gx, st.height - 0.10, gz);
+        _v3b.setScalar(1);
+        _m4.compose(_v3, _q, _v3b);
+        this.gunField.add(_m4, 4.2, null);
+        placed++;
       });
     }
   }
