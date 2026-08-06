@@ -542,3 +542,45 @@ Two things this probe needs, both learned the hard way:
 Third time in this session that a confident read of a still turned out to be
 something else (the backdrop sliver, the missing spray, this). The still says
 what a thing looks like; only removing an object says what it is.
+
+## r34 — "no snow on the rock ledges": wrong, and a lesson about two code paths
+
+Rendered large in `air-trick`, the near tors look like bare rock standing in a
+midwinter snowfield with nothing on their up-facing ledges. Chasing it, I found
+this in snowMaterial.js and did the arithmetic:
+
+```
+accum = saturate( ... + ( sohoWN.y - 0.55 ) * 0.70 * uSnowOnRock )   // line 1188
+snowAmt = smoothstep( 0.18, 0.78, accum )
+```
+
+`uSnowOnRock` scales only that term, which maxes at 0.315 even at 1.0, so at
+the shipped 0.64 a dead-flat ledge reaches accum 0.202 and snowAmt 0.004 — no
+snow. It also appeared to contradict the call-site comment in props.js, which
+claims a flat ledge reaches "accum ≈ 0.61 → 85% snow".
+
+**Both conclusions were wrong.** There are TWO accumulation blocks in that
+file. Props use the one at line 1611:
+
+```
+float ledge = saturate( ( nW.y - 0.28 ) * 1.30 );
+accum = saturate( ledge*1.05 + cavity*0.35 + driftBias + surface*0.55 - 0.16 ) * uSnowOnRock;
+snowAmt = smoothstep( 0.24, 0.72, accum );
+```
+
+which is exactly the formula the comment describes. A flat ledge gives
+ledge 0.936, accum ≈ 0.64, snowAmt ≈ 0.87. Prop ledges load snow correctly and
+the comment was accurate all along; line 1188 is a different surface class.
+
+Confirmed by measurement rather than by re-reading: with the line-1188 term
+steepened, the near slab in `rider-portrait` measured **118.9 mean / 46.0 sd
+both before and after** — bit-identical, because the prop never used that path.
+Reverted.
+
+Two things worth keeping:
+
+- Before editing a shared shader, confirm WHICH block the surface in question
+  actually executes. Grepping a uniform name found three hits and I reasoned
+  about the first one.
+- `air-trick` and `west-spur` re-frame between runs, so they cannot carry an
+  A/B. `rider-portrait` holds its framing and is the shot to use for one.
