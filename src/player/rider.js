@@ -1631,6 +1631,13 @@ export class Rider {
     // strap 1.1 cm proud and the bar still crossed the side view. Solving
     // (1.03 r + tube) * sx = halfWidthHere + 1.5 mm gives 0.850, and the same
     // against the section's half-length gives 0.972.
+    // Tried and REVERTED: thickening the tube to 0.016 and scaling to 0.875 to
+    // make the strap read as a band, on the theory that nothing visually joins
+    // the goggle to the head so the lens looks stuck on. The tube's own radius
+    // adds to the proudness, so it came out as a dark stub protruding from the
+    // side of the helmet -- the same grey-bar failure as the 11 mm version.
+    // The strap has to stay flush; the goggle's stuck-on read needs solving on
+    // the goggle.
     gstrap.scale.set(0.850, 1.0, 0.972);
 
     /* --- arms -------------------------------------------------------- */
