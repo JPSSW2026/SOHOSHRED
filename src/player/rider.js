@@ -697,6 +697,7 @@ export class Rider {
     this._flipV = new THREE.Vector3();
     // IK scratch. The solver runs twice a frame and must not allocate.
     this._ikDir = new THREE.Vector3();
+    this._ikUp = new THREE.Vector3();
     this._ikPole = new THREE.Vector3();
     this._ikThigh = new THREE.Vector3();
     this._ikX = new THREE.Vector3();
@@ -706,6 +707,7 @@ export class Rider {
     this._ikQ2 = new THREE.Quaternion();
     this._chk = new THREE.Vector3();
     this._chk2 = new THREE.Vector3();
+    this._chk3 = new THREE.Vector3();
 
     // Smoothed animation channels. Every one of these is a value the pose
     // reads; damping them here rather than in the pose keeps the rider from
@@ -1115,7 +1117,7 @@ export class Rider {
     const shellDark = shellGrey; // collar/hem trim reads as the deep crimson blocking
 
     const helmet = new THREE.MeshStandardMaterial({
-      color: RIDER_STYLE.helmet, roughness: 0.34, metalness: 0.06, envMapIntensity: 1.1,
+      color: RIDER_STYLE.helmet, roughness: 0.46, metalness: 0.06, envMapIntensity: 1.1,
     });
     const rubber = new THREE.MeshStandardMaterial({ color: 0x23262c, roughness: 0.66 });
     /**
@@ -1248,9 +1250,21 @@ export class Rider {
 
       // Ankle and toe straps: real arcs over the boot, with ratchet buckles and
       // ladder tails on the toe side.
-      const ankle = trim(new THREE.TorusGeometry(0.064, 0.009, 6, 14, 2.5), M.rubber, plate, 0, 0.046, -0.008);
+      // Strap radii are bounded by the BOARD, not just by the boot: measured
+      // per vertex the ankle strap now reaches 0.1414 against a 0.1396 deck
+      // half-width, so the hardware sits inside the board's outline.
+      //
+      // A note on how these numbers were arrived at, because the first pass
+      // was wrong: the original probe took each geometry's LOCAL bounding box
+      // and transformed it, which for a torus rotated on two axes inflates the
+      // extent enormously -- it reported 3.3 cm of overhang on straps whose
+      // real vertices were nearly flush. An AABB of a transformed AABB is a
+      // bound, not a measurement. tools/board-preview.mjs walks vertices now.
+      // The reported "bindings through the base" was never this at all; it was
+      // the leg IK, fixed in _solveLeg.
+      const ankle = trim(new THREE.TorusGeometry(0.050, 0.009, 6, 14, 2.5), M.rubber, plate, 0, 0.046, -0.008);
       ankle.rotation.set(Math.PI * 0.5, 0, Math.PI * 0.5 - 1.25);
-      const toe = trim(new THREE.TorusGeometry(0.055, 0.008, 6, 14, 2.4), M.rubber, plate, 0, 0.032, 0.088);
+      const toe = trim(new THREE.TorusGeometry(0.046, 0.008, 6, 14, 2.4), M.rubber, plate, 0, 0.032, 0.088);
       toe.rotation.set(Math.PI * 0.5, 0, Math.PI * 0.5 - 1.20);
       trim(new THREE.BoxGeometry(0.022, 0.016, 0.026), M.buckle, plate, 0.060, 0.052, -0.008);
       trim(new THREE.BoxGeometry(0.019, 0.013, 0.024), M.buckle, plate, 0.054, 0.038, 0.088);
@@ -1309,11 +1323,35 @@ export class Rider {
     const head = bone('head', neck, 0, DIM.neckLength, 0);
     // Balaclava: the lower face, so there is a head under the helmet without
     // there ever being a face (§6.4, checklist 41).
-    const face = part(new THREE.SphereGeometry(DIM.headRadius * 0.90, 12, 10), M.rubber, head, 0, DIM.headRadius * 0.42, 0.010);
-    face.scale.set(0.92, 1.0, 1.02);
+    const face = part(new THREE.SphereGeometry(DIM.headRadius * 0.90, 14, 12), M.rubber, head, 0, DIM.headRadius * 0.42, 0.010);
+    // Narrower than the helmet and tapering back: a jaw, not a second ball.
+    face.scale.set(0.86, 0.98, 0.98);
+    // Chin and jawline. Without these the lower head is a sphere that meets
+    // the skull sphere in a circle, and the whole head reads as two stacked
+    // balls -- which is what "rudimentary" was describing.
+    const chin = part(new THREE.SphereGeometry(DIM.headRadius * 0.52, 12, 10), M.rubber, head,
+      0, DIM.headRadius * 0.02, DIM.headRadius * 0.30);
+    chin.scale.set(0.86, 0.78, 0.92);
+    const jaw = part(new THREE.BoxGeometry(DIM.headRadius * 1.30, DIM.headRadius * 0.34, DIM.headRadius * 1.24), M.rubber, head,
+      0, DIM.headRadius * 0.20, DIM.headRadius * 0.06);
+    jaw.rotation.x = -0.16;
 
-    const skull = part(new THREE.SphereGeometry(DIM.headRadius, 18, 14), M.helmet, head, 0, DIM.headRadius * 0.85, 0);
-    skull.scale.set(1.0, 1.06, 1.10);
+    // A helmet is longer front-to-back than it is wide, and its crown is
+    // flatter than a sphere's. At 1.00 x 1.06 x 1.10 this was near-spherical,
+    // which is most of why four rendered views all read as "ball".
+    const skull = part(new THREE.SphereGeometry(DIM.headRadius, 20, 16), M.helmet, head, 0, DIM.headRadius * 0.85, 0.006);
+    skull.scale.set(0.96, 1.02, 1.10);
+    // Ear pads. A bare ellipsoid has no feature between the goggle and the
+    // jaw, so the side view -- the one gameplay shows most -- was blank.
+    for (const ex of [-1, 1]) {
+      // INSIDE the skull's own half-width (0.96 r). At 0.88 r plus a 0.176 r
+      // half-thickness these reached 1.056 r and stood out of the side of the
+      // head as a pale peg -- the side view, which is the one gameplay shows
+      // most, had a bar growing out of the ear.
+      const ear = part(new THREE.SphereGeometry(DIM.headRadius * 0.32, 10, 8), M.helmet, head,
+        ex * DIM.headRadius * 0.80, DIM.headRadius * 0.64, -DIM.headRadius * 0.04);
+      ear.scale.set(0.42, 1.02, 0.90);
+    }
     // Shell seam and brim.
     const shellSeam = trim(new THREE.TorusGeometry(DIM.headRadius * 1.005, 0.004, 6, 22), M.rubber, head, 0, DIM.headRadius * 0.86, 0);
     shellSeam.rotation.y = Math.PI * 0.5;
@@ -1337,27 +1375,60 @@ export class Rider {
     // ANY view. That is the round-headed alien: less a shape problem than a
     // hood eating the face.
     //
-    // A partial sphere leaves a face opening; phiStart/phiLength cut the shell
-    // around Y so the gap faces the direction the head looks.
-    const hoodUp = part(new THREE.SphereGeometry(
-      // phi = PI/2 is +Z in three's sphere parameterisation -- the direction
-      // the head looks. To leave a 108 deg gap centred there the shell must
-      // START at PI/2 + 54 deg = 0.80 PI. At 0.30 PI the opening sat off the
-      // side of the head and the face stayed covered.
-      DIM.headRadius * 1.20, 20, 14, Math.PI * 0.80, Math.PI * 1.40,
-    ), M.shellGrey, head, 0, DIM.headRadius * 0.80, -DIM.headRadius * 0.30);
-    // Narrower across, LONGER front-to-back. At 1.06 x 1.10 x 1.20 this was
-    // near-spherical, and a sphere over a sphere reads as one bowling ball --
-    // the head was the least garment-like thing on the figure. A hood is a
-    // cowl with a peak behind the skull and an opening in front, so the axes
-    // have to disagree.
-    hoodUp.scale.set(1.00, 1.08, 1.30);
-    // The rim torus that used to sit here WAS the bar through the head.
-    // Tube radius 0.17 r on a 0.95 r ring, lying horizontally at exactly
-    // goggle height and scaled 1.14 across, it reached 1.28 r -- well past
-    // the skull -- so every view showed a rod driven through the face. It was
-    // added to give the hood an opening edge; the partial-sphere hood now has
-    // a real opening, so the rim has no job left.
+    // The cut has to be by THETA, not PHI. phiStart/phiLength slice a sphere
+    // around its Y axis, which removes a wedge and leaves two FLAT VERTICAL
+    // edges -- rendered from the front those two edges are the pair of thin
+    // dark commas floating either side of the skull, and that is the "hard
+    // crescent". A hood opening is a circle, and the only cut on a sphere
+    // that yields a circle is the polar one, so: cut by theta to get a bowl
+    // open around +Y, then rotate the geometry a quarter turn about X so the
+    // opening faces +Z -- the direction the head looks.
+    // Snug. A hood over a helmet clears it by a centimetre, not by two: at 1.13
+    // scaled 1.06 in Y the crown of the hood stood 0.18 headRadii off a skull
+    // at 1.02, so the shell floated and its rim read as a hoop hung around the
+    // head rather than an edge lying on it.
+    const HOOD_R = DIM.headRadius * 1.06;
+    // The opening must CLEAR the helmet, or the rim lands in front of the face
+    // and the hood reads as a diving-helmet porthole. The opening radius is
+    // HOOD_R*sin(open); the skull's widest is 1.16 headRadius, so open has to
+    // satisfy 1.17*sin(open) > 1.16 -- i.e. past 1.43 rad. At 1.02 the opening
+    // was 1.00 headRadius, narrower than the head it was meant to frame.
+    const HOOD_OPEN = 1.46;                      // polar half-angle of the opening
+    const hoodGeo = new THREE.SphereGeometry(
+      HOOD_R, 24, 16, 0, Math.PI * 2, HOOD_OPEN, Math.PI - HOOD_OPEN,
+    );
+    hoodGeo.rotateX(Math.PI * 0.5);
+    const hoodUp = part(hoodGeo, M.shellGrey, head, 0, DIM.headRadius * 0.80, -DIM.headRadius * 0.30);
+    // A cowl with a peak behind the skull, not a sphere over a sphere: the
+    // axes have to disagree. Held close enough that the helmet still shows.
+    hoodUp.scale.set(1.01, 1.03, 1.22);
+    // The hood needs THICKNESS. A single shell is a zero-thickness surface, so
+    // the opening is a razor cut and a side view looks straight through it
+    // onto the shell's own inside. A back-facing lining behind the outer shell
+    // gives the edge somewhere to end.
+    const liningGeo = new THREE.SphereGeometry(
+      HOOD_R * 0.955, 20, 14, 0, Math.PI * 2, HOOD_OPEN + 0.04, Math.PI - HOOD_OPEN - 0.04,
+    );
+    liningGeo.rotateX(Math.PI * 0.5);
+    const lining = part(liningGeo, M.shellDark, head, 0, DIM.headRadius * 0.80, -DIM.headRadius * 0.30);
+    lining.scale.copy(hoodUp.scale);
+    // The rim. The torus that used to sit here WAS the bar through the head --
+    // but only because it lay HORIZONTALLY at goggle height, across the face.
+    // The opening of a theta-cut bowl is a circle in the XY plane, so a torus
+    // in that same plane traces the edge exactly instead of cutting across it:
+    // radius R*sin(open), standing at z = R*cos(open).
+    // PARTIAL, and open at the bottom. A full ring closes under the chin, and
+    // a closed ring standing off the skull on every side is a halo -- the head
+    // read as a ball inside a wire hoop. A real hood edge runs over the crown,
+    // down past the cheeks, and vanishes into the collar; it is never a circle
+    // the viewer can see all of. Arc centred on +Y leaves the bottom open.
+    const RIM_ARC = 4.30;
+    const rim = part(
+      new THREE.TorusGeometry(HOOD_R * Math.sin(HOOD_OPEN), DIM.headRadius * 0.040, 7, 22, RIM_ARC),
+      M.shellGrey, head, 0, DIM.headRadius * 0.80, -DIM.headRadius * 0.30 + HOOD_R * Math.cos(HOOD_OPEN) * 1.22,
+    );
+    rim.rotation.z = Math.PI * 0.5 - RIM_ARC * 0.5;
+    rim.scale.set(1.01, 1.03, 1.00);
 
     // The bar through the head. This is a flat disc of radius 1.03 r sat at
     // y = 0.99 r -- up where the skull ellipsoid has tapered well inside that
@@ -1388,8 +1459,25 @@ export class Rider {
     const lens = part(lensGeo, M.goggle, head, 0, DIM.headRadius * 0.80, 0.004);
     // Flatter: a goggle is a band across the face. At 0.82 in Y this domed
     // over most of the head and read as a full-face visor.
-    lens.scale.set(1.06, 0.62, 1.20);
+    // WIDER and SHALLOWER. At 1.06 x 0.62 x 1.20 the lens stood 20% proud of
+    // a skull that is itself only 1.16 long, so it projected off the face as a
+    // pale muzzle -- the head's most conspicuous feature was a snout. A goggle
+    // is wide across and barely proud, so X leads and Z gives way.
+    // Z must EXCEED the skull's, or the lens is inside the helmet: at 1.02
+    // against a skull scaled 1.16 long the goggle disappeared entirely and the
+    // front view was a bare purple dome.
+    lens.scale.set(1.16, 0.58, 1.14);
     lens.castShadow = false;
+    // Gasket. Without an edge the lens is a pale lozenge stuck on the face --
+    // it needs the dark ring that makes a goggle read as a lens set INTO a
+    // frame. Traced onto the lens cap's own rim: at polar angle 0.92 from the
+    // +Z pole that circle has radius r*sin(0.92) and stands at z = r*cos(0.92),
+    // then takes the lens's own scale so the two edges coincide exactly.
+    const gasket = part(
+      new THREE.TorusGeometry(DIM.headRadius * Math.sin(0.92), DIM.headRadius * 0.052, 7, 24),
+      M.rubber, head, 0, DIM.headRadius * 0.80, 0.004 + DIM.headRadius * Math.cos(0.92) * 1.14,
+    );
+    gasket.scale.set(1.16, 0.58, 1.00);
 
     const frameGeo = new THREE.SphereGeometry(DIM.headRadius * 1.005, 24, 14, 0, Math.PI * 2, 0, 1.06);
     frameGeo.rotateX(Math.PI * 0.5);
@@ -1400,7 +1488,7 @@ export class Rider {
     // the lens outright. Kept inside the lens on every axis it does its real
     // job -- an opaque backing so the goggle is not a window through the head
     // -- and contributes nothing to the silhouette.
-    frame.scale.set(1.00, 0.56, 1.10);
+    frame.scale.set(1.12, 0.54, 1.06);
 
     const strapGeo = new THREE.TorusGeometry(DIM.headRadius * 1.03, 0.011, 6, 26, 4.05);
     strapGeo.rotateZ(2.68);          // centre the covered arc on the back of the head
@@ -1409,9 +1497,20 @@ export class Rider {
     // scaled proud of the skull it pushed straight through the strap, so the
     // front view had a dark bar cutting across the middle of the goggle.
     const gstrap = trim(strapGeo, M.strap, head, 0, DIM.headRadius * 1.04, 0);
-    // Tucked against the shell. At 1.06/1.08 this stood proud of the skull and,
-    // on a head with no other feature, read as a bar through an egg.
-    gstrap.scale.set(1.005, 1.0, 1.01);
+    // Sized to the SKULL'S CROSS-SECTION at the height the strap actually sits,
+    // not to a nominal sphere. The skull is an ellipsoid 0.96 wide and 1.10
+    // long; at y = 1.04 r that section is 0.943 x 1.080. A strap ring of
+    // radius 1.03 r scaled a flat 1.005 therefore reached 1.035 across a head
+    // only 0.943 wide -- 0.9 cm proud on each side, which from the side view
+    // crossed the silhouette as a grey bar at goggle height. Scaled to the
+    // section it lies ON the shell, a hair proud, the way a strap does.
+    //
+    // Scale the OUTER radius, not the ring radius: the tube adds 0.011 on top
+    // of 1.03 r, so a factor picked against the ring alone still left the
+    // strap 1.1 cm proud and the bar still crossed the side view. Solving
+    // (1.03 r + tube) * sx = halfWidthHere + 1.5 mm gives 0.850, and the same
+    // against the section's half-length gives 0.972.
+    gstrap.scale.set(0.850, 1.0, 0.972);
 
     /* --- arms -------------------------------------------------------- */
     // Shoulders sit on the **Z** axis: a snowboarder's shoulder line runs along
@@ -1536,10 +1635,18 @@ export class Rider {
       // one buried through the deck — which is exactly the regression that
       // got past this check and showed up in play as the binding poking out
       // under the board.
+      // Measured along the MOUNT's axes, not the world's. A world-Y version of
+      // this check is blind on edge — which is how an IK that offset the ankle
+      // along world up got past it and put the sole through the base on every
+      // carve.
       const sole = this._chk.setFromMatrixPosition(bt.matrixWorld);
       const plate = this._chk2.setFromMatrixPosition(mount.matrixWorld);
-      const drop = sole.y - SOLE_DROP - (plate.y + PLATE_TOP);
-      const lateral = Math.hypot(sole.x - plate.x, sole.z - plate.z);
+      const e = mount.matrixWorld.elements;
+      const up = this._chk3.set(e[4], e[5], e[6]).normalize();
+      const off = sole.sub(plate);
+      const along = off.dot(up);
+      const drop = along - SOLE_DROP - PLATE_TOP;
+      const lateral = Math.sqrt(Math.max(0, off.lengthSq() - along * along));
       if (Math.abs(drop) > 0.02) {
         console.warn(`[rider] boot${side} sole sits ${drop.toFixed(3)} m ` +
           `${drop < 0 ? 'BELOW' : 'above'} binding${tag}'s plate`);
@@ -1841,7 +1948,19 @@ export class Rider {
     const p = this._v.setFromMatrixPosition(target.matrixWorld);
     // Stand the boot ON the baseplate: the IK target is the ankle, so it has
     // to clear the whole drop from ankle to sole, plus the plate itself.
-    p.y += SOLE_DROP + PLATE_TOP;
+    //
+    // That clearance runs along the BOARD's up, not the world's. This used to
+    // be a plain `p.y += ...`, which is only correct with the board flat. On
+    // edge the offset stayed vertical while the plate rolled out from under
+    // it, so the ankle ended up the right DISTANCE from the mount in the
+    // wrong DIRECTION: measured at 62° of edge, the ankle sat 13.1 cm
+    // outboard and only 6.9 cm above the mount instead of 14.8 cm straight
+    // up, which drove the sole 4.6 cm through the base. That is the "bindings
+    // popping through the bottom of the board" report, and because it scales
+    // with edge angle it was showing on every carve, not just extreme ones.
+    const e = target.matrixWorld.elements;
+    this._ikUp.set(e[4], e[5], e[6]).normalize();
+    p.addScaledVector(this._ikUp, SOLE_DROP + PLATE_TOP);
     hip.worldToLocal(p);
 
     const l1 = DIM.thighLength, l2 = DIM.shinLength;
