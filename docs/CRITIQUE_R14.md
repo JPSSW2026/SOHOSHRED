@@ -468,9 +468,42 @@ harness: the captured frame does not correspond to the state `S.shot()` leaves
 behind. That is consistent with the already-documented finding that
 `page.screenshot()` after `shot()` returns a stale frame.
 
-**Consequence, and the reason this is written down rather than fixed:** any
-judgement about particles, spray or trails made from these captures — mine, or
-a critic agent's — may be reading a frame that never contained them. Settle
-that before tuning a single emitter constant. Do NOT "fix" the spray by
-raising counts or sizes against these images.
+**CORRECTION (r28). The conclusion above is wrong.** The harness was not the
+problem and the captures do contain the particles.
+
+`tools/spray-visible.mjs` settles it without `page.screenshot()`: it renders
+the shot, reads the canvas back inside the page in the same task as the draw,
+hides `fx.dynamic.points`, renders and reads again, and diffs — with hiding the
+RIDER as a control, so a readback that cannot see anything is distinguishable
+from particles that are not there.
+
+```
+removing spray            12.4% of pixels changed, mean delta 22.7
+removing rider (control)  10.3% of pixels changed, mean delta 18.0
+```
+
+Removing the spray changes MORE of the frame than removing the whole rider. It
+was always rendering, and an amplified difference image shows a large,
+correctly-shaped plume trailing off the edge.
+
+The real fault was value, not presence. Over the plume region:
+
+```
+mean luma with spray     187.4
+mean luma without spray  199.8      -> the spray was 12.3 levels DARKER
+```
+
+Snow thrown off an edge that *darkens* the snow behind it reads as a grey
+veil, which is why a plume covering 12–13% of the frame was mistaken for "no
+spray at all". Cause: the big area-covering puffs were authored at brightness
+0.72–0.92 while the individual crystals they represent are 0.9–1.35, and with
+the sun off-axis `sunAmount` falls to ~0.35 so the colour is dominated by
+`uSkyColor * 1.15` — ambient sky, well under sunlit snow. Puffs moved to
+1.02–1.24; the plume region now sits at −0.2 levels against the no-spray
+frame instead of −12.3, and it reads as thrown snow.
+
+Lesson worth keeping: "the effect is missing" and "the effect has no contrast
+against its background" look identical in a screenshot and are diagnosed
+completely differently. Diff against the effect disabled before concluding
+anything is absent.
 

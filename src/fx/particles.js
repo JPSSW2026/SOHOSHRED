@@ -414,7 +414,18 @@ export class ParticleFX {
         0.7 + rng() * 1.1 * intensity,
         0.16 + rng() * 0.26,
         3.2 + rng() * 2.0,
-        2, rng() * 100, 0.72 + rng() * 0.2, (rng() - 0.5) * 2,
+        // Brightness 1.02-1.24, was 0.72-0.92.
+        //
+        // The puffs are the big area-covering sprites -- the spray WALL --
+        // and they were authored DARKER than the individual crystals they are
+        // made of (0.9-1.35). A dense mist of ice crystals is not darker than
+        // the crystals in it. Measured over the plume region of close-spray,
+        // the whole effect was pulling the frame DOWN: mean luma 187.4 with
+        // spray against 199.8 without, a 12.3-level drop. Snow thrown off an
+        // edge that darkens the snow behind it reads as a grey veil, which is
+        // exactly how it looked -- and is why the plume was mistaken for
+        // "there is no spray" when it covers 12-13% of the frame.
+        2, rng() * 100, 1.02 + rng() * 0.22, (rng() - 0.5) * 2,
       );
     }
   }
