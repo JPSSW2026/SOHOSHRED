@@ -958,8 +958,19 @@ export class Rider {
         // A reshape with a modest mass increase, not another volume round:
         // total silhouette area goes 0.373 against the reference's 0.379, so
         // there is room for it and not much more.
-        { bone: 'hips',          pos: hip.clone().setY(hip.y + 0.085), r: 0.176, sx: 0.96 },
-        { bone: `thigh${side}`,  pos: hip,                             r: 0.176, sx: 0.96 },
+        // TUCK THE TOP INSIDE THE JACKET. These two stations sit above the
+        // jacket's hem, so nothing ever sees them -- but at the leg's full
+        // baggy radius, offset by half the hip width, their outer edge
+        // reached well outside the jacket body and the front leg rendered as
+        // a dark notched patch THROUGH the jacket. who-owns.mjs put pantLegF
+        // at 67.8% of that rectangle at a mean delta of 74, which is what
+        // turned a plausible guess into a fact.
+        //
+        // Pre-existing rather than new -- the leg poked at its old radii too
+        // -- but widening the pant made it worse, and the pelvis is filled by
+        // the `seat` garment regardless, so narrowing here costs nothing.
+        { bone: 'hips',          pos: hip.clone().setY(hip.y + 0.085), r: 0.118, sx: 0.96 },
+        { bone: `thigh${side}`,  pos: hip,                             r: 0.150, sx: 0.96 },
         { bone: `thigh${side}`,  pos: jointPos(`shin${side}`, 0.05),   r: 0.166 },
         { bone: `shin${side}`,   pos: jointPos(`shin${side}`, -0.04),  r: 0.148 },
         // Widens again at the cuff: the hem sits ON the boot, it does not
