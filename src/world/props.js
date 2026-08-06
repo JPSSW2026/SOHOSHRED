@@ -65,6 +65,7 @@ import {
   updateSnowMaterial,
   TRUE_NORTH_BEARING_OF_MINUS_Z,
 } from './snowMaterial.js';
+import { SnowPlumes } from '../fx/snowplume.js';
 
 /* ==========================================================================
  * 0.  CONSTANTS — kept in lock-step with terrain.js / TERRAIN_BRIEF §2.4
@@ -681,16 +682,28 @@ function buildPole(opt = {}) {
  * Built at unit scale in metres, base at y = 0, lance leaning toward local +X
  * (the placement yaws that to point across the piste). Vertex-coloured so the
  * whole field is one draw call, like every other prop here.
+ *
+ * The first version of this was built at the sizes a diagram suggests rather
+ * than the sizes the frame needs, and from 20 m — which is as close as the
+ * run ever gets to one — it read as a small can on a hair. A real lance mast
+ * is around 200 mm across and the nozzle head at the top is a drum you can
+ * see from the far side of a basin; both are now built at those sizes, and
+ * the head is what makes the silhouette machinery rather than a pole.
  */
 function buildSnowGun(opt = {}) {
   const bodyH = opt.bodyH ?? 1.15;
-  const bodyR = opt.bodyR ?? 0.34;
+  const bodyR = opt.bodyR ?? 0.46;
   const lanceLen = opt.lanceLen ?? 7.4;
-  const lanceR = opt.lanceR ?? 0.055;
+  const lanceR = opt.lanceR ?? 0.105;
   const rake = opt.rake ?? (58 * DEG);      // from horizontal
   const radial = opt.radial ?? 8;
-  const YELLOW = opt.yellow || [0.855, 0.620, 0.055];
-  const YELLOW_D = [YELLOW[0] * 0.62, YELLOW[1] * 0.62, YELLOW[2] * 0.62];
+  // Safety yellow, not ochre. The first pass used 0.855/0.620/0.055, which is
+  // the right hue on paper and reads OLIVE in frame: it is a mid-value colour
+  // sitting against snow that the tonemapper has pushed to near white, so the
+  // eye reads it several stops down. Lifted to the top of the gamut in green
+  // as well as red, which is where hi-vis paint actually lives.
+  const YELLOW = opt.yellow || [0.985, 0.790, 0.075];
+  const YELLOW_D = [YELLOW[0] * 0.72, YELLOW[1] * 0.66, YELLOW[2] * 0.62];
   const STEEL = opt.steel || [0.395, 0.410, 0.436];
   const DARK = [0.120, 0.126, 0.138];
 
@@ -735,31 +748,80 @@ function buildSnowGun(opt = {}) {
   const baseY = bodyH * 0.78;
   for (let k = 0; k <= lsteps; k++) {
     const t = k / lsteps;
-    const r = lanceR * lerp(1.0, 0.55, t);
+    const r = lanceR * lerp(1.0, 0.78, t);
     lanceRings.push(ring(
       dx * lanceLen * t, baseY + dy * lanceLen * t, 0,
       r, px, py, 0, 0, 0, 1,
     ));
-    lanceCols.push(STEEL);
+    // Mast painted the same hi-vis yellow above the collar. On a white slope
+    // a grey mast is a wire — it is the yellow running the whole length that
+    // carries the machine from 40 m out, which is the range the run passes at.
+    lanceCols.push(t < 0.2 ? STEEL : YELLOW);
   }
   tube(lanceRings, lanceCols);
   B.fan(lanceRings[lanceRings.length - 1], true, STEEL);
 
   // --- nozzle head at the tip, and a brace back to the body ---------------
+  //
+  // The head is the whole recognition of the machine: a drum of nozzle rings
+  // straddling the top of the mast, banded dark at each end, with the nozzle
+  // face capped dark. Built as a run of rings along the lance axis so the
+  // profile steps out to the drum and back in to the face rather than being
+  // a cone stuck on the end.
   const tipX = dx * lanceLen, tipY = baseY + dy * lanceLen;
-  const head = [
-    ring(tipX, tipY, 0, lanceR * 1.9, px, py, 0, 0, 0, 1),
-    ring(tipX + dx * 0.34, tipY + dy * 0.34, 0, lanceR * 1.5, px, py, 0, 0, 0, 1),
+  const at = (d, r) => ring(tipX + dx * d, tipY + dy * d, 0, r, px, py, 0, 0, 0, 1);
+  const drumR = lanceR * 2.5;
+  const headRings = [
+    at(-0.62, lanceR * 0.80),
+    at(-0.50, drumR * 0.92),
+    at(-0.40, drumR),
+    at(0.16, drumR),
+    at(0.26, drumR * 1.04),   // nozzle-ring lip
+    at(0.36, drumR * 0.98),
+    at(0.62, drumR * 0.86),
+    at(0.70, drumR * 0.62),
   ];
-  tube(head, [YELLOW_D, YELLOW_D]);
-  B.fan(head[1], true, YELLOW_D);
+  const headCols = [DARK, YELLOW, YELLOW, YELLOW, DARK, YELLOW, YELLOW, DARK];
+  tube(headRings, headCols);
+  B.fan(headRings[headRings.length - 1], true, DARK);
+
+  // A pair of stub nozzles off the drum's flank. Two small silhouette breaks
+  // are enough to stop the head reading as a plain barrel.
+  for (const s of [1, -1]) {
+    const o = drumR * 0.86 * s;
+    const a = [
+      ring(tipX + dx * 0.02, tipY + dy * 0.02, o, lanceR * 0.34, px, py, 0, 0, 0, 1),
+      ring(tipX + dx * 0.02, tipY + dy * 0.02, o + s * 0.20, lanceR * 0.28, px, py, 0, 0, 0, 1),
+    ];
+    tube(a, [DARK, DARK]);
+    B.fan(a[1], s > 0, DARK);
+  }
 
   // Brace strut: a real lance is guyed off its own body, and the triangle is
   // most of what stops the silhouette reading as a bare stick.
-  const bs = 0.020;
+  const bs = 0.042;
   const braceA = ring(bodyR * 0.55, bodyH * 0.30, 0, bs, 0, 1, 0, 0, 0, 1);
   const braceB = ring(dx * lanceLen * 0.42, baseY + dy * lanceLen * 0.42, 0, bs, 0, 1, 0, 0, 0, 1);
   tube([braceA, braceB], [STEEL, STEEL]);
+
+  // Valve collar and a hose stub running off the back of the body into the
+  // snow. A machine that is plumbed into something reads as plant; the same
+  // machine standing free reads as a bollard.
+  const collar = [
+    ring(0, bodyH * 0.30, 0, bodyR * 1.06, 1, 0, 0, 0, 0, 1),
+    ring(0, bodyH * 0.44, 0, bodyR * 1.06, 1, 0, 0, 0, 0, 1),
+  ];
+  tube(collar, [DARK, DARK]);
+  const hoseR = 0.070;
+  const hose = [];
+  for (let k = 0; k <= 3; k++) {
+    const t = k / 3;
+    hose.push(ring(
+      -bodyR * 0.9 - t * 0.85, bodyH * 0.40 - t * t * 0.52, 0,
+      hoseR, 0, 1, 0, 0, 0, 1,
+    ));
+  }
+  tube(hose, [DARK, DARK, DARK, DARK]);
 
   return B.build('soho-snowgun');
 }
@@ -1873,6 +1935,23 @@ export class Props {
       color: 0xffffff, vertexColors: true, roughness: 0.62, metalness: 0.12,
     });
     this.gunMat.name = 'props-snowgun';
+    // Hi-vis paint holds its colour against blown-out snow; a plain diffuse
+    // does not. Lit at a fraction of the sun the yellow lands two stops under
+    // the piste and reads OLIVE — which is what the first version of this
+    // prop did, at every distance, in every frame. A small self-lit term
+    // keyed on the vertex colour's OWN chroma lifts only the painted surfaces:
+    // the steel lance and the rubber collar have r <= b and get exactly none.
+    this.gunMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uGunGlow = { value: 0.30 };
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uGunGlow;')
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+	{
+		float chroma = clamp( vColor.r - vColor.b, 0.0, 1.0 );
+		totalEmissiveRadiance += vColor.rgb * ( chroma * chroma ) * uGunGlow;
+	}`);
+    };
+
 
     this.flagMat = new THREE.MeshStandardMaterial({
       name: 'props-flag',
@@ -1913,6 +1992,10 @@ export class Props {
     dampenAerialPerspective(this.netMat, 0.55, 'net');
     dampenAerialPerspective(this.flagMat, 0.50, 'flag');
     dampenAerialPerspective(this.tussockMat, 0.50, 'tussock');
+    // The guns are the third colour accent on the mountain and the in-scatter
+    // was eating them: the yellow greys out within a couple of hundred metres,
+    // which is where most of them are.
+    dampenAerialPerspective(this.gunMat, 0.45, 'snowgun');
 
     this.materials.push(
       this.rockMat, this.snowMat, this.poleMat, this.steelMat,
@@ -2764,6 +2847,10 @@ export class Props {
     this.gunField = this._field('snow-gun', this.gunMat, this.geo.snowGun, {
       castShadow: true, receiveShadow: true, shadowLevels: 2, cullAngular: 0.0022,
     });
+    // Plumes are not an instanced field: they are camera-facing puffs in one
+    // mesh, driven entirely by the shader. See src/fx/snowplume.js for why a
+    // surface never worked. This collects the guns that are RUNNING.
+    const firing = [];
 
     const SPACING = T.snowGun?.spacing ?? 52;
     const LIMIT = Math.round((T.snowGun?.limit ?? 46) * clamp(T.density ?? 1, 0.05, 4));
@@ -2793,9 +2880,23 @@ export class Props {
         _v3b.setScalar(1);
         _m4.compose(_v3, _q, _v3b);
         this.gunField.add(_m4, 4.2, null);
+        // Not every gun runs. A field turns on the guns it needs for the
+        // night's cover, so a row where every single lance is firing reads as
+        // a decoration rather than as plant.
+        if (rng() < (T.snowGun?.firingFrac ?? 0.55)) {
+          firing.push({
+            x: gx, y: st.height - 0.10, z: gz,
+            yaw, rake: 58 * DEG, lanceLen: 7.4, baseY: 1.15 * 0.78,
+          });
+        }
         placed++;
       });
     }
+
+    this.plumes = new SnowPlumes();
+    this.plumes.build(firing, this._seed('plume'));
+    this.plumes.setWind(this.wind);
+    this.object3D.add(this.plumes.object3D);
   }
 
   /* ------------------------------------------------------------------ *
@@ -3427,6 +3528,8 @@ export class Props {
     // 4.2 m/s the tussock should breathe, not thrash.
     const speed = clamp((CONFIG.world?.windSpeed ?? 4.2) / 8, 0.15, 1.6);
     u.uWindGust.value = speed * (0.55 + 0.45 * this.simp.noise2D(this._time * 0.16, 3.7));
+
+    this.plumes?.update(this._time, cam, ctx.sky);
 
     const sun = ctx.sky?.sunDirection;
     if (sun && cam) {
