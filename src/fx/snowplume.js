@@ -209,19 +209,27 @@ export class SnowPlumes {
       const ny = gn.y + gn.baseY + dyl * reach;
       const nz = gn.z + fz * dxl * reach;
 
+      // Per-GUN variation, on top of the per-puff jitter. Without it every
+      // plume on the mountain is the same shape, and a row of them at 600 m
+      // reads as a line of identical cotton balls rather than as plant that
+      // has been set at different pressures.
+      const gunSpeed = this.speed * rng.range(0.82, 1.20);
+      const gunSize = rng.range(0.85, 1.22);
+      const gunSpread = this.spread * rng.range(0.7, 1.4);
+
       for (let i = 0; i < this.perGun; i++) {
         // Phases evenly spaced, lightly jittered: even spacing is what makes
         // the stream continuous, and the jitter is what stops it reading as
         // a string of beads.
         const ph = (i + rng.range(-0.35, 0.35)) / this.perGun;
-        const fan = rng.range(-this.spread, this.spread);
+        const fan = rng.range(-gunSpread, gunSpread);
         const cf = Math.cos(fan), sf = Math.sin(fan);
         // Rotate the aim in the horizontal plane by the fan angle.
         const ax = fx * cf - fz * sf, az = fz * cf + fx * sf;
-        const sp = this.speed * rng.range(0.88, 1.12);
+        const sp = gunSpeed * rng.range(0.88, 1.12);
         const vx = ax * dxl * sp, vy = dyl * sp, vz = az * dxl * sp;
 
-        const size = rng.range(0.62, 1.15);
+        const size = gunSize * rng.range(0.62, 1.15);
         const alpha = 0.40 * rng.range(0.85, 1.15);
         const sd = rng();
 
