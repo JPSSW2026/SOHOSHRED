@@ -1569,29 +1569,47 @@ export class Rider {
     // Z must EXCEED the skull's, or the lens is inside the helmet: at 1.02
     // against a skull scaled 1.16 long the goggle disappeared entirely and the
     // front view was a bare purple dome.
-    lens.scale.set(1.16, 0.58, 1.14);
+    // 0.55, not 0.30. Flattening the cap right down killed the snout but left
+    // a smooth plate stuck on the front of the face with no wrap at all; a
+    // goggle is a shallow DOME. 0.55 keeps enough curvature to catch a
+    // highlight across it, and narrowing X stops it swallowing the whole face.
+    // Narrower than the skull's 0.96 on X, so the lens can only show where it
+    // is proud in Z -- at the centre. Wider than the skull and it emerges at
+    // the SIDES instead, which is the two-lobe googly-eye failure.
+    lens.scale.set(0.92, 0.50, 0.55);
+    // Pushed FORWARD instead of scaled forward.
+    //
+    // A cap with thetaLength 0.92 has its pole 0.40 r ahead of its rim, so
+    // scaling Z to make the lens proud also inflated that into a ~5 cm dome
+    // standing off the face -- which from the side is a snout, and is most of
+    // what read as "the head is weird". Flattening Z to 0.30 makes it a shield
+    // rather than a dome; translating the whole cap to 0.86 r then puts its
+    // pole just proud of a skull that reaches 1.10, so the lens EMERGES from
+    // the face and the skull's own opening provides the frame.
+    // Pole lands at 0.59 + 0.55 = 1.14 r, just proud of a skull reaching 1.10;
+    // the cap's rim sits at 0.92 r, inside the face, so the lens emerges
+    // rather than being pasted on.
+    // 0.70, not 0.59. At 0.59 the cap's pole sat only 0.04 r proud of the
+    // skull, so the lens was buried in the MIDDLE of the face and emerged only
+    // at the sides where the skull curves away -- which rendered as two pale
+    // lobes either side of the nose, i.e. googly eyes. The centre has to clear
+    // the face by enough to read as one band: pole at 1.25 r against a skull
+    // reaching 1.10 is ~1.7 cm proud, which is what a goggle stands off the
+    // cheekbones. X also comes inside the skull's 0.96 so the lobes cannot
+    // poke out sideways past the head.
+    lens.position.z = DIM.headRadius * 0.70;
     lens.castShadow = false;
-    // Gasket. Without an edge the lens is a pale lozenge stuck on the face --
-    // it needs the dark ring that makes a goggle read as a lens set INTO a
-    // frame. Traced onto the lens cap's own rim: at polar angle 0.92 from the
-    // +Z pole that circle has radius r*sin(0.92) and stands at z = r*cos(0.92),
-    // then takes the lens's own scale so the two edges coincide exactly.
-    const gasket = part(
-      new THREE.TorusGeometry(DIM.headRadius * Math.sin(0.92), DIM.headRadius * 0.052, 7, 24),
-      M.rubber, head, 0, DIM.headRadius * 0.80, 0.004 + DIM.headRadius * Math.cos(0.92) * 1.14,
-    );
-    gasket.scale.set(1.16, 0.58, 1.00);
+    // The gasket torus that used to sit here traced the lens cap's RIM. With
+    // the lens flattened and pushed into the face that rim now sits behind the
+    // skull surface, so the ring bounded nothing and floated as a loop around
+    // a lens it no longer touched. The skull's own opening is the frame.
 
-    const frameGeo = new THREE.SphereGeometry(DIM.headRadius * 1.005, 24, 14, 0, Math.PI * 2, 0, 1.06);
-    frameGeo.rotateX(Math.PI * 0.5);
-    const frame = trim(frameGeo, M.rubber, head, 0, DIM.headRadius * 0.80, 0.002);
-    // BEHIND the lens, not around it. Any axis of this cap that exceeds the
-    // lens shows up as dark geometry laid across the goggle: at 1.10 in X it
-    // was a bar through the middle, and at 1.075 uniformly proud it covered
-    // the lens outright. Kept inside the lens on every axis it does its real
-    // job -- an opaque backing so the goggle is not a window through the head
-    // -- and contributes nothing to the silhouette.
-    frame.scale.set(1.12, 0.54, 1.06);
+    // The opaque frame cap that used to sit behind the lens is GONE. Its job
+    // was to stop the goggle reading as a window through the head, but the
+    // lens now emerges from the skull, so the skull is the backing. Kept at a
+    // similar size and depth it did what every previous version of it did --
+    // poked through the middle of the lens and split the goggle into two pale
+    // blobs, which is a pair of googly eyes, not a visor.
 
     const strapGeo = new THREE.TorusGeometry(DIM.headRadius * 1.03, 0.011, 6, 26, 4.05);
     strapGeo.rotateZ(2.68);          // centre the covered arc on the back of the head
