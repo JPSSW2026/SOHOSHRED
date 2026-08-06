@@ -687,7 +687,23 @@ export class BoardPhysics {
 
     const tooHard = closing > CRASH_LANDING;
     const caughtEdge = slip > CRASH_SLIP_ANGLE && s.speed > 7;
-    const spunOut = (!spinClean || !flipClean) && s.airTime > 0.45 && s.speed > 6;
+    // Graded by HOW FAR off square the landing is, not just by how long the
+    // rider was in the air.
+    //
+    // This used to be `(!spinClean || !flipClean) && airTime > 0.45`, so the
+    // only thing separating a BAIL from an OOF on a spin was airtime: a 35 deg
+    // overshoot on a 1.5 s air crashed exactly as hard as a 170 deg one. That
+    // is not a severity gradient, and telemetry over a plain S-turn-and-pop
+    // run shows what it costs -- 14 callouts came out as 5 clean, 8 BAILED,
+    // 1 OOF, with FAILED never firing at all. The mild tier was the rare one.
+    //
+    // spinResidue is already folded to [0, pi] with BOTH ends meaning square,
+    // so distance-from-square is min(r, pi - r), maxing at pi/2. A moderate
+    // miss now falls through to the marginal test below and reads as OOF; only
+    // a genuinely blown rotation still bails.
+    const spinMiss = Math.min(spinResidue, Math.PI - spinResidue);
+    const badSpin = spinMiss > 1.10 || flipResidue > 1.55;
+    const spunOut = badSpin && s.airTime > 0.45 && s.speed > 6;
 
     // Unsalvageable: inverted, or an impact well past what a crash already
     // is. A normal crash is recoverable — the rider gets back up and rides
