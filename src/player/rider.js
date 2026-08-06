@@ -1038,6 +1038,33 @@ export class Rider {
         { bone: 'neck',  pos: chest.clone().setY(collarY + 0.062), r: 0.112, sx: 0.94 },
         { bone: 'neck',  pos: chest.clone().setY(collarY + 0.092), r: 0.104, sx: 0.96 },
       ], M.shell, { capStart: true, capEnd: true }).name = 'jacketBody';
+
+      // The hem band, as its own shell sitting proud of the jacket's bottom.
+      // It has to be a separate surface because `tube` takes one material.
+      //
+      // BURY THE END CAP. The band's top edge first rendered as a hard
+      // sawtooth of dark jacket biting into it. I read that as the tube's
+      // 14-sided faceting — a facet midpoint sits r·(1 − cos(π/14)) = 5.7 mm
+      // inside its vertices — and pushed the band 8 mm further proud. It
+      // changed nothing, which ruled the theory out.
+      //
+      // `capEnd` builds a DOME that lifts r·0.55 above the last ring and
+      // curves back toward the axis. At this radius that is a 130 mm dome
+      // arcing straight through the jacket, and the sawtooth was the two
+      // surfaces crossing. So the last station tucks well INSIDE the jacket
+      // instead: the visible lip is the ring before it, and the dome closes
+      // where nothing can see it.
+      //
+      // Capped at BOTH ends: the bottom is the garment's actual edge, and the
+      // top disc is buried inside the jacket where nothing sees it. An open
+      // ring there would show its interior, which is the same mistake the
+      // sleeve and pant cuffs made.
+      tube([
+        { bone: 'hips', pos: hips.clone().setY(hips.y - 0.076), r: 0.222, sx: 0.92 },
+        { bone: 'hips', pos: hips.clone().setY(hips.y - 0.055), r: 0.229, sx: 0.92 },
+        { bone: 'hips', pos: hips.clone().setY(hips.y - 0.038), r: 0.236, sx: 0.92 },
+        { bone: 'hips', pos: hips.clone().setY(hips.y - 0.028), r: 0.196, sx: 0.92 },
+      ], M.shellHem, { capStart: true, capEnd: true }).name = 'jacketHem';
     }
     /* Sleeves: a short yoke on the chest, then upper arm and forearm. */
     for (const side of ['L', 'R']) {
@@ -1196,6 +1223,15 @@ export class Rider {
      * two-tone split gives the yoke and sleeve blocking something real to do.
      */
     const RIDER_STYLE = {
+      // The hem band. Cropped large, the single most legible thing on the
+      // reference's jacket is a broad LIGHTER band right across the bottom of
+      // it, running the whole way round — it blocks the figure into torso and
+      // legs and it reads at any distance. Ours had a hem BREAK (a change of
+      // shape) but no change of value, so the jacket was one unbroken mass.
+      //
+      // Not a second high-chroma note under §6.3: same hue, one step up in
+      // value, which is how the reference blocks it too.
+      hemBand: 0xd25c8c,
       shell: 0xa82d5e,      // jacket body: the one high-chroma note. Deeper than
                             // the sampled magenta, which blew to flesh-pink
                             // under grazing sun.
@@ -1229,6 +1265,7 @@ export class Rider {
     const shellGrey = cloth(RIDER_STYLE.shellDeep, 0.66, 0.11, [1.4, 2], { wrinkle: 1.1 });
     const pants = cloth(RIDER_STYLE.pants, 0.68, 0.10, [1.4, 2], { wrinkle: 1.2 });
     const shellDark = shellGrey; // collar/hem trim reads as the deep crimson blocking
+    const shellHem = cloth(RIDER_STYLE.hemBand, 0.64, 0.12, [1.4, 2], { wrinkle: 0.9 });
 
     const helmet = new THREE.MeshStandardMaterial({
       color: RIDER_STYLE.helmet, roughness: 0.46, metalness: 0.06, envMapIntensity: 1.1,
@@ -1290,7 +1327,7 @@ export class Rider {
     });
 
     const M = {
-      shell, shellGrey, shellDark, pants, helmet, rubber, goggle, strap, glove, boot, sole,
+      shell, shellGrey, shellDark, shellHem, pants, helmet, rubber, goggle, strap, glove, boot, sole,
       binding, buckle, topsheet, base, sidewall, steel,
     };
     this._materials = Object.values(M);
