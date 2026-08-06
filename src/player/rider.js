@@ -1019,6 +1019,24 @@ export class Rider {
         { bone: 'chest', pos: chest.clone().setY(chest.y + 0.02), r: 0.208, sx: 0.87 },
         { bone: 'chest', pos: chest.clone().setY(collarY * 0.55 + chest.y * 0.45), r: 0.200, sx: 0.85 },
         { bone: 'chest', pos: chest.clone().setY(collarY - 0.012), r: 0.170, sx: 0.85 },
+        // A STANDING COLLAR, up around the neck.
+        //
+        // The jacket used to stop at the shoulder line, and the only thing
+        // bridging shoulder to helmet was a 5.6 cm neck cylinder between a
+        // 11.5 cm helmet and a 17 cm collar ring. From any angle other than
+        // the 3/4 rear that every judgement of this figure had been made
+        // from, you could see straight PAST the neck: measured on the
+        // turnaround card, a band of background pixels runs between the
+        // helmet and the shoulder, about 3 cm wide. The head read as
+        // detached, which it effectively was.
+        //
+        // The top two rings ride the NECK bone, not the chest, so the collar
+        // turns with the head instead of the head turning inside it — which
+        // is also what stops it re-opening the moment the rider looks down
+        // the hill.
+        { bone: 'chest', pos: chest.clone().setY(collarY + 0.028), r: 0.132, sx: 0.90 },
+        { bone: 'neck',  pos: chest.clone().setY(collarY + 0.062), r: 0.112, sx: 0.94 },
+        { bone: 'neck',  pos: chest.clone().setY(collarY + 0.092), r: 0.104, sx: 0.96 },
       ], M.shell, { capStart: true, capEnd: true }).name = 'jacketBody';
     }
     /* Sleeves: a short yoke on the chest, then upper arm and forearm. */
