@@ -1727,9 +1727,36 @@ export class PostProcessing {
       }
     }
     fx.uSubjectUv.value.set(sx, sy);
+
+    // The protected radius has to SCALE WITH THE SUBJECT, not be a constant.
+    //
+    // The mask is centred correctly -- measured, uSubjectUv lands exactly on
+    // the rider's projected position -- but the radii were fixed at 0.10/0.34
+    // aspect-corrected UV, which is sized for a mid-distance chase. In a close
+    // shot the rider's own body reaches sr 0.28-0.35, so a leg pixel scored
+    // smoothstep(0.10, 0.34, 0.28) = 0.87 and kept 90% of full blur. The
+    // reprojection then gathers background along that velocity and averages it
+    // into the body, and the rider renders visibly TRANSLUCENT -- the slope's
+    // shadow bands read straight through the torso and legs. Rendering the
+    // same frame with motion blur off gives a solid rider, which is what
+    // isolated it: the garments are opaque, the blur was making them look
+    // otherwise. Widening the constants does not fix it either, because the
+    // subject's screen size changes by an order of magnitude between presets.
+    //
+    // Measuring the rider's projected half-height each frame and sizing the
+    // mask from it protects the whole figure at any distance, and collapses to
+    // the old behaviour when the rider is small in frame.
+    let subjR = TUNE.motionBlur.subjectInner;
+    if (st && st.position) {
+      _v3a.copy(st.position);
+      _v3b.copy(_v3a); _v3b.y += 1.8;          // head height above the contact point
+      _v3a.project(cam); _v3b.project(cam);
+      const dy = Math.abs(_v3b.y - _v3a.y) * 0.5;   // NDC half-height -> UV
+      if (Number.isFinite(dy)) subjR = Math.max(TUNE.motionBlur.subjectInner, dy * 0.5);
+    }
     fx.uSubjectMask.value.set(
-      TUNE.motionBlur.subjectInner,
-      TUNE.motionBlur.subjectOuter,
+      subjR,
+      Math.max(TUNE.motionBlur.subjectOuter, subjR * 2.1),
       TUNE.motionBlur.subjectFloor,
     );
   }
