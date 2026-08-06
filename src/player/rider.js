@@ -1597,6 +1597,27 @@ export class Rider {
       Math.PI * 0.5 - 0.80, 1.60,
       Math.PI * 0.5 - 0.16, 0.50,
     );
+    // ROUND THE OUTLINE. A phi/theta band is a rectangle in parameter space,
+    // so its ends are square corners -- correct as a wrap, wrong as a lens,
+    // because a goggle is a rounded rectangle. Tapering each vertex's height
+    // toward the band's ends turns the outline into one without touching the
+    // wrap: the surface stays the skull's offset, only the CUT changes.
+    //
+    // u is the azimuth from +Z, so |u| / 0.80 runs 0 at the nose to 1 at the
+    // ends. The taper holds full height across the middle and eases to 45% at
+    // the tips -- easing to zero would make points rather than rounded ends.
+    {
+      const pos = lensGeo.attributes.position;
+      const yMid = Math.cos(Math.PI * 0.5 + 0.09) * DIM.headRadius;
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+        const t = Math.min(1, Math.abs(Math.atan2(x, z)) / 0.80);
+        const f = 0.45 + 0.55 * Math.sqrt(Math.max(0, 1 - t * t * t));
+        pos.setY(i, yMid + (y - yMid) * f);
+      }
+      pos.needsUpdate = true;
+      lensGeo.computeVertexNormals();
+    }
     const lens = part(lensGeo, M.goggle, head, 0, DIM.headRadius * 0.85, 0.006);
     lens.scale.set(0.96 * 1.06, 1.02 * 1.06, 1.10 * 1.06);
     lens.castShadow = false;
