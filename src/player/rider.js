@@ -945,16 +945,29 @@ export class Rider {
         // -- the arm bands, the stance bands -- is not comparable at all. It
         // is good for gross mass and for the torso core, and that is all it is
         // used for here.
-        { bone: 'hips',          pos: hip.clone().setY(hip.y + 0.085), r: 0.168, sx: 0.96 },
-        { bone: `thigh${side}`,  pos: hip,                             r: 0.164, sx: 0.96 },
-        { bone: `thigh${side}`,  pos: jointPos(`shin${side}`, 0.05),   r: 0.145 },
-        { bone: `shin${side}`,   pos: jointPos(`shin${side}`, -0.04),  r: 0.126 },
+        // BAGGY, not fitted. Rendered beside the reference on one card, the
+        // single pose-independent difference left between the two figures is
+        // the trouser: the reference's are a loose insulated pant that holds
+        // its width from the hip through the knee and only gathers at the
+        // cuff, and ours were a close tube that pinched at the knee. Garment
+        // volume is a property of the garment, so unlike the width bands --
+        // which depend entirely on where the limbs happen to be, and are not
+        // comparable between two figures in different poses -- this one is
+        // readable straight off the card.
+        //
+        // A reshape with a modest mass increase, not another volume round:
+        // total silhouette area goes 0.373 against the reference's 0.379, so
+        // there is room for it and not much more.
+        { bone: 'hips',          pos: hip.clone().setY(hip.y + 0.085), r: 0.176, sx: 0.96 },
+        { bone: `thigh${side}`,  pos: hip,                             r: 0.176, sx: 0.96 },
+        { bone: `thigh${side}`,  pos: jointPos(`shin${side}`, 0.05),   r: 0.166 },
+        { bone: `shin${side}`,   pos: jointPos(`shin${side}`, -0.04),  r: 0.148 },
         // Widens again at the cuff: the hem sits ON the boot, it does not
         // shrink to the ankle.
         // A hem that sits ON the boot, not a lampshade over it. At 0.148 the
         // cuff was a 29.6 cm bell dropped over a boot 10.8 cm wide, and it
         // rendered as a hard scalloped cone ending in mid-air above the ankle.
-        { bone: `shin${side}`,   pos: jointPos(`boot${side}`, 0.062),  r: 0.117 },
+        { bone: `shin${side}`,   pos: jointPos(`boot${side}`, 0.062),  r: 0.126 },
         // ...and then CLOSES onto it. Same defect the sleeve had: the profile
         // ended on its widest ring, so the hem finished as an open 23 cm disc
         // floating above a 10.8 cm boot — a lampshade, with a hard scalloped
