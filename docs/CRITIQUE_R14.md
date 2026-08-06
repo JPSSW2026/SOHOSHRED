@@ -370,5 +370,19 @@ noise.
   calling `page.screenshot()` does NOT work: it returned an identical 0.1%
   diff for every object tried, including ones that certainly matter.
 - Mannequin arms: no shoulder Y, no wrist, `sway` zeroed at riding speed (4).
-- Nothing breaks the skyline; rock classification is zeroed past 2.4 km so
-  props have no candidates on the crests (3).
+- Nothing breaks the skyline (severity 3). The WANT is legitimate (§9.1), but
+  the critic's mechanism is **wrong and must not be acted on as written**.
+  It claimed rock classification is "zeroed past 2.4 km". The gate is
+  `rb *= smoothstep(2400, 4800, r2)`, which is 0 BELOW 2400 and 1 above 4800
+  — rock is zeroed *inside* 2.4 km, the opposite reading, and the comment
+  beside it says so in as many words.
+  Both distance gates are deliberate and were driven by this project's own
+  playtest history:
+  - inside 2.4 km, because the round-7 white-override probe proved this
+    painter was striping the inner-valley steeps into the "tan pillars";
+  - past 10 km, because schist-tinted crests half-dissolved in haze read as
+    smoke plumes behind the ridge — the user called it a bushfire.
+  Re-enabling rock to give props crest candidates would reintroduce both
+  artefacts. If the skyline wants breaking, do it by scattering actual
+  outcrop props on high-slope crest positions INDEPENDENT of surface class,
+  not by widening the rock painter.
