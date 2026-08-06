@@ -954,7 +954,14 @@ export class Rider {
         // A hem that sits ON the boot, not a lampshade over it. At 0.148 the
         // cuff was a 29.6 cm bell dropped over a boot 10.8 cm wide, and it
         // rendered as a hard scalloped cone ending in mid-air above the ankle.
-        { bone: `shin${side}`,   pos: jointPos(`boot${side}`, 0.05),   r: 0.116 },
+        { bone: `shin${side}`,   pos: jointPos(`boot${side}`, 0.062),  r: 0.117 },
+        // ...and then CLOSES onto it. Same defect the sleeve had: the profile
+        // ended on its widest ring, so the hem finished as an open 23 cm disc
+        // floating above a 10.8 cm boot — a lampshade, with a hard scalloped
+        // rim. A pant hem is a gaiter with a hem cord: it stands off the shin
+        // and grips down over the boot top, so the last ring is the narrowest.
+        { bone: `shin${side}`,   pos: jointPos(`boot${side}`, 0.024),  r: 0.104 },
+        { bone: `boot${side}`,   pos: jointPos(`boot${side}`, -0.014), r: 0.082 },
         // Capped BOTH ends. Open tubes are why the rider was see-through:
         // with front-side culling you look straight down the inside of the
         // garment, and in close-spray the snow showed through the pelvis.
@@ -1016,8 +1023,19 @@ export class Rider {
         { bone: `upperArm${side}`, pos: jointPos(`foreArm${side}`, 0.075), r: 0.096 },
         { bone: `upperArm${side}`, pos: jointPos(`foreArm${side}`, 0.020), r: 0.108 },
         { bone: `foreArm${side}`,  pos: jointPos(`foreArm${side}`, -0.05), r: 0.092 },
-        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.055),    r: 0.088 },
-        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.012),    r: 0.100 },
+        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.062),    r: 0.086 },
+        // Cuff band, then CLOSE onto the glove. The profile used to end on
+        // its widest ring, so the sleeve finished as an open 20 cm disc with
+        // a 10 cm mitt poking out of it — a wizard sleeve, and the loudest
+        // wrong note anywhere on the figure at a close crop. A shell cuff is
+        // an elasticated band: it stands proud of the forearm and then grips
+        // down onto the glove, so the last ring has to be the NARROWEST.
+        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.030),    r: 0.101 },
+        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.010),    r: 0.090 },
+        // Close onto the 0.048 wrist bridge, not merely narrower than the
+        // ring before it: at 0.070 the cuff still ended clear of the wrist and
+        // you looked down an open annulus into the inside of the sleeve.
+        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, -0.016),   r: 0.044 },
         // SHELL, not shellDeep. Rendered beside the reference under one light
         // rig, that figure reads as a magenta rider throughout -- its sleeves
         // are the same bright shell as its body, measurably 1.2-2.1x the body's
@@ -1213,8 +1231,14 @@ export class Rider {
     // dark column.
     const boot = new THREE.MeshStandardMaterial({ color: RIDER_STYLE.boot, roughness: 0.68 });
     const sole = new THREE.MeshStandardMaterial({ color: 0x3c4048, roughness: 0.86 });
+    // Composite, not metal. At roughness 0.42 / metalness 0.28 under a bright
+    // snow-and-sky environment the hardware picked up so much specular that
+    // it rendered PALER than the boot it is bolted to, and the baseplate and
+    // highback read as a light-grey exoskeleton clamped round a dark boot --
+    // the loudest thing below the knee, on a part that should disappear. A
+    // real baseplate and highback are matte glass-filled nylon.
     const binding = new THREE.MeshStandardMaterial({
-      color: 0x2f3238, roughness: 0.42, metalness: 0.28, envMapIntensity: 1.1,
+      color: 0x2b2e34, roughness: 0.62, metalness: 0.06, envMapIntensity: 0.7,
     });
     const buckle = new THREE.MeshStandardMaterial({
       color: 0xa8b0ba, roughness: 0.26, metalness: 0.95, envMapIntensity: 1.3,
@@ -1702,7 +1726,7 @@ export class Rider {
       // the arm extended (round-4 critic catch).
       joint(0.048, M.glove, hand, 0, -0.006, 0);
       const mitt = part(new THREE.SphereGeometry(0.060, 12, 10), M.glove, hand, 0, -0.048, 0.004);
-      mitt.scale.set(0.82, 1.30, 1.05);
+      mitt.scale.set(0.88, 1.30, 1.05);
       // A thumb, so the glove is a glove rather than a ball on a stick. It
       // sits on the chest side (−X) of the mitt — the side of a relaxed
       // hanging hand a viewer actually sees.
