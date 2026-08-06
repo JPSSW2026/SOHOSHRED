@@ -386,3 +386,43 @@ noise.
   artefacts. If the skyline wants breaking, do it by scattering actual
   outcrop props on high-slope crest positions INDEPENDENT of surface class,
   not by widening the rock painter.
+
+## r24 — backdrop "horizontal lines": diagnosed, NOT fixed
+
+The thin dark dash the user photographed in the sky, left of the massif in
+`valley-vista`, is **not** the backdrop GLB and not a leftover ring copy.
+
+Raycast through the pixel (`tools/pick.mjs valley-vista 40,166`):
+
+```
+terrain-backdrop  dist 25527  y 2502
+terrain-backdrop  dist 26554  y 2532
+terrain-backdrop  dist 26604  y 2533
+```
+
+It is the procedural far ring at 26.5 km, three surfaces deep along the ray.
+Measured against the sky beside it: 12–19 levels down in G and B.
+
+Two hypotheses tested and **rejected**:
+
+1. *"An unresolved facet — radial post spacing is 450 m out there, so a far
+   ridge is one or two quads with a smoothed normal, and under a 10.6° sun one
+   of them shades dark."* Blended the vertex height toward the mean of the four
+   gradient taps (a free ±390 m low-pass) at 0.85 weight, which is full
+   strength at that radius. The pixel moved **2 levels** — inside the ±4-level
+   capture noise. A kernel that wide would erase a 450 m facet, so the feature
+   is far larger than one: it is a real ridge whose top few pixels clear the
+   horizon. Reverted; do not retry the low-pass.
+
+2. *"Aerial perspective isn't reaching 26 km."* It is. `sohoAerialPerspective`
+   uses exact exponential column integrals with no distance cap, and at 2500 m
+   through thin high air, 26 km of genuine residual contrast is correct. Real
+   ranges at that distance on a clear day are visible and darker than sky.
+
+So the remaining complaint is presentational, not physical: a legitimate
+distant ridge that clears the horizon by only a few pixels reads as a hard
+isolated dash rather than as a mountain. Whatever fixes it has to act on the
+SILHOUETTE — softening the top few pixels of the far ring, or lifting the ring
+so ridges present a face rather than an edge — not on shading or on relief
+amplitude, both of which have now been measured out.
+
