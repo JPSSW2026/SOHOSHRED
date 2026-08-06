@@ -1557,47 +1557,48 @@ export class Rider {
      * shell the way a real goggle does, with a rubber frame behind it and the
      * strap wrapping only the *back* of the helmet.
      */
-    const lensGeo = new THREE.SphereGeometry(DIM.headRadius, 24, 14, 0, Math.PI * 2, 0, 0.92);
-    lensGeo.rotateX(Math.PI * 0.5);
-    const lens = part(lensGeo, M.goggle, head, 0, DIM.headRadius * 0.80, 0.004);
-    // Flatter: a goggle is a band across the face. At 0.82 in Y this domed
-    // over most of the head and read as a full-face visor.
-    // WIDER and SHALLOWER. At 1.06 x 0.62 x 1.20 the lens stood 20% proud of
-    // a skull that is itself only 1.16 long, so it projected off the face as a
-    // pale muzzle -- the head's most conspicuous feature was a snout. A goggle
-    // is wide across and barely proud, so X leads and Z gives way.
-    // Z must EXCEED the skull's, or the lens is inside the helmet: at 1.02
-    // against a skull scaled 1.16 long the goggle disappeared entirely and the
-    // front view was a bare purple dome.
-    // 0.55, not 0.30. Flattening the cap right down killed the snout but left
-    // a smooth plate stuck on the front of the face with no wrap at all; a
-    // goggle is a shallow DOME. 0.55 keeps enough curvature to catch a
-    // highlight across it, and narrowing X stops it swallowing the whole face.
-    // Narrower than the skull's 0.96 on X, so the lens can only show where it
-    // is proud in Z -- at the centre. Wider than the skull and it emerges at
-    // the SIDES instead, which is the two-lobe googly-eye failure.
-    lens.scale.set(0.92, 0.50, 0.55);
-    // Pushed FORWARD instead of scaled forward.
+    // A goggle is a SHIELD THAT WRAPS THE FACE, not a piece of a sphere
+    // centred on the head. Six rounds of reshaping a spherical cap each traded
+    // one failure for another -- snout, then flat plate, then two lobes either
+    // side of the nose -- because a cap centred on the skull can only be proud
+    // at its pole and buried at its rim, and the rim is exactly where a goggle
+    // has to tuck into the cheek. The geometry was wrong, not the numbers.
     //
-    // A cap with thetaLength 0.92 has its pole 0.40 r ahead of its rim, so
-    // scaling Z to make the lens proud also inflated that into a ~5 cm dome
-    // standing off the face -- which from the side is a snout, and is most of
-    // what read as "the head is weird". Flattening Z to 0.30 makes it a shield
-    // rather than a dome; translating the whole cap to 0.86 r then puts its
-    // pole just proud of a skull that reaches 1.10, so the lens EMERGES from
-    // the face and the skull's own opening provides the frame.
-    // Pole lands at 0.59 + 0.55 = 1.14 r, just proud of a skull reaching 1.10;
-    // the cap's rim sits at 0.92 r, inside the face, so the lens emerges
-    // rather than being pasted on.
-    // 0.70, not 0.59. At 0.59 the cap's pole sat only 0.04 r proud of the
-    // skull, so the lens was buried in the MIDDLE of the face and emerged only
-    // at the sides where the skull curves away -- which rendered as two pale
-    // lobes either side of the nose, i.e. googly eyes. The centre has to clear
-    // the face by enough to read as one band: pole at 1.25 r against a skull
-    // reaching 1.10 is ~1.7 cm proud, which is what a goggle stands off the
-    // cheekbones. X also comes inside the skull's 0.96 so the lobes cannot
-    // poke out sideways past the head.
-    lens.position.z = DIM.headRadius * 0.70;
+    // A cylindrical shell segment has the shape a lens actually has: a large
+    // horizontal radius centred BEHIND the face, so the surface stands proud
+    // across the middle and curves back into the head at both sides. From the
+    // front it is a band; from three-quarter it wraps away round the cheek
+    // instead of bulging off it.
+    //
+    //   R      = 1.25 headRadius, well outside the skull's 0.96-1.10
+    //   centre = z -0.10 r, so the front face lands at 1.15 r -- proud
+    //   edges  = at +/-0.8 rad the surface is x 0.90 r, z 0.77 r, INSIDE the
+    //            skull's 0.96 half-width, so the lens ends in the face
+    // A goggle is an OFFSET OF THE SKULL, cut to a band.
+    //
+    // Seven rounds of reshaping a spherical cap, then a cylinder, each traded
+    // one failure for another -- snout, flat plate, two lobes either side of
+    // the nose, skull poking through the middle. Every one of them has the
+    // same root: the lens surface and the skull surface were different shapes,
+    // so wherever the lens was proud somewhere else it was buried, and the
+    // boundary between the two is what kept rendering as a defect.
+    //
+    // The skull is an ellipsoid scaled (0.96, 1.02, 1.10). A lens built from
+    // the SAME sphere at the SAME ratios, 6% larger and concentric, is an
+    // offset surface -- parallel to the face everywhere, uniformly proud, and
+    // incapable of intersecting it. Cutting that to a band gives the goggle:
+    // phi limits how far it wraps around the face, theta how tall it is.
+    //
+    // phi = PI/2 is +Z, the direction the head looks, so a band centred on the
+    // face spans PI/2 +/- 0.80. theta is polar from +Y, so the band sits just
+    // below the skull's equator, which is where eyes are.
+    const lensGeo = new THREE.SphereGeometry(
+      DIM.headRadius, 28, 10,
+      Math.PI * 0.5 - 0.80, 1.60,
+      Math.PI * 0.5 - 0.16, 0.50,
+    );
+    const lens = part(lensGeo, M.goggle, head, 0, DIM.headRadius * 0.85, 0.006);
+    lens.scale.set(0.96 * 1.06, 1.02 * 1.06, 1.10 * 1.06);
     lens.castShadow = false;
     // The gasket torus that used to sit here traced the lens cap's RIM. With
     // the lens flattened and pushed into the face that rim now sits behind the
