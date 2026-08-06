@@ -723,3 +723,42 @@ Two lessons, both about the same reflex:
 A plum jacket in full sun reads far below snow at 0.86. Comparing them is a
 category error; the part of checklist 3 that does apply — is the figure black —
 is answered by the two rows above.
+
+---
+
+## R17 — snow detail falloff: the premise was wrong about the geometry
+
+`chase-carve` is the view a player spends the run looking at, and it reads as
+a field of wind-scour streaks at one density from the board to the horizon —
+which would be checklist 16, "detail that does not fade with distance".
+
+`tools/detail-falloff.mjs` bands the frame, measures local RMS contrast in
+each, and ray-marches the heightfield to put a distance on it:
+
+| band | ground | local RMS |
+|---|---|---|
+| 8 (bottom) | 5 m | 8.76 |
+| 7 | 6 m | 10.43 |
+| 6 | 7 m | 14.62 |
+| 5 | 13 m | 14.36 |
+| 4 | 22 m | 14.26 |
+| 3 | beyond the heightfield | 10.32 |
+| 0–2 | sky | ~1.8 |
+
+**The visible heightfield in that shot spans 5 m to 22 m.** What looked like
+the horizon is twenty metres away. Detail is not supposed to fade appreciably
+over a 4× distance change that close, so a flat profile across bands 4–6 is
+correct, not a tell. The dip to 8.76 in the nearest band is motion blur, which
+§7 asks for. No change made.
+
+The first version of this probe reported bands in PIXELS while asserting in
+its own docstring that screen height is a proxy for distance. That makes any
+claim about detail-per-metre unfalsifiable — the whole question is the rate of
+decay with distance, and pixels are not distance. The tool only became an
+argument once it marched the terrain.
+
+**Known limit:** bands past ~22 m report "sky" because `terrain.sample`
+returns nothing beyond the heightfield's bounds; that ground is the backdrop
+ranges, a separate asset. So this cannot yet speak to checklist 16 over
+22 m – 800 m, which is where the tell actually bites. Anyone picking this up
+should extend the march to the backdrop before drawing conclusions about it.
