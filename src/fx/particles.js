@@ -139,6 +139,7 @@ const FRAG = /* glsl */`
   uniform vec3  uSunColor;
   uniform vec3  uSkyColor;
   uniform vec3  uCameraPos;
+  uniform float uSunEnergy;   // scene sun intensity x a scattering coefficient
 
   varying float vAlpha;
   varying float vFade;
@@ -191,7 +192,7 @@ const FRAG = /* glsl */`
     // Airborne snow is not pure white — it is sky-tinted where the sun does
     // not reach it, which is the same physics that makes snow shadows blue.
     float sunAmount = clamp(0.35 + phase * 2.4, 0.0, 1.0);
-    vec3 col = mix(uSkyColor * 1.15, lit, sunAmount);
+    vec3 col = mix(uSkyColor * 1.15, lit, sunAmount) * uSunEnergy;
 
     float a = vAlpha * vFade * shape;
     if (a < 0.004) discard;
@@ -307,6 +308,17 @@ export class ParticleFX {
       uSunColor: { value: new THREE.Color(1, 0.97, 0.92) },
       uSkyColor: { value: new THREE.Color(0.45, 0.60, 0.85) },
       uCameraPos: { value: new THREE.Vector3() },
+      // SCALE TO THE SCENE'S LIGHT LEVEL.
+      //
+      // uSunColor is a NORMALISED colour -- the sun's actual intensity is 30
+      // and lives on the light. This shader writes linear radiance straight
+      // into the HDR target the post chain tonemaps, so at ~1.0 the spray was
+      // darker than the sunlit snow it is thrown off. That is the real reason
+      // the whole effect pulled the frame DOWN (mean luma 187.4 with spray
+      // against 199.8 without): not a brightness constant that needed
+      // nudging, a radiance level five times too low. Same bug, and same
+      // fix, as the snow-gun plume.
+      uSunEnergy: { value: 4.8 },
     };
     this.uniforms = uniforms;
 
@@ -505,6 +517,7 @@ export class ParticleFX {
       if (sky.sunDirection) u.uSunDir.value.copy(sky.sunDirection).normalize();
       if (sky.sunColor) u.uSunColor.value.copy(sky.sunColor);
       if (sky.ambientColor) u.uSkyColor.value.copy(sky.ambientColor);
+      if (sky.sun) u.uSunEnergy.value = sky.sun.intensity * 0.16;
     }
 
     const s = ctx.physics?.state;
