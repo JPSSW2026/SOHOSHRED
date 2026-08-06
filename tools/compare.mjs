@@ -163,7 +163,13 @@ async function main() {
       B: oursLeft ? `SHREDDERS (${p.ref})` : `OURS (${p.ours})`,
       oursPanel: oursLeft ? 'A' : 'B',
     });
-    console.log(`[compare] ${name}  ours=${oursLeft ? 'A' : 'B'}`);
+    // Do NOT print which panel is ours. The whole point of this rig is that
+    // the judge is handed pair-XX.png and does not know, and stdout is read by
+    // whoever runs it -- including the agent that then goes on to grade the
+    // pairs. Printing the key here silently defeated every "blind" round this
+    // tool has ever been used for. It is written to ANSWER_KEY.json, which is
+    // where it belongs.
+    console.log(`[compare] ${name}`);
   }
 
   await writeFile(path.join(outDir, 'ANSWER_KEY.json'), JSON.stringify(key, null, 2));
