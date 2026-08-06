@@ -83,9 +83,13 @@ const info = await page.evaluate(async () => {
     if (!o.isMesh || !o.geometry?.attributes?.position || (o.name || '') === 'deck') return;
     if (!inBinding(o)) return;
     const e = extents(o);
+    const c = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld);
+    const sc = new THREE.Vector3().setFromMatrixScale(o.matrixWorld);
     overhang.push({ part: o.name || o.geometry.type, ext: +e.maxAbsX.toFixed(4),
                     over: +(e.maxAbsX - deckHalfX).toFixed(4),
-                    belowBase: +e.minY.toFixed(4) });
+                    belowBase: +e.minY.toFixed(4),
+                    cx: +c.x.toFixed(4), cz: +c.z.toFixed(4),
+                    scale: [+sc.x.toFixed(3), +sc.y.toFixed(3), +sc.z.toFixed(3)] });
   });
   overhang.sort((a, b) => b.over - a.over);
 

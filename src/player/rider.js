@@ -947,11 +947,14 @@ export class Rider {
         // used for here.
         { bone: 'hips',          pos: hip.clone().setY(hip.y + 0.085), r: 0.168, sx: 0.96 },
         { bone: `thigh${side}`,  pos: hip,                             r: 0.164, sx: 0.96 },
-        { bone: `thigh${side}`,  pos: jointPos(`shin${side}`, 0.05),   r: 0.150 },
-        { bone: `shin${side}`,   pos: jointPos(`shin${side}`, -0.04),  r: 0.140 },
+        { bone: `thigh${side}`,  pos: jointPos(`shin${side}`, 0.05),   r: 0.145 },
+        { bone: `shin${side}`,   pos: jointPos(`shin${side}`, -0.04),  r: 0.126 },
         // Widens again at the cuff: the hem sits ON the boot, it does not
         // shrink to the ankle.
-        { bone: `shin${side}`,   pos: jointPos(`boot${side}`, 0.05),   r: 0.148 },
+        // A hem that sits ON the boot, not a lampshade over it. At 0.148 the
+        // cuff was a 29.6 cm bell dropped over a boot 10.8 cm wide, and it
+        // rendered as a hard scalloped cone ending in mid-air above the ankle.
+        { bone: `shin${side}`,   pos: jointPos(`boot${side}`, 0.05),   r: 0.116 },
         // Capped BOTH ends. Open tubes are why the rider was see-through:
         // with front-side culling you look straight down the inside of the
         // garment, and in close-spray the snow showed through the pelvis.
@@ -1272,10 +1275,11 @@ export class Rider {
       plate.rotation.y = -Math.PI * 0.5;
       mount.add(plate);
 
-      part(new THREE.BoxGeometry(0.108, 0.014, 0.255), M.binding, plate, 0, 0.007, 0);
+      part(new THREE.BoxGeometry(0.108, 0.014, 0.255), M.binding, plate, 0, 0.007, 0).name = `basePlate${tag}`;
       // Heelcup + highback — behind the boot, which after the plate yaw is
       // the heel edge of the board.
       const hb = part(new THREE.BoxGeometry(0.096, 0.155, 0.014), M.binding, plate, 0, 0.095, -0.104);
+      hb.name = `highback${tag}`;
       hb.rotation.x = -0.24;
       // Taper: a highback narrows toward the top.
       hb.scale.set(1, 1, 1); hb.geometry.translate(0, 0, 0);
@@ -1297,13 +1301,43 @@ export class Rider {
       // bound, not a measurement. tools/board-preview.mjs walks vertices now.
       // The reported "bindings through the base" was never this at all; it was
       // the leg IK, fixed in _solveLeg.
-      const ankle = trim(new THREE.TorusGeometry(0.050, 0.009, 6, 14, 2.5), M.rubber, plate, 0, 0.046, -0.008);
-      ankle.rotation.set(Math.PI * 0.5, 0, Math.PI * 0.5 - 1.25);
-      const toe = trim(new THREE.TorusGeometry(0.046, 0.008, 6, 14, 2.4), M.rubber, plate, 0, 0.032, 0.088);
-      toe.rotation.set(Math.PI * 0.5, 0, Math.PI * 0.5 - 1.20);
-      trim(new THREE.BoxGeometry(0.022, 0.016, 0.026), M.buckle, plate, 0.060, 0.052, -0.008);
-      trim(new THREE.BoxGeometry(0.019, 0.013, 0.024), M.buckle, plate, 0.054, 0.038, 0.088);
-      trim(new THREE.BoxGeometry(0.008, 0.040, 0.016), M.rubber, plate, -0.060, 0.034, -0.008);
+      // Sized to ARCH OVER the boot. The boot is 0.108 across, so a strap of
+      // ring radius 0.050 cannot get over it -- it sat buried inside the boot
+      // and the portrait showed white boot blocks with no visible hardware on
+      // them at all. That shrink was chasing the bad AABB overhang figure; the
+      // vertex probe says the board has the room.
+      //
+      // The toe strap does measure ~1.9 cm outside the board's widest half-
+      // width (0.1584 against 0.1396), and that is CORRECT, not a defect: it
+      // sits over the toe edge at board x -0.0875 by construction, and real
+      // boots overhang the toe edge. Naming the meshes is what settled this --
+      // the probe's unnamed "TorusGeometry" rows were the toe straps all
+      // along, and two rounds were spent shrinking the ankle strap, which had
+      // never overhung anything.
+      //
+      // HEIGHT matters as much as radius. The boot runs from y 0.025 to 0.155
+      // in this space, so straps at 0.046 and 0.032 were wrapped around the
+      // SOLE, a couple of centimetres off the deck -- which is why the portrait
+      // showed white boot blocks with no hardware on them however the radii
+      // were tuned. An ankle strap crosses the upper boot and a toe strap the
+      // instep, so they go at 0.100 and 0.058.
+      const ankle = trim(new THREE.TorusGeometry(0.070, 0.010, 6, 16, 2.5), M.rubber, plate, 0, 0.100, -0.014);
+      // NO X rotation. The boot's long axis is plate-local +Z, so a strap
+      // crossing the top of it lies in the plate's XY plane -- which is where
+      // a torus already is. The rotation.x = PI/2 that used to be here laid the
+      // ring FLAT, so both straps were horizontal loops buried inside the boot
+      // rather than arches over it. That is why no amount of tuning the radii
+      // or the heights ever made hardware appear on the boot: the rotation.z
+      // term below was always right, centring a 2.5 rad arc on +Y, and the X
+      // term was cancelling it.
+      ankle.rotation.set(0, 0, Math.PI * 0.5 - 1.25);
+      ankle.name = `ankleStrap${tag}`;
+      const toe = trim(new THREE.TorusGeometry(0.062, 0.009, 6, 16, 2.4), M.rubber, plate, 0, 0.058, 0.088);
+      toe.rotation.set(0, 0, Math.PI * 0.5 - 1.20);
+      toe.name = `toeStrap${tag}`;
+      trim(new THREE.BoxGeometry(0.024, 0.018, 0.028), M.buckle, plate, 0.062, 0.104, -0.014);
+      trim(new THREE.BoxGeometry(0.021, 0.015, 0.026), M.buckle, plate, 0.056, 0.062, 0.088);
+      trim(new THREE.BoxGeometry(0.008, 0.044, 0.016), M.rubber, plate, -0.062, 0.088, -0.014);
     }
 
     /* --- rider ------------------------------------------------------ */
@@ -1596,7 +1630,7 @@ export class Rider {
       const kneeSeam = trim(new THREE.TorusGeometry(0.082, 0.0055, 6, 18), M.pants, shin, 0, -0.060, 0);
       kneeSeam.rotation.x = Math.PI * 0.5;
       // Gaiter over the boot cuff.
-      const gaiter = part(new THREE.CylinderGeometry(0.086, 0.076, 0.11, 12), M.pants, shin, 0, -DIM.shinLength + 0.055, 0);
+      const gaiter = part(new THREE.CylinderGeometry(0.078, 0.070, 0.11, 12), M.pants, shin, 0, -DIM.shinLength + 0.055, 0);
 
       const bt = bone(`boot${side}`, shin, 0, -DIM.shinLength, 0);
       // The boot bone is slaved to the binding mount's orientation by the IK,
