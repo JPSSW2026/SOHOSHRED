@@ -1320,8 +1320,15 @@ export class Rider {
       // SOLE, a couple of centimetres off the deck -- which is why the portrait
       // showed white boot blocks with no hardware on them however the radii
       // were tuned. An ankle strap crosses the upper boot and a toe strap the
-      // instep, so they go at 0.100 and 0.058.
-      const ankle = trim(new THREE.TorusGeometry(0.070, 0.010, 6, 16, 2.5), M.rubber, plate, 0, 0.100, -0.014);
+      // instep, so they go at 0.086 and 0.058.
+      //
+      // 0.086, not 0.100: the boot's CUFF cylinder spans z +/-0.0759 over
+      // y 0.123-0.233, which is the same half-width as the strap ring and
+      // overlaps its whole height. A strap at 0.100 was therefore sitting
+      // exactly inside the cuff and invisible even though it cleared the boot
+      // BODY comfortably. Dropped onto the body, where the boot is only
+      // +/-0.054 across, the ring stands 2.2 cm proud the way a strap does.
+      const ankle = trim(new THREE.TorusGeometry(0.070, 0.010, 6, 16, 2.5), M.rubber, plate, 0, 0.086, -0.014);
       // NO X rotation. The boot's long axis is plate-local +Z, so a strap
       // crossing the top of it lies in the plate's XY plane -- which is where
       // a torus already is. The rotation.x = PI/2 that used to be here laid the
@@ -1335,9 +1342,9 @@ export class Rider {
       const toe = trim(new THREE.TorusGeometry(0.062, 0.009, 6, 16, 2.4), M.rubber, plate, 0, 0.058, 0.088);
       toe.rotation.set(0, 0, Math.PI * 0.5 - 1.20);
       toe.name = `toeStrap${tag}`;
-      trim(new THREE.BoxGeometry(0.024, 0.018, 0.028), M.buckle, plate, 0.062, 0.104, -0.014);
+      trim(new THREE.BoxGeometry(0.024, 0.018, 0.028), M.buckle, plate, 0.066, 0.090, -0.014);
       trim(new THREE.BoxGeometry(0.021, 0.015, 0.026), M.buckle, plate, 0.056, 0.062, 0.088);
-      trim(new THREE.BoxGeometry(0.008, 0.044, 0.016), M.rubber, plate, -0.062, 0.088, -0.014);
+      trim(new THREE.BoxGeometry(0.008, 0.044, 0.016), M.rubber, plate, -0.066, 0.076, -0.014);
     }
 
     /* --- rider ------------------------------------------------------ */
