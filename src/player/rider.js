@@ -927,17 +927,31 @@ export class Rider {
       tube([
         // Snowboard pants are a wide tube that barely tapers and breaks over
         // the boot. These were a leg cast: 0.128 at the hip down to 0.085 at
-        // the ankle, a 34% taper, which is a cyclist's tights. Measured
-        // against the reference GLB the whole figure carried 0.225 silhouette
-        // area over height squared against its 0.379 -- 60% of the mass --
-        // and the legs are the largest single share of that deficit.
+        // the ankle, a 34% taper, which is a cyclist's tights.
+        //
+        // The numbers here are NOT chasing the reference's silhouette area,
+        // and an earlier version of this comment claiming we carried 60% of
+        // its mass was wrong. tools/rider-compare.mjs was rendering the two
+        // figures in different orientations: identity put our board's long
+        // axis straight down the camera's line of sight while the reference
+        // carries its board across, so our board was seen end-on AND the
+        // stance spread -- which runs along the board -- was foreshortened
+        // with it. Orientation-matched, ours measures 0.418 silhouette area
+        // against the reference's 0.379: not short of mass, slightly over it.
+        // The lower legs in particular measured 0.49-0.52 against 0.29-0.30.
+        //
+        // What the comparison can and cannot settle: the two figures are in
+        // different POSES, so any band whose width depends on limb placement
+        // -- the arm bands, the stance bands -- is not comparable at all. It
+        // is good for gross mass and for the torso core, and that is all it is
+        // used for here.
         { bone: 'hips',          pos: hip.clone().setY(hip.y + 0.085), r: 0.168, sx: 0.96 },
         { bone: `thigh${side}`,  pos: hip,                             r: 0.164, sx: 0.96 },
         { bone: `thigh${side}`,  pos: jointPos(`shin${side}`, 0.05),   r: 0.150 },
-        { bone: `shin${side}`,   pos: jointPos(`shin${side}`, -0.04),  r: 0.146 },
+        { bone: `shin${side}`,   pos: jointPos(`shin${side}`, -0.04),  r: 0.140 },
         // Widens again at the cuff: the hem sits ON the boot, it does not
         // shrink to the ankle.
-        { bone: `shin${side}`,   pos: jointPos(`boot${side}`, 0.05),   r: 0.152 },
+        { bone: `shin${side}`,   pos: jointPos(`boot${side}`, 0.05),   r: 0.148 },
         // Capped BOTH ends. Open tubes are why the rider was see-through:
         // with front-side culling you look straight down the inside of the
         // garment, and in close-spray the snow showed through the pelvis.
@@ -947,8 +961,13 @@ export class Rider {
     {
       const hips = jointPos('hips');
       tube([
-        { bone: 'hips', pos: hips.clone().setY(hips.y - 0.10), r: 0.150, sx: 0.86 },
-        { bone: 'hips', pos: hips.clone().setY(hips.y + 0.12), r: 0.158, sx: 0.86 },
+        // The seat is one of the few bands where the orientation-matched
+        // comparison still shows us narrow (0.446 against 0.525), and a 0.86
+        // squash was pressing the one part of the figure that should be full
+        // into a plate. Widened, but nothing like the round that was chasing
+        // the mis-oriented profile.
+        { bone: 'hips', pos: hips.clone().setY(hips.y - 0.10), r: 0.166, sx: 0.92 },
+        { bone: 'hips', pos: hips.clone().setY(hips.y + 0.12), r: 0.176, sx: 0.92 },
       ], M.pants, { capStart: true, capEnd: true });
     }
     /* Jacket body: hem below the hips to the collar, one surface. */
@@ -961,11 +980,21 @@ export class Rider {
         // front-to-back squash relaxed (sx was pressing the torso into a
         // flat plate, which is why the figure read thin from every angle
         // except dead front).
-        { bone: 'hips',  pos: hips.clone().setY(hips.y + 0.00),   r: 0.222, sx: 0.90 },
-        { bone: 'hips',  pos: hips.clone().setY(hips.y + 0.07),   r: 0.204, sx: 0.89 },
-        { bone: 'spine', pos: jointPos('spine', 0.10),            r: 0.190, sx: 0.88 },
-        { bone: 'chest', pos: chest.clone().setY(chest.y + 0.02), r: 0.206, sx: 0.86 },
-        { bone: 'chest', pos: chest.clone().setY(collarY * 0.55 + chest.y * 0.45), r: 0.198, sx: 0.85 },
+        // A HEM, then a body, then a chest -- not one monotone taper. A single
+        // smooth cone from hips to collar is why this read as a tabard rather
+        // than a jacket: real shells drop below the seat, flare, and pull in
+        // on a hem band, and that break is most of what says "garment" at any
+        // distance. The profile below goes hem edge -> flare -> waist -> chest,
+        // so each section has to disagree with its neighbours.
+        // The BREAK is the point, not the volume: radii sit essentially where
+        // they did before the hem was added, so this is a reshape and not
+        // another mass increase.
+        { bone: 'hips',  pos: hips.clone().setY(hips.y - 0.075),  r: 0.210, sx: 0.92 },
+        { bone: 'hips',  pos: hips.clone().setY(hips.y - 0.030),  r: 0.226, sx: 0.92 },
+        { bone: 'hips',  pos: hips.clone().setY(hips.y + 0.035),  r: 0.206, sx: 0.90 },
+        { bone: 'spine', pos: jointPos('spine', 0.10),            r: 0.192, sx: 0.88 },
+        { bone: 'chest', pos: chest.clone().setY(chest.y + 0.02), r: 0.208, sx: 0.87 },
+        { bone: 'chest', pos: chest.clone().setY(collarY * 0.55 + chest.y * 0.45), r: 0.200, sx: 0.85 },
         { bone: 'chest', pos: chest.clone().setY(collarY - 0.012), r: 0.170, sx: 0.85 },
       ], M.shell, { capStart: true, capEnd: true });
     }
@@ -975,11 +1004,17 @@ export class Rider {
       tube([
         // A padded sleeve holds its diameter to the cuff. Ours tapered 40%
         // from shoulder to wrist, which is the shape of a bare arm.
+        // An ELBOW and a CUFF. Holding diameter to the wrist fixed the tights
+        // problem but left a smooth tapered tube -- a sleeve with no articulation
+        // anywhere along it. A worn shell bunches at the elbow and flares at
+        // the cuff over the glove, so the profile has to go out, in, out.
         { bone: 'chest',           pos: sh.clone().setY(sh.y + 0.055), r: 0.118 },
         { bone: `upperArm${side}`, pos: sh,                            r: 0.114 },
-        { bone: `upperArm${side}`, pos: jointPos(`foreArm${side}`, 0.045), r: 0.098 },
-        { bone: `foreArm${side}`,  pos: jointPos(`foreArm${side}`, -0.04), r: 0.094 },
-        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.015),    r: 0.086 },
+        { bone: `upperArm${side}`, pos: jointPos(`foreArm${side}`, 0.075), r: 0.096 },
+        { bone: `upperArm${side}`, pos: jointPos(`foreArm${side}`, 0.020), r: 0.108 },
+        { bone: `foreArm${side}`,  pos: jointPos(`foreArm${side}`, -0.05), r: 0.092 },
+        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.055),    r: 0.088 },
+        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.012),    r: 0.100 },
       ], M.shellGrey, { capEnd: true, capStart: true });
     }
   }

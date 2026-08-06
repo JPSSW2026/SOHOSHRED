@@ -65,7 +65,17 @@ const result = await page.evaluate(async () => {
     p: ours.position.clone(), q: ours.quaternion.clone(), s: ours.scale.clone(),
   };
   ours.position.set(0, 0, 0);
-  ours.quaternion.identity();
+  // Turn the board BROADSIDE, to match the reference's orientation.
+  //
+  // Identity put our board's long axis on Z, straight down the camera's line
+  // of sight, while the reference GLB carries its board on X (refDim w 1.00 vs
+  // d 0.53) -- broadside. So the two figures were being compared in different
+  // orientations: our board was seen end-on and, worse, the stance spread runs
+  // along the board, so the leg separation was fully foreshortened too. The
+  // torso bands agreed because a torso is roughly round; every band that
+  // depends on width across the deck did not, and reading those as "missing
+  // mass" would have inflated the rider to chase a projection artefact.
+  ours.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI * 0.5);
   ours.scale.set(1, 1, 1);
   ours.updateMatrixWorld(true);
 
