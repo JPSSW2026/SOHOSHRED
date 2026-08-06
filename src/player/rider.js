@@ -1018,7 +1018,19 @@ export class Rider {
         { bone: `foreArm${side}`,  pos: jointPos(`foreArm${side}`, -0.05), r: 0.092 },
         { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.055),    r: 0.088 },
         { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.012),    r: 0.100 },
-      ], M.shellGrey, { capEnd: true, capStart: true });
+        // SHELL, not shellDeep. Rendered beside the reference under one light
+        // rig, that figure reads as a magenta rider throughout -- its sleeves
+        // are the same bright shell as its body, measurably 1.2-2.1x the body's
+        // own value -- while ours read 0.09x the body and the figure came out
+        // as a dark silhouette with a red bib. Dark sleeves were a §6.3
+        // high-chroma-budget decision; the reference the user pointed at does
+        // not make it, and the reference is the brief.
+        //
+        // Judged, not measured: the two figures are in different poses under
+        // one light rig, so absolute per-part values are not comparable (our
+        // body renders at 0.60 of its albedo and our legs at 0.17, purely from
+        // facing). The within-figure ratio is what carries.
+      ], M.shell, { capEnd: true, capStart: true });
     }
   }
 
@@ -1142,11 +1154,26 @@ export class Rider {
                             // crimson. Two saturated colours in one hue family
                             // mush at distance instead of blocking, and the
                             // sleeves were reading as bare pink arms in
-                            // close-spray. Dark limbs against a bright torso
-                            // is the block the reference actually has.
-      pants: 0x33203a,      // dark plum, reads near-black until the sun hits it
+                            // close-spray.
+                            //
+                            // "Dark limbs against a bright torso is the block
+                            // the reference actually has" used to be asserted
+                            // here. It is FALSE. Rendered beside it under one
+                            // light rig and cropped large, the reference's
+                            // sleeves are the BRIGHTEST thing on the figure --
+                            // the same magenta as the body, 1.2-2.1x its
+                            // value. Only the hood and yoke go deeper. The
+                            // sleeves are on M.shell accordingly.
+      pants: 0x453155,      // lifted a step: at 0x33203a the legs read as a void beside the reference's plum
       glove: 0x141416,
-      boot: 0xd6d8dd,       // pale boots -- the reference's one bright accent below the knee
+      // Charcoal, not pale. "The reference's one bright accent below the knee"
+      // was asserted here for a near-white 0xd6d8dd, and it is FALSE: cropped
+      // large, the reference's boots are dark charcoal with a glossy toe
+      // highlight, and its one bright accent is the SLEEVES. Under the game's
+      // sun a near-white boot blew out and the portrait read as two white
+      // blocks bolted to the deck, which is the same error seen from the
+      // other end.
+      boot: 0x2c2f36,
       helmet: 0x2a1830,     // plum-black, under the hood
     };
     const shell = cloth(RIDER_STYLE.shell, 0.66, 0.11, [1.4, 2], { quilt: 0.12, wrinkle: 1.1 });
