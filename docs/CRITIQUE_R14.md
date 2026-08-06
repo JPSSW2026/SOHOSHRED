@@ -656,3 +656,70 @@ diagnosed as puff sprites authored darker than the crystals they are made of
 and patched by lifting a brightness constant from 0.72 to 1.02. The constant
 was a real second defect and the fix stands, but it was a band-aid: the
 dominant term was a radiance level five times too low.
+
+---
+
+## R16 — checklist 3 (black undersides): measured, and it passes
+
+`tools/rider-fill.mjs` isolates the rider's own pixels and reports their luma
+distribution as a fraction of sunlit snow.
+
+| | rider-portrait | air-trick |
+|---|---|---|
+| rider pixels | 61 857 | 9 262 |
+| median, as fraction of sunlit snow | 0.325 | 0.266 |
+| p25 | 0.239 | 0.158 |
+| under 10% of sunlit | **0.8%** | **6.9%** |
+| under 20% of sunlit | 14.8% | 38.6% |
+
+Essentially none of the figure is black. Checklist 3 passes; no change made.
+
+### The probe needed fixing before its answer was worth anything
+
+The first version isolated the rider by hiding it and diffing, which also
+removes its **cast shadow** — so 39 859 pixels of shadowed snow were being
+labelled "rider", 39% of the set. Shadowed snow sits squarely inside LAW 3's
+0.22–0.56 band, so that contamination would have produced a pass no matter how
+black the figure was. It flattered the median by 0.04.
+
+The fix is a third frame with the rider visible but `castShadow` off on every
+mesh: pixels that change between *that* and the normal frame are shadow, and
+the figure itself is identical across the pair.
+
+### A 5× error I nearly shipped as a global lighting change
+
+Chasing why `air-trick` measured darker, I found `sky.groundColor` — the
+PMREM's lower hemisphere, commented "snowfield bounce radiance (linear)" —
+sitting at (0.74, 0.94, 1.44) while I calculated sunlit snow emitting ~4.85.
+Five times too dark, blue-shifted, and the same *shape* of bug as the plume
+and the spray. It would have explained the symptom exactly.
+
+It is wrong. I computed snow radiance as `albedo/π × I × N·L` with N·L = 0.75.
+**This scene's sun is at 10.6° elevation**, so a horizontal snowfield receives
+`sunMu = sin(10.6°) = 0.184` of the beam, not 0.75. Redone:
+
+    irradiance = 30.21 × 0.806 × 0.184 = 4.48
+    radiance   = 0.86 × 4.48 / π       = 1.23
+
+against `groundColor`'s ~1.04 mean — the right order, with the remainder
+explained by `GROUND_LIT_FRACTION` (only part of the visible snowfield is in
+direct sun). `sky.js` derives it as `albedo × (direct + skyLit) / π`, which is
+the Lambertian relation, correctly. The blue shift is the documented
+`(1 − lit)·albedo` second-bounce term, and it is what makes LAW 2 reachable.
+
+Two lessons, both about the same reflex:
+
+- Finding one instance of a bug class makes the next thing that *looks* like it
+  much more convincing than the evidence warrants. Two real radiance bugs had
+  just been fixed, and that made a third feel almost pre-confirmed.
+- The grazing sun is the premise of this whole art direction. Any calculation
+  about this scene that quietly assumes an overhead cosine is wrong before it
+  starts.
+
+### On applying LAW 3 to the rider
+
+`air-trick`'s p25 of 0.158 is below LAW 3's 0.22 floor, but LAW 3 is about
+**shadowed snow**, not about a figure whose garments have albedos of 0.03–0.2.
+A plum jacket in full sun reads far below snow at 0.86. Comparing them is a
+category error; the part of checklist 3 that does apply — is the figure black —
+is answered by the two rows above.
