@@ -53,6 +53,24 @@ const out = await page.evaluate(async ({ SECONDS, RUNS }) => {
     const events = [];
     let lastCallout = null;
 
+    // VARY THE POLICY PER RUN.
+    //
+    // Every run used to drive the identical S-turn, so N runs were one
+    // trajectory measured N times and the bail RATE could not be estimated at
+    // all -- worse, because the sim is chaotic, any physics tweak re-rolled
+    // that single trajectory and the rate jumped around for reasons that had
+    // nothing to do with the change. (Raising the spin threshold once sent
+    // BAILED from 28.6% to 50%, which was the dice, not the tuning.) Each run
+    // now gets its own turn rate, amplitude, phase and pop cadence, so the
+    // mean over several runs is an actual estimate.
+    const pol = {
+      turnHz: 0.38 + 0.13 * ((r * 7) % 5),
+      amp: 0.55 + 0.09 * ((r * 3) % 4),
+      phase: (r * 1.7) % 6.28,
+      popEvery: 150 + 40 * (r % 4),
+      crouchHz: 0.8 + 0.25 * (r % 3),
+    };
+
     const start = st().position ? { x: st().position.x, z: st().position.z } : { x: 0, z: 0 };
     let peakSpeed = 0, airFrames = 0, groundFrames = 0, stoppedFrames = 0;
     let popped = 0, maxAirTime = 0, wipeouts = 0, crashes = 0, stumbleFrames = 0;
@@ -74,12 +92,12 @@ const out = await page.evaluate(async ({ SECONDS, RUNS }) => {
       // first version of this probe did exactly that and measured a rider
       // coasting downhill with no input at all -- which then looked like "pop
       // does nothing" and "no tricks ever fire". Both were the probe.
-      const pop = (i % 240) === 0 && i > 0;
+      const pop = (i % pol.popEvery) === 0 && i > 0;
       if (pop) popsRequested++;
       S.ctx.physics.applyInput({
-        steer: Math.sin(phase * 0.55) * 0.75,
+        steer: Math.sin(phase * pol.turnHz + pol.phase) * pol.amp,
         lean: 0,
-        crouch: 0.35 + 0.25 * Math.sin(phase * 1.1),
+        crouch: 0.35 + 0.25 * Math.sin(phase * pol.crouchHz),
         pop,
         spin: 0, flip: 0, grab: null, tuck: false, brake: 0, reset: false,
       });
@@ -130,7 +148,7 @@ const out = await page.evaluate(async ({ SECONDS, RUNS }) => {
     const bailPct = +(100 * (byQ.crash || 0) / Math.max(1, events.length)).toFixed(1);
 
     runs.push({
-      seconds: SECONDS,
+      seconds: SECONDS, policy: pol,
       distanceM: Math.round(dist),
       endZ: Math.round(end.z),
       speedMedian: q(0.5), speedP10: q(0.1), speedP90: q(0.9),

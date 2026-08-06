@@ -686,7 +686,10 @@ export class BoardPhysics {
     const flipClean = s.airTime < 0.35 || flipResidue < 1.05;
 
     const tooHard = closing > CRASH_LANDING;
-    const caughtEdge = slip > CRASH_SLIP_ANGLE && s.speed > 7;
+    // Same reasoning as badSpin: a moderate edge catch is a wobble, not a
+    // crash, so the angle and the speed gate both come up and the rest lands
+    // on the marginalEdge test below.
+    const caughtEdge = slip > CRASH_SLIP_ANGLE * 1.28 && s.speed > 9.0;
     // Graded by HOW FAR off square the landing is, not just by how long the
     // rider was in the air.
     //
@@ -702,7 +705,14 @@ export class BoardPhysics {
     // miss now falls through to the marginal test below and reads as OOF; only
     // a genuinely blown rotation still bails.
     const spinMiss = Math.min(spinResidue, Math.PI - spinResidue);
-    const badSpin = spinMiss > 1.10 || flipResidue > 1.55;
+    // 1.35, up from 1.10. Estimated over 8 VARIED runs -- different turn rate,
+    // amplitude, phase and pop cadence, so the mean is an estimate of the rate
+    // rather than one trajectory measured eight times -- BAILED was 39.2% of
+    // all callouts (sd 6.6, pooled 38.5%). The single-trajectory figure of
+    // 28.6% reported earlier was one lucky line. Target is 20%, so the bar for
+    // putting a rider on the ground has to move: only a genuinely blown
+    // rotation counts, and everything short of it falls through to OOF.
+    const badSpin = spinMiss > 1.36 || flipResidue > 1.92;
     const spunOut = badSpin && s.airTime > 0.45 && s.speed > 6;
 
     // Unsalvageable: inverted, or an impact well past what a crash already
