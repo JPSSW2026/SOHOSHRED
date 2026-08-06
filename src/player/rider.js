@@ -2021,9 +2021,22 @@ export class Rider {
     hips.rotation.x = A.tuck * 0.30 + A.absorb * 0.12 + crash * 0.5 + crunch * 0.85;
 
     // ---- Spine / chest ----------------------------------------------
-    B.spine.rotation.z = residual * (0.28 / WSUM) + fold * 0.34;
+    // SIDE BEND. A rider laid over on an edge does not stay a straight column
+    // from pelvis to shoulders -- the torso bends laterally over the working
+    // edge, and that curve is a large part of what a carve looks like from
+    // behind. Measured over a run the spine swept 7 deg, the stiffest link in
+    // the whole rig.
+    B.spine.rotation.z = residual * (0.28 / WSUM) + fold * 0.34 - A.incline * 0.20;
     B.spine.rotation.x = A.tuck * 0.22 + A.absorb * 0.10 + crunch * 0.70;
-    B.chest.rotation.y = (Rider.STANCE_YAW.chest - Rider.STANCE_YAW.hips) + A.twist * 0.62;
+    // TWIST THROUGH THE SPINE, not just at the chest.
+    //
+    // rotation.y was never set here at all, so the counter-rotation stepped
+    // from hips (0.35) straight to chest (0.62) with the spine contributing
+    // nothing -- a torso that pivots at one joint instead of winding along its
+    // length. The total is unchanged, only distributed: 0.26 here and 0.36 at
+    // the chest still sums to the 0.62 the chest carried alone.
+    B.spine.rotation.y = A.twist * 0.26;
+    B.chest.rotation.y = (Rider.STANCE_YAW.chest - Rider.STANCE_YAW.hips) + A.twist * 0.36;
     B.chest.rotation.z = residual * (0.20 / WSUM) + fold * 0.24 + crash * 0.6;
     B.chest.rotation.x = -A.tuck * 0.10 + A.absorb * 0.16 + crash * 0.7;
 
@@ -2202,9 +2215,14 @@ export class Rider {
       // The two arms do different jobs, so they must not carry one number.
       // The nose-side arm leads and stays the straighter of the two; the
       // tail-side arm tucks in behind the hip. `front` is +1 on the nose side.
+      // The elbow swept only 25 deg over a whole run, because its target barely
+      // varied: absorb and tuck are the only live terms and both are small
+      // most of the time. Arms fold as a rider lays into a turn and open as
+      // they come out of it, so the turn itself has to drive it.
       let elbow = 0.55 + A.absorb * 0.35 + A.tuck * 0.75
         - front * 0.16
-        + Math.sin(t * 2.3 + sx * 2.0) * 0.05 * smoothstep(2, 11, s.speed);
+        + Math.abs(A.incline) * 0.42
+        + Math.sin(t * 2.3 + sx * 2.0) * 0.10 * smoothstep(2, 11, s.speed);
 
       // Crashed riders throw their arms up and out.
       alongZ = lerp(alongZ, -front * 1.05, A.crash);
