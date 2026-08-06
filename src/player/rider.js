@@ -2224,15 +2224,63 @@ export class Rider {
       // across the deck, the trail arm opens away, and inclination pulls both
       // toward the inside of the turn the way a rider actually balances.
       const shoulderY = front * (0.16 + A.tuck * 0.10) - A.incline * 0.22;
-      ua.rotation.x = damp(ua.rotation.x, alongZ, 12, dt);
-      ua.rotation.y = damp(ua.rotation.y || 0, shoulderY, 10, dt);
-      ua.rotation.z = damp(ua.rotation.z, -swingT, 12, dt);
-      fa.rotation.z = damp(fa.rotation.z, -elbow, 12, dt);
+
+      // UNDER-damped, not critically damped.
+      //
+      // Every arm channel used to be damp()'d straight onto its target, and
+      // the targets are themselves smooth functions of slow state, so the arms
+      // arrived everywhere exactly on time and never once overshot. Measured
+      // over a 30 s run that reads as: upperArm sweeping 48 deg, forearm 25,
+      // wrist 5, shoulder 0 -- a limb that moves without ever looking like it
+      // has mass. A real arm trails the torso into a turn and swings past on
+      // the way out, and that lag is most of what separates an animated arm
+      // from a posed one.
+      //
+      // A light second-order spring per channel gives it that: it lags going
+      // in, overshoots coming out, and settles. zeta ~0.55 is enough to read
+      // without wobbling.
+      const spr = (this._armSpring ||= {});
+      const swing = (key, cur, target, omega) => {
+        const st = (spr[key] ||= { v: 0 });
+        const a = omega * omega * (target - cur) - 2 * 0.55 * omega * st.v;
+        st.v += a * dt;
+        return cur + st.v * dt;
+      };
+
+      ua.rotation.x = swing(`${side}ux`, ua.rotation.x, alongZ, 13);
+      ua.rotation.y = swing(`${side}uy`, ua.rotation.y || 0, shoulderY, 11);
+      ua.rotation.z = swing(`${side}uz`, ua.rotation.z, -swingT, 13);
+      fa.rotation.z = swing(`${side}fz`, fa.rotation.z, -elbow, 15);
+
+      // SHOULDER GIRDLE. This bone existed and was never touched -- measured
+      // sweep over a full run was 0.0 deg, so the whole arm hung off a dead
+      // clavicle and the shoulders sat like a coat hanger no matter what the
+      // arms did. A rider's girdle lifts as the arm comes up and counters the
+      // chest as it twists, and it is the joint that makes an arm look
+      // attached to a living torso rather than socketed into a mannequin.
+      const shoulder = B[`shoulder${side}`];
+      if (shoulder) {
+        // Lift with the arm's own swing, plus a counter to the body twist.
+        const lift = -swingT * 0.26 - A.absorb * 0.10;
+        const roll = front * A.twist * 0.30 + (A.incline || 0) * 0.10;
+        shoulder.rotation.z = swing(`${side}sz`, shoulder.rotation.z || 0, lift, 9);
+        shoulder.rotation.y = swing(`${side}sy`, shoulder.rotation.y || 0, roll, 8);
+      }
+
       // A wrist, so the hand is not a continuation of the forearm tube.
+      //
+      // Driven off the forearm's angular VELOCITY rather than a constant. The
+      // old target was -elbow*0.22 - 0.10, which barely varies, so the wrist
+      // measured 5.4 deg of sweep across an entire run -- welded. A hand
+      // trails the arm it is on the end of, so the flick comes from how fast
+      // the forearm is moving, not from where it happens to be.
       const hand = B[`hand${side}`];
       if (hand) {
-        hand.rotation.z = damp(hand.rotation.z || 0, -elbow * 0.22 - 0.10, 10, dt);
-        hand.rotation.y = damp(hand.rotation.y || 0, front * 0.18, 10, dt);
+        const faVel = spr[`${side}fz`]?.v || 0;
+        hand.rotation.z = swing(`${side}hz`, hand.rotation.z || 0,
+          -elbow * 0.22 - 0.10 - clamp(faVel * 0.16, -0.45, 0.45), 12);
+        hand.rotation.y = swing(`${side}hy`, hand.rotation.y || 0,
+          front * 0.18 + clamp((spr[`${side}uz`]?.v || 0) * 0.12, -0.30, 0.30), 12);
       }
     }
   }
