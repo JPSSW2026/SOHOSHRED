@@ -762,3 +762,56 @@ returns nothing beyond the heightfield's bounds; that ground is the backdrop
 ranges, a separate asset. So this cannot yet speak to checklist 16 over
 22 m – 800 m, which is where the tell actually bites. Anyone picking this up
 should extend the march to the backdrop before drawing conclusions about it.
+
+---
+
+## R18 — detail falloff, now measurable to 9 km, and no tell found
+
+`tools/detail-falloff.mjs` was blind past 22 m (R17). Two fixes made it
+useful, and both were found by making it say what it was actually looking at
+rather than trusting it.
+
+**Raycast the scene, not the heightfield.** `terrain.sample` returns nothing
+beyond the heightfield bounds, so everything further was invisible. A
+Raycaster covers heightfield, backdrop and props uniformly — but the first hit
+on every band came back as `Points`: the ambient snowfall pool, drifting a
+metre in front of the lens. Filtering by NAME could not fix that reliably.
+Requiring `isMesh` could, because it is a property of what the object *is*
+rather than of what someone remembered to name it. The near bands had also
+been reporting 1 m, which was the rider's own back — this is a chase camera.
+
+**Measure two scales, because one is not interpretable.** At a single small
+window, contrast RISES with distance in both wide shots — 5.15 at 221 m to
+9.07 at 669 m in `hero-basin`. That looks exactly like checklist 16 failing.
+It is not: those bands are full of ridgelines, shadowed gullies and the lift
+line, which are large-scale structure and entirely desirable. Fine texture
+contributes to a small window and not much to a large one, so the ratio
+separates them.
+
+`hero-basin`, fine (8 px) over wide (32 px):
+
+| ground | rms8 | rms32 | fine/wide |
+|---|---|---|---|
+| 221 m | 5.15 | 9.10 | **0.566** |
+| 268 m | 5.11 | 11.11 | 0.460 |
+| 377 m | 7.50 | 19.24 | 0.390 |
+| 669 m | 9.07 | 21.72 | 0.417 |
+| 1065 m | 4.77 | 11.61 | 0.411 |
+
+The ratio declines with distance, which is the direction checklist 16 asks
+for. The apparent rise in raw contrast is `rms32` climbing 9.1 → 21.7 — pure
+silhouette structure. **No tell. No change made.**
+
+`valley-vista` is flat near (0.46 out to 258 m), rises at 765 m, and on the
+backdrop ranges at 6.8–8.9 km reads 0.48–0.64 — higher than the terrain at
+2 km. That would be checklist 31, "distant mountains with the same texture
+frequency as near". It is NOT being acted on: `rms8` in those bands is 2.0–3.5
+levels, which is at the frame's dither floor, and a ratio computed on that is
+not evidence. Anyone wanting to pursue it should first establish the noise
+floor on a flat-field render.
+
+Third consecutive investigation ending in "measured, nothing to fix" — after
+checklist 3 and the `groundColor` 5×. Taken together that says the near and
+mid field are in good order, and the genuinely unexamined territory is the
+backdrop's own detail budget, at contrast levels that need a noise floor
+established before they mean anything.
