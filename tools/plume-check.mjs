@@ -82,10 +82,13 @@ const info = await page.evaluate(async () => {
 console.log(JSON.stringify(info, null, 1));
 
 if (info.hasMesh) {
+  // Framings that match where the RUN actually passes a gun: eye height on
+  // the piste, 25-90 m out. A camera below the nozzle sits under the terrain
+  // and shows backfaces, which is a probe artefact, not a defect.
   const views = [
-    ['near', 26, 0.7, -3, 0],
-    ['under', 16, 2.4, -6, 2],
-    ['far', 70, 1.9, -10, -2],
+    ['pass25', 25, 0.7, -5.5, 1.5],
+    ['pass45', 45, 2.4, -6.5, 2.0],
+    ['pass90', 90, 1.9, -7.5, 3.0],
   ];
   for (const [tag, d, hy, up, dy] of views) {
     await page.evaluate(([d, hy, up, dy]) => window.__AIM(d, hy, up, dy), [d, hy, up, dy]);

@@ -2853,7 +2853,7 @@ export class Props {
     const firing = [];
 
     const SPACING = T.snowGun?.spacing ?? 52;
-    const LIMIT = Math.round((T.snowGun?.limit ?? 46) * clamp(T.density ?? 1, 0.05, 4));
+    const LIMIT = Math.round((T.snowGun?.limit ?? 74) * clamp(T.density ?? 1, 0.05, 4));
     let placed = 0;
 
     for (const c of this.features.corridors || []) {

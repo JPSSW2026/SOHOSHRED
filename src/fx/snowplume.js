@@ -97,6 +97,7 @@ const FRAG = /* glsl */`
   uniform vec3 uSkyColor;
   uniform vec3 uCameraPos;
   uniform float uFar;        // distance at which a plume has faded out
+  uniform float uSunEnergy;  // scene sun intensity x a scattering coefficient
 
   varying float vAlpha;
   varying vec2  vUv;
@@ -122,9 +123,30 @@ const FRAG = /* glsl */`
     float denom = 1.0 + g * g - 2.0 * g * cosT;
     float phase = ( 1.0 - g * g ) / ( 4.0 * 3.14159 * pow( max( denom, 0.0001 ), 1.5 ) );
 
-    vec3 lit = uSunColor * ( 0.85 + phase * 5.0 ) + uSkyColor * 1.00;
+    // WEIGHT THE SUN, NOT THE SKY.
+    //
+    // uSkyColor here is the scene ambient, and the scene ambient in this
+    // basin is (0.23, 0.46, 1.00) -- a saturated blue, because that is what
+    // fills a snow shadow. The board spray gets away with leaning on it
+    // because a puff of spray lasts a third of a second. A plume hangs in
+    // frame for seconds, and at those weights it came out blue-grey and read
+    // as exhaust from a diesel rather than as snow. Thrown snow is a
+    // broadband scatterer: it takes its colour from the SUN, with the sky
+    // only tinting it cool.
+    vec3 lit = uSunColor * ( 1.05 + phase * 5.0 ) + uSkyColor * 0.45;
+    vec3 dim = uSunColor * 0.95 + uSkyColor * 0.55;
     float sunAmount = clamp( 0.38 + phase * 2.4, 0.0, 1.0 );
-    vec3 col = mix( uSkyColor * 1.15, lit, sunAmount );
+    // SCALE TO THE SCENE'S LIGHT LEVEL.
+    //
+    // uSunColor is a normalised colour -- the sun's actual intensity is 30,
+    // carried on the light, and this shader writes LINEAR radiance into an
+    // HDR target that the post chain tonemaps. Writing ~1.0 into a frame
+    // where sunlit snow sits near 5.0 makes the plume DARKER than the sky
+    // behind it, so it composites as a dim veil and ACES turns that dim blue
+    // into grey-brown. It looked like exhaust because it was, radiometrically,
+    // a shadow. Three rounds of adjusting the plume's HUE changed nothing,
+    // for the obvious reason once the level is the thing that is wrong.
+    vec3 col = mix( dim, lit, sunAmount ) * uSunEnergy;
 
     // Distance fade. Sixty plumes' worth of large soft quads is a lot of
     // overdraw for something that is two pixels across.
@@ -147,7 +169,11 @@ export class SnowPlumes {
     // was a wisp with daylight between its puffs; the density that reads as
     // thrown snow needs several overlapping at every point of the arc.
     this.perGun = opt.perGun ?? 100;
-    this.far = opt.far ?? 520;
+    // Plumes carry a LONG way -- a row of them along a run is most of what
+    // makes an establishing shot read as a working ski field, and at 520 m
+    // they were fading out before the wide shots even saw them. A plume at a
+    // kilometre is a few pixels, so the overdraw this costs is nothing.
+    this.far = opt.far ?? 1750;
     this.object3D = new THREE.Group();
     this.object3D.name = 'snow-plumes';
     this.mesh = null;
@@ -239,6 +265,7 @@ export class SnowPlumes {
       uSkyColor: { value: new THREE.Color(0.45, 0.60, 0.85) },
       uCameraPos: { value: new THREE.Vector3() },
       uFar: { value: this.far },
+      uSunEnergy: { value: 4.8 },
     };
     this.material = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
@@ -272,6 +299,10 @@ export class SnowPlumes {
     if (sky) {
       if (sky.sunDirection) u.uSunDir.value.copy(sky.sunDirection).normalize();
       if (sky.sunColor) u.uSunColor.value.copy(sky.sunColor);
+      // Match sunlit snow: albedo/PI x intensity x a typical N.L. Tracking
+      // the light means the plume dims with the sun through the day instead
+      // of glowing on at dusk.
+      if (sky.sun) u.uSunEnergy.value = sky.sun.intensity * 0.16;
       if (sky.ambientColor) u.uSkyColor.value.copy(sky.ambientColor);
     }
   }
