@@ -185,42 +185,20 @@ export async function mountBackdropModel(ctx) {
   // The runs face down-valley (-z); the painted face looks back up at them.
   ctx.scene.add(g);
 
-  // RING the bowl, do not wall one side of it.
+  // NO RING COPIES. Tried and reverted -- see below.
   //
-  // A single 12.2 km slab at 6.4 km subtends about 87 degrees, so the massif
-  // existed in exactly one of nine framings: valley-vista looked at mountains
-  // and hero-basin, west-spur and chase-carve looked at empty gradient sky
-  // with the bowl rim as the only horizon event. Majesty cannot be delivered
-  // by a backdrop that covers a quarter of the view.
+  // Three clones were placed around the basin to stop the massif ending
+  // mid-frame on a cut edge. They worked for that, and they also introduced
+  // exactly the artefact the user photographed: a 12.2 km x 6.4 km slab has
+  // no thickness, so from inside the ring the flanking copies are seen at a
+  // grazing angle and render as thin horizontal planes slicing straight
+  // across the range at a constant height, plus hard break lines where a
+  // copy's silhouette crosses the original's.
   //
-  // Three more copies rotated about the basin, each yawed to face inward and
-  // nudged in radius and height so the skyline does not repeat as an obvious
-  // tiling. Clones share geometry and material with the original, so this
-  // costs three draw calls and no extra memory for a 495k-triangle mesh.
-  const CENTRE = new THREE.Vector3(300, 1180, 0);
-  const RADIUS = 6400;
-  // All copies sit at the SAME height as the original. The haze band is one
-  // shared uniform derived from the first mesh's bounds, so a copy lifted off
-  // that height samples a different part of the fade and reads paler than the
-  // range it is supposed to continue -- which is exactly what the flanks were
-  // doing. Radius still varies, so the skyline does not repeat; height cannot,
-  // until each copy carries its own band.
-  for (const [deg, rScale, yLift] of [[92, 0.96, 0], [188, 1.04, 0], [270, 0.99, 0]]) {
-    const a = deg * Math.PI / 180;
-    const ring = new THREE.Group();
-    ring.name = `backdrop-model-${deg}`;
-    const clone = root.clone(true);
-    clone.traverse((o) => { if (o.isMesh) o.material = mat; });
-    ring.add(clone);
-    ring.position.set(
-      CENTRE.x + Math.sin(a) * RADIUS * rScale,
-      1180 + yLift,
-      CENTRE.z - Math.cos(a) * RADIUS * rScale,
-    );
-    // Face the basin centre.
-    ring.rotation.y = a;
-    ctx.scene.add(ring);
-  }
+  // A billboarded backdrop is a plane, and a plane in a ring will always be
+  // edge-on from somewhere inside it. If the massif needs to wrap further,
+  // it has to be a curved shell or a mesh with real depth -- not more copies
+  // of a flat one.
 
   // Now that the group carries its final transform, measure it and set the
   // band: the floor dissolves below 42% of the model's height, and everything
