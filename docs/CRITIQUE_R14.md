@@ -426,3 +426,51 @@ SILHOUETTE — softening the top few pixels of the far ring, or lifting the ring
 so ridges present a face rather than an edge — not on shading or on relief
 amplitude, both of which have now been measured out.
 
+
+## r27 — the spray system is not the problem; judging it from captures might be
+
+`close-spray` renders with no plume — a handful of specks near the board. The
+obvious reading is that the emitter is not firing. It is firing hard.
+
+`tools/shot-state.mjs` samples the state at the moment the shot composes, by
+calling `S.shot(name)` — the same entry point shoot.mjs uses — and reading the
+physics state and the particle pool immediately after:
+
+```
+speed 18.69   roll -44.1   edgeLoad 1.0   sliding true
+sprayIntensity        1.000        (saturated)
+liveParticles          1945
+  kind 0 (crystals)    1433
+  kind 2 (puffs)        455
+particlesOnScreen       445        (drawn positions, not spawn points)
+puffsOnScreen           107        (these are 16-42 cm sprites)
+medianParticleDist      5.6 m
+meanAlphaOnScreen       0.699
+buriedUnderSnow          56        (13%)
+```
+
+Four hypotheses tested and rejected, in order:
+
+1. *Emitter never fires.* No — `sprayIntensity` is saturated at 1.0.
+2. *Particles are off-screen.* No — 445 on screen. The first pass of this
+   probe projected SPAWN points and got 473; the shader integrates ballistics
+   with linear drag over age, so the drawn position is the one that matters.
+   Projecting it properly barely moved the number.
+3. *Alpha has faded them out.* No — evaluating the vertex shader's own
+   `fadeIn * fadeOut²` on the CPU gives a mean of 0.699 across the on-screen
+   set.
+4. *They spawn at the sunk contact point and the snow mesh occludes them.*
+   Only 13% are below terrain height.
+
+So ~389 visible-by-every-CPU-measure sprites, 107 of them large, sit in frame
+at 0.7 alpha, and the PNG shows almost none. The remaining candidate is the
+harness: the captured frame does not correspond to the state `S.shot()` leaves
+behind. That is consistent with the already-documented finding that
+`page.screenshot()` after `shot()` returns a stale frame.
+
+**Consequence, and the reason this is written down rather than fixed:** any
+judgement about particles, spray or trails made from these captures — mine, or
+a critic agent's — may be reading a frame that never contained them. Settle
+that before tuning a single emitter constant. Do NOT "fix" the spray by
+raising counts or sizes against these images.
+
