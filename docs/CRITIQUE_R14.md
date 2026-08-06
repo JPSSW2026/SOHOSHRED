@@ -584,3 +584,75 @@ Two things worth keeping:
   about the first one.
 - `air-trick` and `west-spur` re-frame between runs, so they cannot carry an
   A/B. `rider-portrait` holds its framing and is the shot to use for one.
+
+---
+
+## R15 — the radiance-level bug, and why hue edits could not fix it
+
+Two materials in this codebase are raw `ShaderMaterial`s that write **linear
+radiance straight into the HDR target the post chain tonemaps**: the board
+spray (`src/fx/particles.js`) and, once it existed, the snow-gun plume
+(`src/fx/snowplume.js`). Both were writing a value around **1.0**.
+
+Sunlit snow in this scene sits near **5.0**:
+
+| quantity | value |
+|---|---|
+| `sun.intensity` (DirectionalLight) | 30.2 |
+| `sun.color` | 0.81, 0.78, 0.76 |
+| ambient `snow-bounce` | 0.06, 0.07, 0.11 at intensity 1 |
+| snow radiance ≈ albedo/π × I × N·L | ≈ 0.9/π × 30.2 × 0.8 × 0.7 ≈ **4.8** |
+
+So both effects were **darker than the snow they are made of**, and darker
+than the sky behind them. Composited over a bright background at partial
+alpha, a below-background colour reads as a *veil*, and the tonemapper turns a
+dim blue veil into grey-brown. The plume looked like diesel exhaust; the spray
+looked like a grey smudge that pulled the frame down.
+
+The root cause is that **`uSunColor` is a normalised colour** — the intensity
+lives on the light, not in the colour. Any shader that lights itself from
+`sky.sunColor` alone is writing at roughly 1/5 scale.
+
+Both now multiply by `sky.sun.intensity * 0.16`, which lands them on sunlit
+snow and makes them track the sun through the day.
+
+### Why this took so long to find
+
+Three consecutive edits to the plume's **hue** — rebalancing sky against sun,
+lifting the non-forward term, re-weighting the ambient — produced *no visible
+change at all*. That should have been the tell after the first one: when an
+edit that should obviously change the picture does not, the variable being
+edited is not the one that is wrong.
+
+### The diagnostic that settled it in one shot
+
+Forcing `gl_FragColor = vec4(0.0, 1.0, 0.0, a)` rendered **pure green**.
+
+That single frame killed an entire class of hypotheses — "the postprocess is
+eating it", "the shader is not the one being compiled", "something downstream
+overrides the colour", "it is being drawn into the wrong buffer" — and proved
+the colour being written really was that dull. Substituting a known, garish
+constant for a computed value is the cheapest possible test of "is my output
+reaching the frame, and is it what I think it is".
+
+### Sweep
+
+`grep -rn "gl_FragColor = " src/` finds only these two plus `sky.js` and the
+postprocess passes. `sky.js`'s cloud shader already reasons in these units —
+its own comment compares a forward lobe against "forty times above sunlit
+snow" — and needs nothing. The postprocess passes operate on already-rendered
+buffers. So the sweep is complete: those were the only two.
+
+Note also that three.js forces `NoToneMapping` when rendering to a render
+target, so the scene pass is untonemapped and `<tonemapping_fragment>` inside
+`sky.js` is a no-op there. Writing raw linear was the right *kind* of output
+in both files; only the *level* was wrong.
+
+### Prior finding this supersedes
+
+The spray was measured earlier as pulling its region of the frame down by
+**12.3 levels** (mean luma 187.4 with spray against 199.8 without). That was
+diagnosed as puff sprites authored darker than the crystals they are made of
+and patched by lifting a brightness constant from 0.72 to 1.02. The constant
+was a real second defect and the fix stands, but it was a band-aid: the
+dominant term was a radiance level five times too low.
