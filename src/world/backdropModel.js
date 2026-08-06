@@ -249,15 +249,26 @@ export async function mountBaseStation(ctx) {
   };
   m.needsUpdate = true;
 
-  const yaw = Math.atan2(240 - 320, 700 - (-560));
-  const gy = ctx.terrain.getHeight(320, -560);
+  // Moved 260 m UPHILL, from z -560 to z -300.
+  //
+  // Profiled the fall line at 40 m steps: the run holds 20-48 degrees all the
+  // way from the spawn down to about z -340, and then dies -- 3.3, 3.4, 5.8,
+  // 4.1, 5.3, 4.1, 4.6 degrees across the next 280 m. The base station stood
+  // in the middle of that dead apron, so the course ended with a long coast
+  // across flats at falling speed, which is no gameplay at all.
+  //
+  // At z -300 the pitch is still 17.9 degrees, so the run finishes while the
+  // hill is still working and the rider arrives with speed on.
+  const BASE_Z = -300;
+  const yaw = Math.atan2(240 - 320, 700 - BASE_Z);
+  const gy = ctx.terrain.getHeight(320, BASE_Z);
   const g = new THREE.Group();
   g.name = 'base-station-model';
   g.add(root);
   root.scale.set(58, 44, 58);
   // Buried, not perched. At +5.0 there were five metres of daylight under
   // the foundation and the whole thing read as a slab floating over the snow.
-  g.position.set(320, gy - 3.0, -560);
+  g.position.set(320, gy - 3.0, BASE_Z);
   g.rotation.y = yaw;
   ctx.scene.add(g);
 
@@ -266,7 +277,7 @@ export async function mountBaseStation(ctx) {
     new THREE.CylinderGeometry(26, 33, 3.2, 26),
     new THREE.MeshStandardMaterial({ color: 0xf2f4f8, roughness: 0.94 }),
   );
-  collar.position.set(320, gy + 0.5, -560);
+  collar.position.set(320, gy + 0.5, BASE_Z);
   collar.receiveShadow = true;
   ctx.scene.add(collar);
   return g;

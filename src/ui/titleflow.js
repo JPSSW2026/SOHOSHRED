@@ -88,6 +88,13 @@ const CSS = /* css */ `
 }
 `;
 
+/**
+ * Down-valley z at which a descent is complete -- the lift base station line.
+ * Kept in step with BASE_Z in world/backdropModel.js: the station is the
+ * visible end of the course, so the two must not drift apart.
+ */
+const COURSE_END_Z = -300;
+
 export class TitleFlow {
   constructor(ctx) {
     this.ctx = ctx;
@@ -334,6 +341,31 @@ export class TitleFlow {
       }
       return;                          // no stall bookkeeping mid-bail
     }
+
+    // COURSE END at the base station.
+    //
+    // The fall line holds 20-48 degrees from the spawn down to about z -340
+    // and then dies: 3.3, 3.4, 5.8, 4.1, 5.3, 4.1, 4.6 degrees across the
+    // next 280 m, measured at 40 m steps. Riding that apron is a long coast
+    // at falling speed with nothing to do -- no gameplay value, in the
+    // user's words -- so the run now ENDS at the base station rather than
+    // letting the player trail out across the flats and wait for the stall
+    // rescue to notice.
+    //
+    // Down-valley is -z, so passing below the station line finishes the run.
+    // Stats keep running: this is the end of a descent, not a failure.
+    if (!this._bail && s.position.z < COURSE_END_Z && s.grounded) {
+      this._runEnd = (this._runEnd || 0) + dt;
+      // A short beat so it reads as arriving rather than as a teleport.
+      if (this._runEnd > 0.65) {
+        this._runEnd = 0;
+        this._stall = 0;
+        const sp = this.ctx.terrain?.getSpawn?.();
+        if (sp) { this.ctx.physics.reset(sp.position, sp.heading); this.ctx.player?.camera?.snapToTarget?.(); }
+      }
+      return;
+    }
+    this._runEnd = 0;
 
     // Stall rescue (playtest: stranded on flats): grounded, slow, upright,
     // for ~3 s -> heli back to the drop. Stats keep running - it is a
