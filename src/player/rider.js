@@ -923,11 +923,19 @@ export class Rider {
     for (const side of ['F', 'B']) {
       const hip = jointPos(`hip${side}`);
       tube([
-        { bone: 'hips',          pos: hip.clone().setY(hip.y + 0.085), r: 0.128, sx: 0.94 },
-        { bone: `thigh${side}`,  pos: hip,                             r: 0.122, sx: 0.94 },
-        { bone: `thigh${side}`,  pos: jointPos(`shin${side}`, 0.05),   r: 0.100 },
-        { bone: `shin${side}`,   pos: jointPos(`shin${side}`, -0.04),  r: 0.094 },
-        { bone: `shin${side}`,   pos: jointPos(`boot${side}`, 0.05),   r: 0.085 },
+        // Snowboard pants are a wide tube that barely tapers and breaks over
+        // the boot. These were a leg cast: 0.128 at the hip down to 0.085 at
+        // the ankle, a 34% taper, which is a cyclist's tights. Measured
+        // against the reference GLB the whole figure carried 0.225 silhouette
+        // area over height squared against its 0.379 -- 60% of the mass --
+        // and the legs are the largest single share of that deficit.
+        { bone: 'hips',          pos: hip.clone().setY(hip.y + 0.085), r: 0.168, sx: 0.96 },
+        { bone: `thigh${side}`,  pos: hip,                             r: 0.164, sx: 0.96 },
+        { bone: `thigh${side}`,  pos: jointPos(`shin${side}`, 0.05),   r: 0.150 },
+        { bone: `shin${side}`,   pos: jointPos(`shin${side}`, -0.04),  r: 0.146 },
+        // Widens again at the cuff: the hem sits ON the boot, it does not
+        // shrink to the ankle.
+        { bone: `shin${side}`,   pos: jointPos(`boot${side}`, 0.05),   r: 0.152 },
         // Capped BOTH ends. Open tubes are why the rider was see-through:
         // with front-side culling you look straight down the inside of the
         // garment, and in close-spray the snow showed through the pelvis.
@@ -947,23 +955,29 @@ export class Rider {
       const chest = jointPos('chest');
       const collarY = chest.y + DIM.chestLength;
       tube([
-        { bone: 'hips',  pos: hips.clone().setY(hips.y + 0.00),   r: 0.186, sx: 0.84 },
-        { bone: 'hips',  pos: hips.clone().setY(hips.y + 0.07),   r: 0.170, sx: 0.82 },
-        { bone: 'spine', pos: jointPos('spine', 0.10),            r: 0.157, sx: 0.80 },
-        { bone: 'chest', pos: chest.clone().setY(chest.y + 0.02), r: 0.172, sx: 0.76 },
-        { bone: 'chest', pos: chest.clone().setY(collarY * 0.55 + chest.y * 0.45), r: 0.166, sx: 0.74 },
-        { bone: 'chest', pos: chest.clone().setY(collarY - 0.012), r: 0.144, sx: 0.74 },
+        // An insulated shell, not a base layer. Radii up ~18% and the
+        // front-to-back squash relaxed (sx was pressing the torso into a
+        // flat plate, which is why the figure read thin from every angle
+        // except dead front).
+        { bone: 'hips',  pos: hips.clone().setY(hips.y + 0.00),   r: 0.222, sx: 0.90 },
+        { bone: 'hips',  pos: hips.clone().setY(hips.y + 0.07),   r: 0.204, sx: 0.89 },
+        { bone: 'spine', pos: jointPos('spine', 0.10),            r: 0.190, sx: 0.88 },
+        { bone: 'chest', pos: chest.clone().setY(chest.y + 0.02), r: 0.206, sx: 0.86 },
+        { bone: 'chest', pos: chest.clone().setY(collarY * 0.55 + chest.y * 0.45), r: 0.198, sx: 0.85 },
+        { bone: 'chest', pos: chest.clone().setY(collarY - 0.012), r: 0.170, sx: 0.85 },
       ], M.shell, { capStart: true, capEnd: true });
     }
     /* Sleeves: a short yoke on the chest, then upper arm and forearm. */
     for (const side of ['L', 'R']) {
       const sh = jointPos(`shoulder${side}`);
       tube([
-        { bone: 'chest',           pos: sh.clone().setY(sh.y + 0.055), r: 0.092 },
-        { bone: `upperArm${side}`, pos: sh,                            r: 0.088 },
-        { bone: `upperArm${side}`, pos: jointPos(`foreArm${side}`, 0.045), r: 0.070 },
-        { bone: `foreArm${side}`,  pos: jointPos(`foreArm${side}`, -0.04), r: 0.066 },
-        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.015),    r: 0.055 },
+        // A padded sleeve holds its diameter to the cuff. Ours tapered 40%
+        // from shoulder to wrist, which is the shape of a bare arm.
+        { bone: 'chest',           pos: sh.clone().setY(sh.y + 0.055), r: 0.118 },
+        { bone: `upperArm${side}`, pos: sh,                            r: 0.114 },
+        { bone: `upperArm${side}`, pos: jointPos(`foreArm${side}`, 0.045), r: 0.098 },
+        { bone: `foreArm${side}`,  pos: jointPos(`foreArm${side}`, -0.04), r: 0.094 },
+        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.015),    r: 0.086 },
       ], M.shellGrey, { capEnd: true, capStart: true });
     }
   }
@@ -1309,14 +1323,21 @@ export class Rider {
     // clear it, and pushed back only enough to leave the goggle proud.
     const hoodUp = part(new THREE.SphereGeometry(DIM.headRadius * 1.22, 18, 14), M.shellGrey,
       head, 0, DIM.headRadius * 0.80, -DIM.headRadius * 0.22);
-    hoodUp.scale.set(1.06, 1.10, 1.20);
+    // Narrower across, LONGER front-to-back. At 1.06 x 1.10 x 1.20 this was
+    // near-spherical, and a sphere over a sphere reads as one bowling ball --
+    // the head was the least garment-like thing on the figure. A hood is a
+    // cowl with a peak behind the skull and an opening in front, so the axes
+    // have to disagree.
+    hoodUp.scale.set(0.96, 1.04, 1.38);
     // The opening. Without a rim a hood is just a ball -- the thick edge round
     // the face is the whole reason a hood reads as fabric with a hole in it
     // rather than as a helmet in another colour.
     const hoodRim = trim(new THREE.TorusGeometry(DIM.headRadius * 0.95, DIM.headRadius * 0.17, 8, 20),
       M.shellGrey, head, 0, DIM.headRadius * 0.80, DIM.headRadius * 0.30);
     hoodRim.rotation.x = Math.PI * 0.5;
-    hoodRim.scale.set(1.04, 1.0, 0.72);
+    // The opening reads only if it is proud of the cowl, so the rim sits
+    // wider than the hood is at that point rather than flush with it.
+    hoodRim.scale.set(1.14, 1.0, 0.66);
 
     const brim = part(new THREE.CylinderGeometry(DIM.headRadius * 1.03, DIM.headRadius * 1.0, 0.016, 18), M.helmet, head, 0, DIM.headRadius * 0.99, 0.008);
     brim.scale.z = 1.08;
