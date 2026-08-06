@@ -507,3 +507,38 @@ against its background" look identical in a screenshot and are diagnosed
 completely differently. Diff against the effect disabled before concluding
 anything is absent.
 
+
+## r32 — the "hole in the jacket" is the sleeve
+
+Cropped large, the top of the torso in `rider-portrait` shows a dark oval with
+a lit rim and a bright sliver across it — the classic look of an open garment
+tube you are seeing down inside. The jacket collar ring is r 0.17 against a
+neck cylinder of r 0.06, so there is a wide annulus a cap has to close, which
+made the reading plausible.
+
+It is wrong. `tools/who-owns.mjs` hides each rider mesh in turn and re-renders,
+identifying the owner of a screen rectangle by its absence:
+
+```
+sleeveL      skinned  92.5% of rect  mean delta 140.3
+jacketBody   skinned  75.8%          mean delta  71.1
+<everything else>     ~19%           mean delta   8.3   <- noise floor
+```
+
+The dark oval is the near sleeve crossing the chest in shadow; the "rim" is the
+lit jacket shoulder behind it. A hole would have been owned by whatever lay
+behind it, not by a garment drawn in front. No cap is missing and nothing was
+changed.
+
+Two things this probe needs, both learned the hard way:
+
+- **Render with `tick(0)`.** Every `tick(1/60)` advances the simulation, so
+  across ~30 meshes the rider drifts and motion swamps the signal: the first
+  run reported *every* mesh at 100% of the rect changed, at saturation.
+- **Expect a ~19% noise floor.** The frame counter advances even at dt 0, so
+  the grain changes on every re-render. Anything at 19% / mean 8.3 is nothing;
+  the signal here was 4–17× the floor.
+
+Third time in this session that a confident read of a still turned out to be
+something else (the backdrop sliver, the missing spray, this). The still says
+what a thing looks like; only removing an object says what it is.

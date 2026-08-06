@@ -958,7 +958,7 @@ export class Rider {
         // Capped BOTH ends. Open tubes are why the rider was see-through:
         // with front-side culling you look straight down the inside of the
         // garment, and in close-spray the snow showed through the pelvis.
-      ], M.pants, { capStart: true, capEnd: true });
+      ], M.pants, { capStart: true, capEnd: true }).name = `pantLeg${side}`;
     }
     /* Pelvis / seat, bridging the two legs under the jacket hem. */
     {
@@ -971,7 +971,7 @@ export class Rider {
         // the mis-oriented profile.
         { bone: 'hips', pos: hips.clone().setY(hips.y - 0.10), r: 0.166, sx: 0.92 },
         { bone: 'hips', pos: hips.clone().setY(hips.y + 0.12), r: 0.176, sx: 0.92 },
-      ], M.pants, { capStart: true, capEnd: true });
+      ], M.pants, { capStart: true, capEnd: true }).name = 'seat';
     }
     /* Jacket body: hem below the hips to the collar, one surface. */
     {
@@ -999,7 +999,7 @@ export class Rider {
         { bone: 'chest', pos: chest.clone().setY(chest.y + 0.02), r: 0.208, sx: 0.87 },
         { bone: 'chest', pos: chest.clone().setY(collarY * 0.55 + chest.y * 0.45), r: 0.200, sx: 0.85 },
         { bone: 'chest', pos: chest.clone().setY(collarY - 0.012), r: 0.170, sx: 0.85 },
-      ], M.shell, { capStart: true, capEnd: true });
+      ], M.shell, { capStart: true, capEnd: true }).name = 'jacketBody';
     }
     /* Sleeves: a short yoke on the chest, then upper arm and forearm. */
     for (const side of ['L', 'R']) {
@@ -1030,7 +1030,7 @@ export class Rider {
         // one light rig, so absolute per-part values are not comparable (our
         // body renders at 0.60 of its albedo and our legs at 0.17, purely from
         // facing). The within-figure ratio is what carries.
-      ], M.shell, { capEnd: true, capStart: true });
+      ], M.shell, { capEnd: true, capStart: true }).name = `sleeve${side}`;
     }
   }
 
