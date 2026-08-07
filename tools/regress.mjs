@@ -15,11 +15,16 @@
  *   node tools/regress.mjs            # compare against the manifest
  *   node tools/regress.mjs --update   # accept current output as the baseline
  *
- * PARTICLES ARE OFF for every shot here, deliberately: they are the one thing
- * that is not reproducible across processes, so leaving them on would make
- * every shot report as changed and the tool would be worthless. It follows
- * that this cannot catch a regression whose only effect is on the spray —
- * `close-spray` still has to be looked at.
+ * PARTICLES ARE OFF for the eight-shot pass, deliberately: run together in one
+ * process they are not reproducible, so leaving them on would make every shot
+ * report as changed and the tool would be worthless.
+ *
+ * `close-spray` is then shot SEPARATELY with particles ON, in its own process.
+ * That closes the gap this tool used to carry — "it cannot catch a regression
+ * whose only effect is on the spray" — because the unreproducibility is in the
+ * sequence, not the particles: state accumulates across shots inside one
+ * browser process, and one shot from a fresh pool is exact. See the note on
+ * SPRAY below for the three measurements that establish it.
  *
  * WHAT IS ACTUALLY KNOWN ABOUT DETERMINISM (R32 supersedes R27):
  *
@@ -53,6 +58,23 @@ const SHOTS = [
   'hero-basin', 'valley-vista', 'west-spur',
   'chase-carve', 'rider-portrait', 'air-trick', 'snow-detail', 'ridge-backlight',
 ];
+// `close-spray` gets its OWN process, with particles ON. The blind spot this
+// tool has carried since it was written is now closed, because the reason for
+// it turns out to be narrower than "particles are not reproducible".
+//
+// Measured three ways:
+//
+//   9 shots WITH particles, same list, two runs   -> all 9 differ
+//   1 shot  WITH particles, three runs            -> byte-identical (x3)
+//   1 shot  WITH particles, before/after an edit  -> 0 px noise floor
+//
+// So it is not the particles that are unreproducible, it is the SEQUENCE:
+// particle state accumulates across shots inside one browser process, and a
+// frame depends on how much of it has run before. Shot alone, from a fresh
+// pool, the spray is exactly reproducible — which means the one shot that
+// shows spray can be regression-checked after all, just not in the same
+// process as the other eight.
+const SPRAY = ['close-spray'];
 
 await mkdir(OUT, { recursive: true });
 
@@ -75,6 +97,10 @@ const run = (args) => new Promise((res, rej) => {
 // determinism while rendering a dist built from the unstashed source.
 console.log(`[regress] building, then shooting ${SHOTS.length} shots with particles off…`);
 await run(['tools/shoot.mjs', '--no-particles', '--out', OUT, '--shots', SHOTS.join(',')]);
+// Second process, particles ON, one shot only — see the note on SPRAY above.
+// --no-build because the pass above already built.
+console.log(`[regress] shooting ${SPRAY.join(',')} alone, particles ON…`);
+await run(['tools/shoot.mjs', '--no-build', '--out', OUT, '--shots', SPRAY.join(',')]);
 
 const hashes = {};
 for (const f of (await readdir(OUT)).filter((f) => f.endsWith('.png')).sort()) {
