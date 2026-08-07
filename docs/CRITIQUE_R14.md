@@ -1113,3 +1113,46 @@ drift. Each was killed by measuring the layer rather than reasoning about it,
 and the one that survived was the one nobody had suspected. Splitting a
 pipeline and testing each stage separately is slower than guessing and it is
 the only thing that has reliably worked in this project.
+
+---
+
+## R25 — an exact regression check, built on R24's determinism
+
+R24 made rider shots byte-identical across processes. That turns a question
+that used to need judgement — "did my rider tweak also move the terrain, the
+sky, or a prop?" — into an exact one, so `tools/regress.mjs` asks it.
+
+    node tools/regress.mjs            # compare against the manifest
+    node tools/regress.mjs --update   # accept current output as the baseline
+
+It shoots eight presets with `--no-particles` and compares a SHA-256 per shot
+against `docs/regression-manifest.json`. The manifest stores hashes, not
+images: storing PNGs would put megabytes into git on every baseline update,
+in a project that has just spent a round taking 41 MB back out of the build.
+A hash answers "did it change"; when the answer is yes, the fresh frames are
+on disk to look at.
+
+### Validated in both directions
+
+A regression check that only ever says "unchanged" is worse than none, so both
+halves were tested rather than assumed.
+
+- **No false positives.** Two consecutive runs with no source change: all 8
+  unchanged, exit 0.
+- **True positive, correctly scoped.** One rider colour changed
+  (`glove: 0x141416` → `0x8a1416`) and re-run:
+
+      unchanged (5): hero-basin, ridge-backlight, snow-detail, valley-vista, west-spur
+      CHANGED   (3): air-trick, chase-carve, rider-portrait
+
+  Exactly the three shots with the rider prominent, and not one landscape
+  shot. Then reverted, re-run, all 8 unchanged again — so the revert is clean
+  and the manifest still valid.
+
+### The limitation this inherits
+
+Particles are off for every shot, because they are the one thing that is not
+reproducible across processes (R24). It follows that **this cannot catch a
+regression whose only effect is on the spray** — `close-spray` still has to be
+looked at by eye. That is a real hole, and it is the direct cost of the trick
+that makes the rest of it exact.
