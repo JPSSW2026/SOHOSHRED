@@ -1156,3 +1156,74 @@ reproducible across processes (R24). It follows that **this cannot catch a
 regression whose only effect is on the spray** — `close-spray` still has to be
 looked at by eye. That is a real hole, and it is the direct cost of the trick
 that makes the rest of it exact.
+
+---
+
+## R26 — The glove: four rounds of fixing the wrong object
+
+The user's standing note on the rider is "clothing is better, arms are rigid
+and head is weird". The turnaround card said the same thing more precisely:
+the sleeves ran at one diameter from shoulder to wrist and ended in a dark
+socket with a small dark lump inside it. Three previous rounds had all read
+that socket as a **cuff** problem and adjusted cuff radii — out, in, out,
+narrower, "close onto the wrist bridge". The comments in `rider.js` record
+each of those as a fix. None of them worked, and the reason is worth keeping.
+
+### What the tint test showed
+
+Rather than reason about radii again, all three glove pieces were given flat
+`MeshBasicMaterial` colours and the turnaround re-shot. That took about a
+minute and ended the argument:
+
+- **green** (gauntlet) and **yellow** (mitt) were almost entirely *inside* the
+  sleeve. Only a crescent of each was ever on screen.
+- the dark region everyone had been calling "a hole" was **the sleeve's own
+  surface**, not the glove and not a gap.
+
+So every previous round had been adjusting the object that was not visible,
+to fix an artifact owned by the object that was.
+
+### Two real causes, both structural
+
+**1. The sleeve did not taper.** It ran 0.092 below the elbow to 0.086 at the
+wrist — a 172 mm wrist against a 188 mm bicep, ratio 0.92, where a real arm is
+about 0.70 even inside a padded shell. That is exactly what "the arms are
+rigid" describes: a limb whose diameter never changes reads as unarticulated
+however the bones move. It also made the glove problem *unsolvable* — a gloved
+hand is about 110 mm across and simply cannot emerge from a 172 mm sleeve, so
+no cuff geometry could ever have worked.
+
+**2. `capEnd` produces a dish, not a dome.** In `tube()` the end cap sweeps in
+**+Y** (`p.y + lift`, and `rr` shrinks to the axis). For the jacket hem, whose
+stations run downward and whose cap should curl up inside the garment, that is
+correct — and that is the case it was written for. A sleeve's stations also run
+downward, so its cap curls *back up into the sleeve*: the tube finishes with a
+concave dish sunk into its own end. Seen from below — most of a snowboarder's
+screen time — that dish is a dark cup. It is the "hole".
+
+### The fix
+
+- Forearm tapers 0.086 → 0.072 → 0.070, wrist/bicep ratio 0.75.
+- The sleeve **shuts 55 mm clear of the wrist**, so its dish is nowhere near
+  where a hand goes.
+- A 120 mm gauntlet on the **forearm** bone covers the whole termination,
+  dish included. On the forearm and not the hand deliberately: the wrist swings
+  up to ~25° off the forearm, which over a long cone walks the mouth about
+  10 mm sideways and would uncover the sleeve rim on one side. A real gauntlet
+  sits on the forearm too; the hand flexes inside it.
+- Mitt enlarged to 0.059 × 0.076 × 0.071 so it is *wider* than the sleeve end,
+  which is what makes a hand read as a hand rather than a stub.
+
+### The method note
+
+Tinting is cheaper than reasoning and it is not close. Four rounds of careful
+argument about cuff radii produced four wrong answers; one flat-colour render
+produced the right one in a single pass. This is the same lesson as the
+removal-based isolation in `who-owns.mjs` and `backdrop-detail.mjs` — when a
+question is "which object am I actually looking at", make the object identify
+itself instead of inferring it from what the picture ought to contain.
+
+One caveat recorded honestly: cells 3 and 4 of the turnaround still show a
+stubby foreshortened arm, because in those poses the forearm points near the
+lens. That is projection, not geometry — it was present before this change and
+is not something arm profiling can remove.

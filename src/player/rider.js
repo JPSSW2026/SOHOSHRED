@@ -1089,22 +1089,71 @@ export class Rider {
         // the cuff over the glove, so the profile has to go out, in, out.
         { bone: 'chest',           pos: sh.clone().setY(sh.y + 0.055), r: 0.118 },
         { bone: `upperArm${side}`, pos: sh,                            r: 0.114 },
-        { bone: `upperArm${side}`, pos: jointPos(`foreArm${side}`, 0.075), r: 0.096 },
-        { bone: `upperArm${side}`, pos: jointPos(`foreArm${side}`, 0.020), r: 0.108 },
-        { bone: `foreArm${side}`,  pos: jointPos(`foreArm${side}`, -0.05), r: 0.092 },
-        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.062),    r: 0.086 },
-        // Cuff band, then CLOSE onto the glove. The profile used to end on
-        // its widest ring, so the sleeve finished as an open 20 cm disc with
-        // a 10 cm mitt poking out of it — a wizard sleeve, and the loudest
-        // wrong note anywhere on the figure at a close crop. A shell cuff is
-        // an elasticated band: it stands proud of the forearm and then grips
-        // down onto the glove, so the last ring has to be the NARROWEST.
-        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.030),    r: 0.101 },
-        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.010),    r: 0.090 },
-        // Close onto the 0.048 wrist bridge, not merely narrower than the
-        // ring before it: at 0.070 the cuff still ended clear of the wrist and
-        // you looked down an open annulus into the inside of the sleeve.
-        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, -0.016),   r: 0.044 },
+        { bone: `upperArm${side}`, pos: jointPos(`foreArm${side}`, 0.075), r: 0.094 },
+        { bone: `upperArm${side}`, pos: jointPos(`foreArm${side}`, 0.020), r: 0.100 },
+        // AND THE FOREARM TAPERS. This profile ran 0.092 below the elbow to
+        // 0.086 at the wrist — a 172 mm wrist against a 188 mm bicep, ratio
+        // 0.92, where a real arm is about 0.70 even inside a padded shell.
+        // That is what "the arms are rigid" describes: a limb whose diameter
+        // never changes has no elbow and no wrist, so nothing about it reads
+        // as articulated however the bones move.
+        //
+        // It is also why three rounds of cuff and glove geometry failed. A
+        // gloved hand is ~110 mm across; it cannot emerge from a 172 mm
+        // sleeve, so every version of the glove ended up sitting inside the
+        // sleeve's own silhouette, and the dark socket around it got blamed on
+        // the cuff each time. The hand was never the problem — the tube it
+        // came out of was too fat for any hand to clear.
+        { bone: `foreArm${side}`,  pos: jointPos(`foreArm${side}`, -0.05), r: 0.086 },
+        // Stations must run MONOTONICALLY down the arm. `tube` accumulates arc
+        // length as `pos.distanceTo(prev)`, which is unsigned, so a station
+        // placed back up the limb still advances the arc — the tube folds over
+        // itself and bulges instead of erroring. This list briefly read
+        // hand+0.062, +0.070, +0.055 and produced exactly that bulge at the
+        // wrist.
+        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.090),    r: 0.076 },
+        // NO FLARE AT THE CUFF. Two rounds of notes said "a shell cuff stands
+        // proud of the forearm", so the profile went out to r 0.101 — a 20 cm
+        // mouth — before closing. On the turnaround that reads as a trumpet
+        // with a black hole in it, at every one of the six angles, and it is
+        // the loudest wrong note on the figure.
+        //
+        // The hole is the diagnosis, not the flare. Looking down the arm axis
+        // the cuff's silhouette was r 0.101 and the mitt inside it was
+        // 0.053 x 0.063 — barely half. Whatever the cuff does, a mass that
+        // small cannot fill its mouth, so you see the sleeve's dark interior
+        // and read a tunnel.
+        //
+        // Which is why real snowboard gloves are GAUNTLETS: the glove's cuff
+        // goes on OVER the jacket sleeve, so the sleeve terminates inside the
+        // glove and no viewing angle can look into it. That is built on the
+        // hand bone below. Here the sleeve just tapers to the wrist the way a
+        // sleeve does when something else is going to cover its end.
+        // AND IT STOPS ABOVE THE WRIST. Tinting the three glove pieces and
+        // re-shooting the turnaround settled what four rounds of reasoning
+        // about cuff radii could not: the gauntlet and the mitt were almost
+        // entirely INSIDE the sleeve, and the dark region everyone kept
+        // reading as "a hole" was the sleeve's own funnel interior, lit from
+        // outside. Not a hole, and not the glove — the sleeve simply ran 16 mm
+        // past the wrist joint and swallowed the hand.
+        //
+        // A sleeve that ends where the hand begins leaves nothing for a hand
+        // to occupy. This one now closes by hand+0.020, and the whole
+        // termination — the last taper and the cap dome — lives inside the
+        // gauntlet built below.
+        // The last two stations are where the sleeve SHUTS, and they are 55 mm
+        // clear of the wrist on purpose. `capEnd` (see `tube`) sweeps its dome
+        // in +Y — back up the tube — so a downward-running sleeve does not
+        // finish with a convex cap at all; it finishes with a concave DISH
+        // sunk into its own end. Read from below, which is most of a
+        // snowboarder's screen time, that dish is a dark cup, and it is what
+        // three rounds of notes described as "a hole where the hand should
+        // be". Nothing about the cuff radius could have fixed it.
+        //
+        // So the sleeve shuts up here and the gauntlet below covers the whole
+        // termination — dish included.
+        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.070),    r: 0.070 },
+        { bone: `foreArm${side}`,  pos: jointPos(`hand${side}`, 0.055),    r: 0.036 },
         // SHELL, not shellDeep. Rendered beside the reference under one light
         // rig, that figure reads as a magenta rider throughout -- its sleeves
         // are the same bright shell as its body, measurably 1.2-2.1x the body's
@@ -1796,22 +1845,51 @@ export class Rider {
       );
       const ua = bone(`upperArm${side}`, sh, 0, 0, 0);
       const fa = bone(`foreArm${side}`, ua, 0, -DIM.upperArm, 0);
-      // Cuff tab at the wrist.
-      const cuff = trim(new THREE.TorusGeometry(0.050, 0.008, 6, 16), M.rubber, fa, 0, -DIM.foreArm + 0.012, 0);
-      cuff.rotation.x = Math.PI * 0.5;
 
       const hand = bone(`hand${side}`, fa, 0, -DIM.foreArm, 0);
+      // THE GAUNTLET. A snowboard glove's cuff is worn over the jacket sleeve,
+      // not tucked under it, and that is what makes the sleeve end
+      // unphotographable rather than merely tidy: the sleeve stops INSIDE this
+      // cone, so there is no angle from which its interior is on screen. Every
+      // previous attempt narrowed the sleeve's own last ring instead, which
+      // cannot work — a closing ring still presents an annulus end-on, and the
+      // mitt behind it was too small to fill the hole.
+      //
+      // A Cylinder is capped at both ends by default, so this is a solid; the
+      // top disc sits at r 0.096 against a sleeve that is r ~0.084 there,
+      // leaving a 12 mm rim, which is what a gauntlet mouth actually looks
+      // like. The torus rounds that rim off — it is the drawcord channel, and
+      // it replaces a wrist tab that used to sit at r 0.050 on the forearm,
+      // buried inside a r 0.086 sleeve where nothing could ever see it.
+      //
+      // ON THE FOREARM, NOT THE HAND. The gauntlet has to stay coaxial with
+      // the sleeve it is covering, and the hand bone does not: the wrist
+      // swings up to ~25 deg off the forearm, which over a 78 mm cone walks
+      // the mouth about 10 mm sideways — enough to uncover the sleeve's rim on
+      // one side and reopen exactly the defect this exists to close. A real
+      // gauntlet sits on the forearm too; it is the hand that flexes inside
+      // it, which is what the mitt below does.
+      const wy = -DIM.foreArm;
+      // 120 mm long, which is not arbitrary: it has to reach from hand+0.090
+      // (above where the sleeve starts shutting) down to hand−0.030 (inside
+      // the mitt), so no part of the sleeve's closure is ever on screen. Real
+      // gauntlets are about this long for the same reason — they exist to make
+      // the sleeve/glove junction snowproof, and a short one does not.
+      part(new THREE.CylinderGeometry(0.088, 0.062, 0.120, 14), M.glove, fa, 0, wy + 0.030, 0.002);
+      const cuff = trim(new THREE.TorusGeometry(0.085, 0.010, 6, 18), M.rubber, fa, 0, wy + 0.088, 0.002);
+      cuff.rotation.x = Math.PI * 0.5;
+
       // Wrist bridge: the cuff-to-mitt junction opened a visible gap whenever
       // the arm extended (round-4 critic catch).
       joint(0.048, M.glove, hand, 0, -0.006, 0);
-      const mitt = part(new THREE.SphereGeometry(0.060, 12, 10), M.glove, hand, 0, -0.048, 0.004);
-      mitt.scale.set(0.88, 1.30, 1.05);
+      const mitt = part(new THREE.SphereGeometry(0.062, 12, 10), M.glove, hand, 0, -0.076, 0.004);
+      mitt.scale.set(0.95, 1.22, 1.14);
       // A thumb, so the glove is a glove rather than a ball on a stick. It
       // sits on the chest side (−X) of the mitt — the side of a relaxed
       // hanging hand a viewer actually sees.
-      const thumb = part(new THREE.CapsuleGeometry(0.020, 0.036, 3, 7), M.glove, hand, -0.030, -0.042, 0.030);
+      const thumb = part(new THREE.CapsuleGeometry(0.022, 0.042, 3, 7), M.glove, hand, -0.038, -0.072, 0.036);
       thumb.rotation.set(0.5, 0, sx * 0.5);
-      const knuckle = trim(new THREE.BoxGeometry(0.052, 0.030, 0.070), M.rubber, hand, 0, -0.086, 0.006);
+      const knuckle = trim(new THREE.BoxGeometry(0.062, 0.026, 0.076), M.rubber, hand, 0, -0.110, 0.006);
       knuckle.rotation.x = 0.12;
     }
 
