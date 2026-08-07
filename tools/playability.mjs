@@ -61,7 +61,37 @@ await page.waitForFunction(() => window.__SOHO?.isReady, null, { timeout: 300000
 
 // Hand control back to requestAnimationFrame. The harness leaves manualTime
 // set; a player never has it set.
-await page.evaluate(() => { window.__SOHO.engine.manualTime = false; });
+//
+// Also wrap every system's update/fixedUpdate, and the composer render, in a
+// timer. The docstring above promised per-system CPU shares and the tool did
+// not measure them -- and there is now a concrete question for it to answer:
+// dropping the viewport to a tenth of the pixels barely changed the frame
+// count, so the per-frame cost is close to resolution-independent and nobody
+// knows where it goes.
+await page.evaluate(() => {
+  const S = window.__SOHO;
+  S.engine.manualTime = false;
+  const acc = (window.__PROF = { calls: {}, ms: {} });
+  const wrap = (obj, key, label) => {
+    const fn = obj[key];
+    if (typeof fn !== 'function') return;
+    obj[key] = function (...a) {
+      const t = performance.now();
+      const r = fn.apply(this, a);
+      const d = performance.now() - t;
+      acc.ms[label] = (acc.ms[label] || 0) + d;
+      acc.calls[label] = (acc.calls[label] || 0) + 1;
+      return r;
+    };
+  };
+  S.engine.systems.forEach((sys, i) => {
+    const name = sys.constructor?.name || sys.name || `system${i}`;
+    wrap(sys, 'update', `update:${name}`);
+    wrap(sys, 'fixedUpdate', `fixed:${name}`);
+  });
+  if (S.ctx.composer) wrap(S.ctx.composer, 'render', 'composer.render');
+  else wrap(S.engine.renderer, 'render', 'renderer.render');
+});
 
 const before = await page.evaluate(() => ({
   objects: (() => { let n = 0; window.__SOHO.ctx.scene.traverse(() => n++); return n; })(),
@@ -147,8 +177,27 @@ const after = await page.evaluate(({ }) => {
     // Props keeps its own per-phase timings; anything else exposing one is
     // reported too rather than assumed absent.
     propTimings: S.ctx.props?._timings ?? null,
+    prof: window.__PROF,
   };
 }, {});
+
+// Per-frame cost by system, as a share. Absolute milliseconds under
+// SwiftShader mean nothing about real hardware; the SHARE of JS-side work
+// does, and the composer line is what tells us whether the frame is going on
+// rasterisation at all.
+const prof = [];
+if (after.prof) {
+  const total = Object.values(after.prof.ms).reduce((a, b) => a + b, 0);
+  for (const [k, v] of Object.entries(after.prof.ms)) {
+    prof.push({
+      what: k,
+      calls: after.prof.calls[k],
+      msPerCall: +(v / Math.max(1, after.prof.calls[k])).toFixed(2),
+      pctOfProfiled: +(100 * v / Math.max(1e-6, total)).toFixed(1),
+    });
+  }
+  prof.sort((a, b) => b.pctOfProfiled - a.pctOfProfiled);
+}
 
 const fps = after.frame && after.elapsed ? +(after.frame / after.elapsed).toFixed(1) : null;
 console.log(JSON.stringify({
@@ -172,6 +221,7 @@ console.log(JSON.stringify({
     heapMB: before.heapMB == null ? 'unavailable' : `${before.heapMB} -> ${after.heapMB}`,
   },
   lastFrame: { drawCalls: after.drawCalls, triangles: after.triangles },
+  perFrameCost: prof.slice(0, 12),
   series,
 }, null, 1));
 await browser.close(); await server.close();

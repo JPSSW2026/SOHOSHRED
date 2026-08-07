@@ -954,3 +954,67 @@ not to hundreds. Frame cost in this harness is close to resolution-independent,
 so it is not rasterisation. Anyone wanting a long-run leak test needs to find
 the actual cost (fixed-size post buffers, shadow passes, scene traversal) or
 run headless without rendering at all.
+
+---
+
+## R22 — where the frame goes, and why performance cannot be answered here
+
+R21 left one unexplained fact: dropping the viewport to a tenth of the pixels
+barely changed the frame count. `tools/playability.mjs` now wraps every
+system's `update`/`fixedUpdate` and the composer's `render` in a timer — the
+per-system share its docstring had promised and never measured.
+
+| what | calls | ms/call | % of profiled |
+|---|---|---|---|
+| **composer.render** | 27 | 347.04 | **98.9** |
+| update:Terrain | 27 | 2.62 | 0.7 |
+| update:PostProcessing | 27 | 0.27 | 0.1 |
+| everything else (physics, rider, sky, props, trails, input, tricks, camera, fx) | | ≤0.17 | ~0.2 |
+
+**JS-side game logic is about 1% of the frame.** That is the one number here
+that transfers to real hardware, and it is a good one.
+
+### Three hypotheses, all wrong
+
+Frame cost is resolution-light, so something fixed dominates. Each candidate
+was tested by changing it and counting completed frames:
+
+| condition | fps |
+|---|---|
+| as shipped (4096² shadow) | 0.80 |
+| shadow map 1024² — 16× fewer texels | 0.76 |
+| terrain + backdrop hidden | 0.76 |
+
+None of them moves it. The shadow map is not the cost; the terrain and
+backdrop geometry are not the cost.
+
+### A measurement that could not have worked
+
+The first shadow A/B used `engine.tick()` under `manualTime` and timed it with
+`performance.now()`. It reported 5.7 ms/frame at 4096² and 6.7 ms at 1024² —
+the *smaller* map slower, and both fifty times faster than the 347 ms the rAF
+profile showed for the same work.
+
+`tick()` returns once GPU work is **submitted**. WebGL is asynchronous, so
+that timer never saw the rendering at all; it measured command submission.
+Only under rAF, where the browser blocks on presentation, does elapsed time
+include the GPU. Both A/Bs above were re-run that way before being believed.
+
+### The honest conclusion: this question is out of reach from here
+
+SwiftShader is a software rasteriser. Its bottleneck is not a GPU's
+bottleneck, and the fact that no lever moves it says the cost is SwiftShader's
+own fixed overhead rather than anything about this game. **0.8 fps here means
+nothing about real hardware and must not be quoted as if it did.**
+
+What can be stated:
+
+- JS game logic ≈ 1% of frame time — transferable, and healthy
+- 1.4 M triangles and 210 draw calls per frame — modest for real hardware
+- the post chain's targets scale correctly with the canvas (400×225 canvas →
+  400×225 scene target, bloom pyramid 200×112 down to 12×7)
+- a 4096² shadow map for one directional light — an ordinary choice, and
+  measurably not a bottleneck even here
+
+Anyone who needs a real performance answer has to run it on a real GPU. No
+further tuning should be attempted from this container.
