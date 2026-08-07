@@ -1626,3 +1626,48 @@ those rounds produced — **when an experiment returns "no effect", verify the
 experiment ran before believing the result.** A diff of the two frames took
 seconds and turned a false negative into a tooling bug that had been silently
 degrading every regression check in the project.
+
+---
+
+## R33 — `regress.mjs` validated in both directions, for the first time
+
+With the build restored (R32), the tool was put through the test R25 claimed to
+have run:
+
+    no source change      ->  unchanged (8)
+    glove 0x141416->0x8a1416
+                          ->  unchanged (5): hero-basin, ridge-backlight,
+                                             snow-detail, valley-vista, west-spur
+                              CHANGED   (3): air-trick, chase-carve,
+                                             rider-portrait
+    reverted              ->  unchanged (8)
+
+No false positives, a true positive scoped to exactly the three rider-prominent
+shots, and a clean revert. The tool can now be trusted to answer "which frames
+did this edit move".
+
+### R25's conclusion survives; its evidence did not
+
+R25 asserted that a rider colour change moves only the three rider shots, and
+used that as proof the tool scoped changes tightly. The assertion reproduces
+exactly under a valid test. But the run that originally produced it went
+through `--no-build`, so it was not evidence of anything at the time. A right
+answer from a broken instrument is still a right answer — and it is still not a
+measurement. Worth keeping the two apart rather than quietly claiming R25 was
+fine all along.
+
+### And one inference from the invalid run is now withdrawn
+
+Off the back of the bogus "8 of 8 changed" result, R27 and the glove commit
+reasoned that a rider **geometry** change can legitimately move landscape
+frames, because the rider sits in the shadow cascade and its silhouette alters
+the depth map terrain is lit against. That is a plausible mechanism and it may
+well be true. **It is not established.** The 8-of-8 that prompted it was a
+`dist` mismatch, not a shadow effect, and no valid geometry A/B has been run
+since. It should be treated as an open hypothesis, and if it matters, tested:
+change rider geometry only, run `regress.mjs`, and see whether any landscape
+frame moves.
+
+Recording it because the failure is subtle — the invalid result was explained
+away with a mechanism that sounded right, and a satisfying explanation is the
+easiest way to stop looking for the real one.
