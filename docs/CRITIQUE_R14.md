@@ -1018,3 +1018,53 @@ What can be stated:
 
 Anyone who needs a real performance answer has to run it on a real GPU. No
 further tuning should be attempted from this container.
+
+---
+
+## R23 — which shots can carry an A/B, and which cannot
+
+Two claims about harness noise have been carried in this project, and both
+were wrong. This settles it with a direct experiment: shoot the same set
+twice, in separate processes, and diff.
+
+**Run-to-run difference, identical build, identical shot sequence:**
+
+| shot | mean levels | % of pixels > 4 | max |
+|---|---|---|---|
+| valley-vista | **0.0000** | **0.000%** | 0 |
+| west-spur | **0.0000** | **0.000%** | 0 |
+| hero-basin | 1.7482 | 5.824% | 131 |
+| chase-carve | 1.6543 | 4.425% | 175 |
+| close-spray | 2.1641 | 6.295% | 161 |
+| air-trick | 1.6408 | 4.617% | 102 |
+| rider-portrait | 2.0887 | 6.415% | 173 |
+
+Determinism is **per-shot**, and it reproduces: the `valley-vista,west-spur`
+pair came back bit-exact on two independent attempts. The split tracks
+whether the rider and its simulation are in frame — the two bit-exact shots
+are pure free-camera landscape views.
+
+### Both prior claims corrected
+
+- The long-standing note that "~17% of pixels differ >4 levels between runs,
+  ~19% noise floor even at tick(0)" is **too high and not universal**. It was
+  measured inside a single page across repeated mutate-and-tick cycles, which
+  is a different thing from two independent runs, and it was then applied to
+  everything.
+- Last turn I said "these shots are deterministic" on the strength of one
+  matching pair. That is true of `valley-vista` and `west-spur` and false of
+  every rider shot.
+
+### What this changes
+
+**A quantitative A/B belongs on `valley-vista` or `west-spur`**, where the
+floor is zero and a 0.18% difference is unambiguous signal. On a rider shot
+the floor is 4–6% of pixels over 4 levels, so any effect smaller than that is
+invisible no matter how carefully it is measured — and several earlier
+"inconclusive" readings on rider shots were probably below that floor rather
+than absent.
+
+It also strengthens the meshopt result in the previous commit rather than
+weakening it: that comparison happened to use the two bit-exact shots, so the
+1683 differing pixels on `valley-vista` were real signal against a true zero
+floor.
