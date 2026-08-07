@@ -20,6 +20,26 @@
  * every shot report as changed and the tool would be worthless. It follows
  * that this cannot catch a regression whose only effect is on the spray —
  * `close-spray` still has to be looked at.
+ *
+ * RE-BASELINE AT THE START OF EVERY SESSION (R27). Determinism here is real
+ * but narrower than it first looked:
+ *
+ *   · same source + SAME SHOT LIST, repeated  -> byte-identical. Verified.
+ *   · same shot in a DIFFERENT-LENGTH list    -> different bytes. Shots render
+ *     sequentially in one browser process and a frame depends on what preceded
+ *     it, so hashes are only comparable against the same list.
+ *   · same source, DIFFERENT CONTAINER        -> different bytes.
+ *
+ * That last one is what makes the committed manifest a trap: it is a
+ * cross-session artifact, and on a fresh container it disagrees with its own
+ * unmodified source on every shot. Run `--update` once at session start;
+ * a comparison against a manifest from a previous session means nothing.
+ *
+ * Also worth knowing before reading a result: a rider GEOMETRY change can
+ * legitimately move landscape frames, because the rider sits in the shadow
+ * cascade and its silhouette alters the depth map terrain is lit against. A
+ * rider COLOUR change cannot. "Only the rider shots moved" is therefore not a
+ * general property of this tool — it was a property of that one colour edit.
  */
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';

@@ -1875,22 +1875,40 @@ export class Rider {
       // the mitt), so no part of the sleeve's closure is ever on screen. Real
       // gauntlets are about this long for the same reason — they exist to make
       // the sleeve/glove junction snowproof, and a short one does not.
-      part(new THREE.CylinderGeometry(0.088, 0.062, 0.120, 14), M.glove, fa, 0, wy + 0.030, 0.002);
-      const cuff = trim(new THREE.TorusGeometry(0.085, 0.010, 6, 18), M.rubber, fa, 0, wy + 0.088, 0.002);
+      //
+      // SIZED AGAINST THE SLEEVE, not against a hand. Dumping the built
+      // sleeve's rest radii about the arm axis confirmed the taper lands
+      // exactly as specified — 0.080, 0.074, 0.038, closing 55 mm above the
+      // wrist — so the sleeve is doing its job. What was left was a scale
+      // mismatch: a 0.088 gauntlet against a 0.080 sleeve stands only 8 mm
+      // proud, and 8 mm of near-black against dark red does not read as a
+      // separate object. It reads as the sleeve's own shadow, which is what
+      // kept the arm looking like it ended in a socket.
+      //
+      // This figure's forearm is 170 mm across. A glove that terminates it has
+      // to be that scale too, or it is a cap rather than a hand.
+      part(new THREE.CylinderGeometry(0.100, 0.084, 0.120, 14), M.glove, fa, 0, wy + 0.030, 0.002);
+      const cuff = trim(new THREE.TorusGeometry(0.097, 0.011, 6, 18), M.rubber, fa, 0, wy + 0.088, 0.002);
       cuff.rotation.x = Math.PI * 0.5;
 
       // Wrist bridge: the cuff-to-mitt junction opened a visible gap whenever
       // the arm extended (round-4 critic catch).
-      joint(0.048, M.glove, hand, 0, -0.006, 0);
-      const mitt = part(new THREE.SphereGeometry(0.062, 12, 10), M.glove, hand, 0, -0.076, 0.004);
-      mitt.scale.set(0.95, 1.22, 1.14);
+      joint(0.062, M.glove, hand, 0, -0.006, 0);
+      const mitt = part(new THREE.SphereGeometry(0.075, 12, 10), M.glove, hand, 0, -0.092, 0.004);
+      mitt.scale.set(0.95, 1.24, 1.10);
       // A thumb, so the glove is a glove rather than a ball on a stick. It
       // sits on the chest side (−X) of the mitt — the side of a relaxed
       // hanging hand a viewer actually sees.
-      const thumb = part(new THREE.CapsuleGeometry(0.022, 0.042, 3, 7), M.glove, hand, -0.038, -0.072, 0.036);
+      const thumb = part(new THREE.CapsuleGeometry(0.026, 0.048, 3, 7), M.glove, hand, -0.046, -0.084, 0.044);
       thumb.rotation.set(0.5, 0, sx * 0.5);
-      const knuckle = trim(new THREE.BoxGeometry(0.062, 0.026, 0.076), M.rubber, hand, 0, -0.110, 0.006);
-      knuckle.rotation.x = 0.12;
+      // A BAND, not a box. The knuckle guard was a 0.062 x 0.026 x 0.076 box
+      // sitting at the mitt's centre, where the mitt's own half-width is 0.075
+      // — so it was entirely inside the glove and had never rendered a single
+      // pixel, in any pose, since it was added. A torus at the knuckle line
+      // stands proud on every axis and does not depend on guessing which way
+      // round the back of the hand faces.
+      const knuckle = trim(new THREE.TorusGeometry(0.072, 0.010, 6, 16), M.rubber, hand, 0, -0.130, 0.004);
+      knuckle.rotation.x = Math.PI * 0.5;
     }
 
     /* --- legs -------------------------------------------------------- */

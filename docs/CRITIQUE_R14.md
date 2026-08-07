@@ -1134,6 +1134,12 @@ on disk to look at.
 
 ### Validated in both directions
 
+> **Corrected in R27 — read that section before trusting this one.** The
+> validation below is real but its scope was overstated: determinism holds for
+> a given shot list *within one container session*, not across sessions, and
+> not across different shot lists. A manifest committed to git will not match
+> a later session.
+
 A regression check that only ever says "unchanged" is worse than none, so both
 halves were tested rather than assumed.
 
@@ -1227,3 +1233,67 @@ One caveat recorded honestly: cells 3 and 4 of the turnaround still show a
 stubby foreshortened arm, because in those poses the forearm points near the
 lens. That is projection, not geometry — it was present before this change and
 is not something arm profiling can remove.
+
+
+---
+
+## R27 — What `regress.mjs` determinism actually means
+
+R25 claimed `shoot.mjs --no-particles` "renders byte-identically across
+separate processes" and that the manifest could therefore scope a change
+exactly. Using it on the R26 rider work produced a result that could not be
+right: **all 8 shots changed**, including pure landscape frames — where the
+earlier glove-colour A/B had moved only 3.
+
+The control settles it. On **clean HEAD, with the working tree stashed and
+zero source changes**, all 8 shots still differed from the committed manifest.
+So the manifest was not measuring my edit at all.
+
+### Three runs, three answers, and what separates them
+
+| run | shot list | `valley-vista` |
+|---|---|---|
+| committed manifest | 8 shots | `8e2fda497accdc8e` |
+| clean HEAD, this session | 8 shots | `b6f8f6426e0bc6e4` |
+| with R26 change | 8 shots | `f26739561ceb1f5e` |
+| single shot, twice | 1 shot | `205462dc…` (both) |
+| two shots, twice | 2 shots | `f2673956…` (both) |
+
+Two facts fall out, and they point in opposite directions from "the tool is
+flaky":
+
+1. **Determinism holds.** Every repeated run with the *same* shot list is
+   byte-identical — single-shot twice, two-shot twice, and the two-shot run
+   agrees exactly with the 8-shot run of the same source. This is not a
+   coin-flip.
+2. **Output depends on the shot list.** `valley-vista` alone hashes
+   `205462dc`; as the second of two it hashes `f2673956`. Shots are rendered
+   sequentially in one browser process, and a frame depends on what preceded
+   it. So a hash is only comparable against another hash taken with the *same*
+   list.
+
+That leaves the manifest/HEAD mismatch, which neither fact explains — same
+list, same source, different bytes. The remaining variable is the process
+itself: the manifest was baselined in an earlier container. **Determinism is
+per-session, not per-repository**, and a manifest committed to git is a
+cross-session artifact that will not reproduce. It has to be re-baselined at
+the start of a session to mean anything.
+
+### And the premise of the old A/B was wrong too
+
+R25 read "glove colour changed → only the 3 rider shots moved" as proof the
+tool scopes changes tightly. It does — but that result does not generalise the
+way it was used. A rider **colour** change cannot move a landscape frame; a
+rider **geometry** change can, because the rider is in the shadow cascade and
+its silhouette alters the depth map that terrain is lit against. So "8 of 8
+changed" after a geometry edit is not necessarily a fault, and R25's implied
+rule — landscape frames moving means something is wrong — does not hold.
+
+### What this costs
+
+The R26 rider change is verified by the turnaround card across six angles, by
+a direct dump of the sleeve's rest radii, and by a green build — **not** by the
+regression tool, which could not speak to it. The manifest is re-baselined in
+this session so the tool is usable again going forward, with the honest caveat
+that the next session will have to do the same before its first comparison
+means anything.
