@@ -8,11 +8,28 @@
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+
+/**
+ * One loader, with the meshopt decoder attached.
+ *
+ * Both shipped GLBs are EXT_meshopt_compression: 33.5 MB of float32 positions,
+ * normals, UVs and u32 indices became 8.2 MB. Meshopt rather than Draco
+ * because three vendors this decoder already — no wasm blob to copy into
+ * public/ and no decoder path to configure, which would have given back a
+ * chunk of what the compression saved — and because it decodes far faster.
+ *
+ * Attaching the decoder is harmless for uncompressed assets: GLTFLoader only
+ * calls it when the extension is actually present.
+ */
+function loader() {
+  return new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+}
 import { CONFIG } from '../core/config.js';
 import { SOHO_HORIZON } from './sky.js';
 
 export async function mountBackdropModel(ctx) {
-  const gltf = await new GLTFLoader().loadAsync('models/backdrop-ranges.glb');
+  const gltf = await loader().loadAsync('models/backdrop-ranges.glb');
   const root = gltf.scene;
   let mesh = null;
   root.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
@@ -220,7 +237,7 @@ export async function mountBackdropModel(ctx) {
  * collar buried around the foundation so it sits IN the snowpack.
  */
 export async function mountBaseStation(ctx) {
-  const gltf = await new GLTFLoader().loadAsync('models/base-station.glb');
+  const gltf = await loader().loadAsync('models/base-station.glb');
   const root = gltf.scene;
   let mesh = null;
   root.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
