@@ -1387,9 +1387,24 @@ own ellipsoid at the same height. Sorted by `proud`:
     TorusGeometry    -0.0383   GOGGLE STRAP
     BoxGeometry      -0.0394   vent slot
 
-Six pieces of detail are inside the shell, by 17 to 39 mm. The brim, the
-goggle strap and every vent slot. **That is why the head reads as a featureless
-egg — everything meant to break it up is buried in it.**
+**This table was over-read when first written, and the correction matters more
+than the original claim.** `proud` is `maxX - skullHalfWidthHere`: it measures
+whether a part breaks the skull's **X silhouette**, which is precisely what the
+tool's docstring says it is for. That is the right question for a ring at
+goggle height, which is supposed to girdle the helmet. It is the *wrong*
+question for a vent slot lying on the crown or a strap wrapping the back —
+both legitimately score negative while sitting on the surface and rendering
+perfectly well.
+
+The tint pass in this same section proves it: the goggle strap shows as visible
+magenta slivers. It is not buried. Only the **brim** is confirmed dead, and by
+two independent means — it scores -0.0362 on a metric that genuinely applies to
+it (a ring of radius 0.071 inside a shell of radius 0.106), and orange never
+appeared anywhere in the four tinted views.
+
+So: one piece confirmed invisible, not six. The rest of the negative rows are
+unproven either way, because no instrument here has yet asked "is this on the
+surface" as distinct from "does this cross the silhouette".
 
 Both buried pieces got there the same way, and the comments record it: each was
 once poking out wrongly (the brim "read as a rod driven through the helmet"),
@@ -1417,7 +1432,14 @@ head". Moving the rim back far enough to stop halving the side view requires
 growing HOOD_R, which walks straight back into the floating-hoop failure. That
 needs a considered pass, not a late-session parameter nudge.
 
-The remaining buried pieces — strap at -0.0383, three vents at -0.0168,
--0.0187, -0.0394 — are the same one-line fix as the brim and are simply not
-done yet. They are listed above with their numbers so the next round does not
-have to re-measure.
+The other negative rows are **not** established as defects, per the correction
+above, and must not be "fixed" on the strength of that table. Deciding whether
+a crown vent or a rear strap actually sits on the shell needs a surface-distance
+measurement — per vertex against the ellipsoid along its own normal — which
+`head-extents.mjs` does not currently compute. That is the tool change the next
+round should make before touching any of them.
+
+Note what nearly happened: having found one real buried piece, the temptation
+was to read the whole negative column as the same defect and fix six things.
+Five of them may not be broken. A metric that answers one question will answer
+a different question wrongly and just as confidently.
