@@ -33,11 +33,17 @@
  *   · same shot in a DIFFERENT-LENGTH list    -> different bytes. Shots render
  *     sequentially in one browser process and a frame depends on what preceded
  *     it, so hashes are only comparable against the same list.
- *   · across containers                       -> UNKNOWN. R27 claimed this
- *     differs and told you to re-baseline every session. That conclusion came
- *     from a control that stashed a source file and re-ran with `--no-build`,
- *     which rendered a dist built from the *unstashed* source. The control
- *     tested nothing. The question is open; do not assume either answer.
+ *   · ACROSS CONTAINERS                       -> byte-identical. Measured on a
+ *     real restart (R36): same commit, manifest committed from the previous
+ *     container, fresh clone and fresh build -> all 9 unchanged, close-spray
+ *     included. So the committed manifest IS valid across sessions and there
+ *     is NO need to re-baseline at session start. R27 said the opposite and
+ *     was wrong; its control stashed a source file and re-ran with
+ *     `--no-build`, rendering a dist built from the *unstashed* source, so it
+ *     tested nothing.
+ *
+ * The practical consequence: if this reports changes and you did not change
+ * anything, that is a real signal, not tooling noise. Chase it.
  *
  * Also worth knowing before reading a result: a rider GEOMETRY change can
  * legitimately move landscape frames, because the rider sits in the shadow

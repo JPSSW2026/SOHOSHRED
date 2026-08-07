@@ -1807,3 +1807,59 @@ caught it: **a null result is a claim about the experiment before it is a claim
 about the code.** Verify the fixture bites before concluding the subject is at
 fault. That habit has now saved a wrong conclusion three times in one session
 — R30, R32, and here.
+
+---
+
+## R36 — Determinism survives a container restart; R27 was wrong
+
+The container restarted mid-session. That is the one experiment R32 left open
+and could not be staged deliberately: same commit, a manifest committed from
+the *previous* container, a fresh clone and a fresh build.
+
+    HEAD b8b8807, manifest from 8452cff (baselined in the previous container)
+
+    unchanged (9): air-trick, chase-carve, close-spray, hero-basin,
+                   rider-portrait, ridge-backlight, snow-detail,
+                   valley-vista, west-spur
+
+Byte-identical across the restart, **including `close-spray` with particles
+on** — a stronger result than expected, since that shot carries the one system
+known to be order-sensitive.
+
+### What this settles
+
+R27 concluded that "determinism is per-session, not per-repository", that a
+committed manifest cannot reproduce on a fresh container, and that every
+session must `--update` before its first comparison means anything. **All three
+are wrong.** R32 had already shown the control behind them tested nothing — it
+stashed a source file and re-ran with `--no-build`, rendering a dist built from
+the unstashed source — but withdrawing an unsupported claim is not the same as
+knowing the answer, so it was left open rather than guessed at. Now it is
+measured.
+
+The practical difference is not small. Under R27's advice, the correct first
+move each session was to overwrite the baseline — which destroys the very
+history that makes a regression detectable, and would have quietly absorbed any
+real drift into a fresh "all clear". The committed manifest is trustworthy;
+`--update` should be used when a change is *intended*, never as a session-start
+ritual.
+
+And the corollary now worth acting on: **if `regress.mjs` reports changes and
+you did not change anything, that is a real signal.** Chase it rather than
+re-baselining over it.
+
+### Closing the arc
+
+Four rounds on one question, and the shape is worth keeping:
+
+- **R25** asserted cross-process determinism from a run that went through
+  `--no-build`. Right answer, no evidence.
+- **R27** saw 8-of-8 change, explained it with a plausible mechanism, and
+  wrote the wrong rule into the tool.
+- **R32** found the actual cause — the tool never rebuilt — voided the control,
+  and refused to guess the answer.
+- **R36** got the restart for free and measured it.
+
+The through-line is that every wrong turn came from an explanation that
+*sounded* right arriving before a measurement, and every recovery came from
+testing the instrument rather than the subject.
