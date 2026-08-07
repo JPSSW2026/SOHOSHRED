@@ -62,5 +62,83 @@ const out = await page.evaluate(async () => {
   parts.sort((a, b) => b.proud - a.proud);
   return parts;
 });
+
+// ---------------------------------------------------------------------------
+// SURFACE distance, which is a different question from silhouette.
+//
+// `proud` above is maxX - skullHalfWidthHere: does this part cross the skull's
+// X silhouette. That is the right question for a ring meant to girdle the
+// helmet, and it answered the brim correctly (-0.0362, genuinely dead).
+//
+// It is the WRONG question for a vent slot on the crown or a strap round the
+// back: both sit on the shell and render perfectly well while scoring
+// negative, because neither is supposed to widen the head. Reading that column
+// as "buried" cost a retraction (R29) -- six pieces reported dead, one
+// actually dead.
+//
+// So ask the real question. For each vertex, evaluate the skull ellipsoid's
+// implicit function; r = sqrt(f) is 1 on the surface, >1 outside. The radial
+// distance from the surface is |v-c|*(1 - 1/r), which is exact along the
+// radial direction and that is what "proud of the shell" means for shapes
+// this smooth.
+//
+// The ellipsoid is read FROM THE SKULL MESH, not hardcoded. The hardcoded copy
+// above carries sx and sy but no sz, so it has been ignoring that the skull is
+// 1.10 deep for as long as it has existed.
+const surf = await page.evaluate(async () => {
+  const THREE = await import('/node_modules/three/build/three.module.js');
+  const head = window.__SOHO.ctx.player.rider.bones.head;
+  head.updateWorldMatrix(true, true);
+  const inv = new THREE.Matrix4().copy(head.matrixWorld).invert();
+
+  let skull = null;
+  head.traverse((o) => { if (o.isMesh && o.name === 'skull') skull = o; });
+  if (!skull) return { error: 'no mesh named "skull" under the head bone' };
+
+  // Sphere radius x per-axis scale, positioned in head-local space.
+  skull.geometry.computeBoundingSphere();
+  const R0 = skull.geometry.boundingSphere.radius;
+  const c = new THREE.Vector3().setFromMatrixPosition(skull.matrixWorld).applyMatrix4(inv);
+  const s = new THREE.Vector3().setFromMatrixScale(skull.matrixWorld);
+  const a = R0 * s.x, b = R0 * s.y, d = R0 * s.z;
+
+  const v = new THREE.Vector3(), rel = new THREE.Vector3();
+  const rows = [];
+  head.traverse((o) => {
+    if (!o.isMesh || !o.geometry?.attributes?.position) return;
+    if (o === skull) return;
+    const pos = o.geometry.attributes.position;
+    let maxOut = -1e9, nOut = 0;
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).applyMatrix4(inv);
+      rel.subVectors(v, c);
+      const f = (rel.x / a) ** 2 + (rel.y / b) ** 2 + (rel.z / d) ** 2;
+      const r = Math.sqrt(f);
+      if (r > 1) nOut++;
+      const dist = rel.length() * (1 - 1 / Math.max(r, 1e-9));
+      if (dist > maxOut) maxOut = dist;
+    }
+    rows.push({
+      type: o.geometry.type, id: o.id, verts: pos.count,
+      outsideMax: +maxOut.toFixed(4),
+      outsidePct: +(100 * nOut / pos.count).toFixed(1),
+      visible: nOut > 0,
+    });
+  });
+  rows.sort((x, y) => y.outsideMax - x.outsideMax);
+  return { ellipsoid: { c: c.toArray().map(n => +n.toFixed(4)), a: +a.toFixed(4), b: +b.toFixed(4), d: +d.toFixed(4) }, rows };
+});
+
+console.log('=== silhouette (proud = maxX - skullHalfWidthHere) ===');
 console.log(JSON.stringify(out, null, 1));
+console.log('\n=== SURFACE (outsideMax = max radial distance outside the shell) ===');
+if (surf.error) {
+  console.log(surf.error);
+} else {
+  console.log(`ellipsoid c=${JSON.stringify(surf.ellipsoid.c)} a=${surf.ellipsoid.a} b=${surf.ellipsoid.b} d=${surf.ellipsoid.d}`);
+  console.log(`${'type'.padEnd(18)}${'verts'.padStart(7)}${'outsideMax'.padStart(12)}${'outside%'.padStart(10)}  state`);
+  for (const r of surf.rows) {
+    console.log(`${r.type.padEnd(18)}${String(r.verts).padStart(7)}${r.outsideMax.toFixed(4).padStart(12)}${r.outsidePct.toFixed(1).padStart(10)}  ${r.visible ? 'on surface' : 'FULLY INSIDE'}`);
+  }
+}
 await browser.close(); await server.close();

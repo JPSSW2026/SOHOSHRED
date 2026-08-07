@@ -1443,3 +1443,67 @@ Note what nearly happened: having found one real buried piece, the temptation
 was to read the whole negative column as the same defect and fix six things.
 Five of them may not be broken. A metric that answers one question will answer
 a different question wrongly and just as confidently.
+
+---
+
+## R30 — Asking the right question: no head part is buried
+
+R29 flagged six head pieces as buried, then retracted to one on the grounds
+that `proud` measures silhouette-crossing rather than surface distance, and
+said the remaining five were *unproven* pending a tool that could tell the
+difference. This is that tool, and the answer is cleaner than either version.
+
+### The measurement
+
+`head-extents.mjs` now evaluates the skull ellipsoid's implicit function per
+vertex. `r = sqrt(f)` is 1 on the surface; `outsideMax` is the radial distance
+of the furthest vertex outside it, `outsidePct` the share of vertices outside.
+The ellipsoid is read **from the skull mesh** (now named), not hardcoded — the
+hardcoded copy carried `sx` and `sy` but no `sz`, so every silhouette number
+this tool has ever produced quietly ignored that the skull is 1.10 deep.
+
+    type                verts  outsideMax  outside%  state
+    SphereGeometry        425      0.0629     100.0  on surface
+    SphereGeometry        315      0.0562     100.0  on surface
+    ... 13 more ...
+    TorusGeometry         175      0.0024       9.7  on surface
+
+**Fifteen parts, zero fully inside.** The vents are on the crown, the goggle
+strap is on the shell, the ear pads are proud. Every piece of head detail
+renders.
+
+### Validated, because a metric that never fires is indistinguishable from one that cannot
+
+A sphere was injected at the skull's dead centre and the tool re-run:
+
+    SphereGeometry         63     -0.1004       0.0  FULLY INSIDE
+
+It fires, and it separates the two cases by a wide margin. Then reverted. The
+old brim checks out by hand against the same metric — radius 0.0713 at
+y 0.1219 gives r = 0.68, comfortably inside — which agrees with the tint pass
+that showed orange appearing in none of the four views. So the one confirmed
+kill in R29 was real, and the fix for it stands.
+
+### What this closes, and what it leaves
+
+Closed: **do not "fix" the other five pieces.** They are not broken. R29 warned
+against it on principle; this proves it. Had the original reading been acted
+on, five sound pieces would have been moved to fix a defect that only one of
+them had.
+
+Left, and now isolated by elimination rather than assumed: the head reads as a
+featureless egg **because of the hood**, not because its detail is buried. The
+hood owns the entire back hemisphere, its rim cuts a hard vertical seam down
+the side view, and it renders near-black from behind. That is the whole of the
+remaining problem, and it is a shape-and-shading question rather than a
+find-the-missing-geometry one.
+
+### The pattern, third instance
+
+R27: a manifest compared across containers. R28: a defect that was the crop's
+magnification. R29/R30: a silhouette metric read as a surface metric. Each time
+the instrument answered a question adjacent to the one being asked, and did it
+confidently. The habit that catches it is cheap and mechanical — **before
+believing a measurement, inject the thing it claims to detect and check that it
+fires.** That is what turned `regress.mjs` from an assumption into a fact, and
+it is what makes "zero buried parts" a result here rather than a shrug.

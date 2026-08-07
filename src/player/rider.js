@@ -1596,6 +1596,11 @@ export class Rider {
     // which is most of why four rendered views all read as "ball".
     const skull = part(new THREE.SphereGeometry(DIM.headRadius, 20, 16), M.helmet, head, 0, DIM.headRadius * 0.85, 0.006);
     skull.scale.set(0.96, 1.02, 1.10);
+    // Named so `head-extents.mjs` can derive the reference ellipsoid from the
+    // mesh itself instead of hardcoding its centre and semi-axes. The old copy
+    // in the tool had already drifted -- it carried sx and sy but not sz, so
+    // every measurement it made silently ignored that the skull is 1.10 deep.
+    skull.name = 'skull';
     // Ear pads. A bare ellipsoid has no feature between the goggle and the
     // jaw, so the side view -- the one gameplay shows most -- was blank.
     for (const ex of [-1, 1]) {
