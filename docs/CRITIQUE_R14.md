@@ -1297,3 +1297,59 @@ regression tool, which could not speak to it. The manifest is re-baselined in
 this session so the tool is usable again going forward, with the honest caveat
 that the next session will have to do the same before its first comparison
 means anything.
+
+---
+
+## R28 — Two negative results, and a rule about zoom
+
+After the arm work, two things on the figure looked like defects and neither
+is. Recording both, because a phantom lead costs the next round real time.
+
+### The jacket hem underside — not open, not sawtoothed
+
+Seen from below (the figure is airborne in half the turnaround cells) the hem
+appeared to show a dark void with a hard stair-stepped edge, which had the
+exact signature of two near-coincident surfaces z-fighting. The suspicion was
+concrete: `capStart` lifts in **+Y** just as `capEnd` does, so a hem whose
+stations run bottom-to-top would dish open downward — the same bug shape that
+produced the sleeve's dark cup in R26.
+
+Tinting settled it. `jacketHem` and `jacketBody` are both clean; the dark
+region is the pant leg and the seat, both on `M.pants`, on the shadowed
+underside of the figure. Correct, and invisible in the untinted render because
+the two pieces share a material.
+
+### The sawtooth was the zoom
+
+The stair-stepping was an artifact of **my crop, not the render**. The
+inspection crop was 200x170 source pixels scaled 7x with nearest-neighbour, so
+a 3-pixel edge became a 21-pixel staircase. Re-cropped at 3x with lanczos the
+edge is smooth and the hem reads as intended.
+
+**Rule: match the zoom to the feature size before calling something a defect.**
+Nearest-neighbour at 7x+ manufactures hard edges out of ordinary antialiasing,
+and every one of them looks like z-fighting. Use nearest only when the question
+is "which object is this pixel" (the tint tests, where exact colour matters);
+use lanczos at 2-4x when the question is "does this read correctly".
+
+This is the third time in this project that a measurement has been taken over
+the wrong support and reported as a fault — after the band-that-was-not-an-
+object in `backdrop-detail.mjs` and the "head detached" claim that turned out
+to be 565 vs 567 background pixels. The failure mode is stable enough to name:
+**the instrument's resolution has to be checked before its reading is.**
+
+### Still open, and not mine to sit on
+
+The playability run surfaces the game's own terrain validators firing:
+
+    [terrain] fall-line glide hits 78°
+    [terrain] fall-line gradient jump 9.35 m over 2 m
+    [terrain] spawn slope 23.3° outside 5–11°
+    [terrain] spawn surface is powder, expected windpack
+
+These predate the rider work (identical warnings before any edit this session)
+and rider geometry cannot affect terrain. A fall line hitting 78° with a 9.35 m
+drop over 2 m is a cliff in the run, and the spawn is on the wrong surface at
+twice the intended slope. Left alone deliberately — BAILED is at 18% against a
+20% target, so this is not currently costing the player — but it is a real
+lead for the course pass, not noise.
