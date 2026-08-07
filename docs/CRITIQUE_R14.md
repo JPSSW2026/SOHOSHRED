@@ -1068,3 +1068,48 @@ It also strengthens the meshopt result in the previous commit rather than
 weakening it: that comparison happened to use the two bit-exact shots, so the
 1683 differing pixels on `valley-vista` were real signal against a true zero
 floor.
+
+---
+
+## R24 — the rider-shot noise floor located, and removed
+
+R23 established that rider shots differ 4–6% run to run while landscape shots
+are bit-exact, and left it there. `shoot.mjs`'s own docstring promises output
+"reproducible frame-for-frame", so this was a defect against its contract.
+Found by splitting the pipeline and testing each layer.
+
+| layer tested | result |
+|---|---|
+| simulation state — position, speed, heading, bone rotations, `ctx.frame` | **bit-identical** (frames 68 / 372 / 616 both runs) |
+| capture method — in-page readback vs `page.screenshot` | **identical within a run**, and both differ identically across runs |
+| render-side scalars — sun dir/colour/intensity, ambient, `groundColor`, env map present, prop time, wind gust, fx time, live particle count (307), camera position and quaternion | **bit-identical** |
+| **transparent particle pools hidden** | **0.000%** — was 6.735% |
+
+So every CPU-side input matches and the output still differs: the variance is
+below the JS layer, in how the software rasteriser blends the transparent
+`Points` pools. It is not fixable from here — but it is entirely avoidable.
+
+`--no-particles` on `shoot.mjs` hides both pools before each shot. Verified
+across separate processes: `rider-portrait` and `close-spray` both go to
+**mean 0.0000, 0.000% of pixels** — from 6.735%.
+
+### What this recovers
+
+R23 concluded that on a rider shot "anything below 4–6% of pixels is invisible
+however carefully it is measured", and that several earlier inconclusive
+readings were probably below that floor rather than absent. **That limitation
+is now lifted for any measurement that does not need the spray in frame.** A
+rider A/B run with `--no-particles` has a true zero floor, which is the same
+sensitivity the landscape shots always had.
+
+Leave the flag off when the picture itself is the point: the spray is half of
+what `close-spray` exists to show.
+
+### Method note
+
+Four hypotheses died here in order — capture timing, grain seeding (it is
+keyed on `ctx.frame`, which matched), simulation drift, and render-side state
+drift. Each was killed by measuring the layer rather than reasoning about it,
+and the one that survived was the one nobody had suspected. Splitting a
+pipeline and testing each stage separately is slower than guessing and it is
+the only thing that has reliably worked in this project.

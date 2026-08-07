@@ -30,7 +30,7 @@ const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 /* ---------------------------------------------------------------- args --- */
 function parseArgs(argv) {
-  const a = { width: 1280, height: 720, out: 'shots', shots: null, build: true, query: '', timeout: 900000, settleScale: 1, shotTimeout: 600000 };
+  const a = { width: 1280, height: 720, out: 'shots', shots: null, build: true, query: '', timeout: 900000, settleScale: 1, shotTimeout: 600000, noParticles: false };
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i];
     const next = () => argv[++i];
@@ -42,6 +42,20 @@ function parseArgs(argv) {
     else if (k === '--no-build') a.build = false;
     else if (k === '--timeout') a.timeout = +next();
     else if (k === '--settle-scale') a.settleScale = +next();
+    // --no-particles hides the transparent particle pools before each shot.
+    //
+    // This is the difference between a rider shot being usable for a
+    // quantitative A/B and not. Measured across separate processes,
+    // rider-portrait differs by 6.735% of pixels run to run -- while the
+    // simulation state, the sky, the camera, the frame counter and even the
+    // live particle count are all bit-identical. The variance is below the JS
+    // layer, in how the software rasteriser blends the transparent pools.
+    // Hide them and the same shot is byte-identical across runs.
+    //
+    // So: use it whenever a rider shot has to carry a measurement, and leave
+    // it off when the picture itself is the point -- the spray is half of
+    // what close-spray is for.
+    else if (k === '--no-particles') a.noParticles = true;
     else if (k === '--shot-timeout') a.shotTimeout = +next();
   }
   return a;
@@ -174,16 +188,21 @@ async function main() {
     const ts = Date.now();
     let meta;
     try {
-      meta = await page.evaluate(async ([n, scale]) => {
+      meta = await page.evaluate(async ([n, scale, noParticles]) => {
         const S = window.__SOHO;
         const preset = S.presets.includes(n) ? n : null;
         if (!preset) throw new Error('no preset ' + n);
         // Re-seed deterministically: reset the rider then settle.
+        if (noParticles) {
+          const fx = S.ctx.fx;
+          if (fx?.dynamic?.points) fx.dynamic.points.visible = false;
+          if (fx?.ambient?.points) fx.ambient.points.visible = false;
+        }
         const r = S.ctx.terrain?.getSpawn?.();
         if (r) S.ctx.physics?.reset?.(r.position, r.heading);
         const info = S.shot(n);
         return { ...info, stats: S.stats() };
-      }, [name, ARGS.settleScale]);
+      }, [name, ARGS.settleScale, ARGS.noParticles]);
     } catch (e) {
       console.error(`[shoot] ${name} FAILED: ${e.message}`);
       report.shots.push({ name, error: e.message });
