@@ -34,6 +34,10 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 
 const shot = process.argv[2] || 'chase-carve';
+// --no-grain zeroes the film grain before measuring. Grain doubles as the
+// 8-bit dither in this pipeline, so it is a floor under every rms8 reading;
+// without knowing that floor a small number cannot be told from no signal.
+const NOGRAIN = process.argv.includes('--no-grain');
 const server = await createServer({ root: process.cwd(), server: { port: 6427 } });
 await server.listen();
 const browser = await chromium.launch({
@@ -46,7 +50,7 @@ page.on('pageerror', e => console.log('[pageerr]', String(e).slice(0, 200)));
 await page.goto('http://127.0.0.1:6427/index.html');
 await page.waitForFunction(() => window.__SOHO?.isReady, null, { timeout: 300000 });
 
-const out = await page.evaluate(async (shotName) => {
+const out = await page.evaluate(async ({ shotName, noGrain }) => {
   const S = window.__SOHO;
   const W = 1280, H = 720;
   const cv = S.engine.renderer.domElement;
@@ -57,6 +61,22 @@ const out = await page.evaluate(async (shotName) => {
   const r = S.ctx.terrain?.getSpawn?.();
   if (r) S.ctx.physics?.reset?.(r.position, r.heading);
   S.shot(shotName);
+  if (noGrain) {
+    // The grain uniform lives on a composer PASS, not on ctx.fx -- ctx.fx is
+    // the particle system. The first version of this switch set nothing at
+    // all, and the two runs came back identical to 0.02, which read as
+    // "grain is free" when it actually meant "the switch missed".
+    // Set the CONFIG, not the uniform.
+    //
+    // Writing p.uniforms.uGrain = 0 directly changed nothing, twice, because
+    // the postprocess update re-derives that uniform from config on every
+    // tick and the render that matters happens after it. Same shape as the
+    // input-vs-physics bug earlier in this project: write a value, the
+    // system's own update overwrites it before the frame you measure.
+    const cfg = S.ctx.config || S.ctx.CONFIG;
+    if (!cfg?.post?.grain) throw new Error('no post.grain in config');
+    cfg.post.grain.enabled = false;
+  }
   S.engine.tick(0);
   g2.drawImage(cv, 0, 0);
   const d = g2.getImageData(0, 0, W, H).data;
@@ -168,9 +188,9 @@ const out = await page.evaluate(async (shotName) => {
     });
   }
   return { shot: shotName, camY: +cam.position.y.toFixed(1), bands };
-}, shot);
+}, { shotName: shot, noGrain: NOGRAIN });
 
-console.log(`shot ${out.shot}`);
+console.log(`shot ${out.shot}${NOGRAIN ? '  [grain OFF]' : ''}`);
 console.log('band  ground_m  rms8   rms32  fine/wide  first hit');
 for (const b of out.bands) {
   const m = b.ground ? b.ground.m : 'none';

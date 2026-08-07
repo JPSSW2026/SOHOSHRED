@@ -815,3 +815,54 @@ checklist 3 and the `groundColor` 5×. Taken together that says the near and
 mid field are in good order, and the genuinely unexamined territory is the
 backdrop's own detail budget, at contrast levels that need a noise floor
 established before they mean anything.
+
+---
+
+## R19 — the noise floor, and a real checklist-31 lead on the backdrop
+
+R18 declined to act on the backdrop's fine-detail numbers because they sat
+near the dither floor and no floor had been established. This establishes it.
+
+Film grain in this pipeline doubles as the 8-bit dither, so it is a floor
+under every `rms8` reading. Turning it off, `valley-vista`:
+
+| band | ground | rms8 grain ON | rms8 grain OFF |
+|---|---|---|---|
+| 0 | sky | 1.80 | **0.67** ← the floor |
+| 1 | 8884 m | 2.04 | 1.21 |
+| 2 | 6800 m | 3.48 | **2.95** |
+| 3 | 2057 m | 2.26 | 1.76 |
+| 4 | 1494 m | 3.60 | 3.02 |
+| 6 | 258 m | 11.20 | 10.82 |
+| 8 | 106 m | 8.74 | 8.42 |
+
+**The floor is 0.67.** Against it, the backdrop ranges at 6800 m carry
+`rms8` 2.95 — 4.4× the floor, as much fine detail as the heightfield at
+1494 m (3.02) and MORE than the heightfield at 2057 m (1.76).
+
+That is checklist 31, "distant mountains with the same contrast and texture
+frequency as near", and it points at the aerial in-scatter not flattening the
+backdrop enough (checklist 27/28). **Recorded as a lead, not acted on** — it
+is a global change to the world's look, and this session has already produced
+one 5× error that would have shipped as exactly that kind of change. It wants
+its own round with before/after frames.
+
+### Two failed switches before the measurement was real
+
+The `--no-grain` flag did nothing, twice, and both times the two runs came
+back identical to 0.02 — which reads as "grain is free" and is really "the
+switch missed".
+
+1. It set `ctx.fx.uniforms.uGrain`. `ctx.fx` is the PARTICLE system; the
+   grain uniform lives on `ctx.composer.passes[15]`. Found by walking ctx for
+   any object carrying a `uGrain`, rather than by guessing again.
+2. Setting that pass's uniform directly *also* did nothing, because the
+   postprocess update re-derives it from config on every tick and the render
+   that matters happens after. Setting `config.post.grain.enabled = false`
+   works.
+
+Failure 2 is the same shape as the `playtest.mjs` bug from earlier in this
+project, where the probe wrote `ctx.input.state` and `Input.update()`
+overwrote it before physics ran. **Writing a value that the owning system
+re-derives every frame is a recurring way to measure nothing and believe it.**
+When a switch produces no change, suspect the switch before the conclusion.
