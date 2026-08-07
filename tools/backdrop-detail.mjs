@@ -127,6 +127,48 @@ const out = await page.evaluate(async ({ shotName, noGrain }) => {
     return { rms: cnt ? +(sum / cnt).toFixed(2) : null, windows: cnt };
   };
 
+  // SILHOUETTE CONTRAST — what actually makes a range read.
+  //
+  // rms8/rms32 measure contrast INSIDE the asset. A range can carry perfectly
+  // good internal texture and still vanish, if its value sits on top of the
+  // sky's. `chase-carve` and `valley-vista` measure rms8 1.76 vs 1.73 — all
+  // but identical — while one reads as mountains and the other as a smudge,
+  // so the internal number provably is not the thing that decides it.
+  //
+  // Walk each column to the mask's top edge and compare the sky a few pixels
+  // above it against the asset a few pixels below. That is the edge a viewer
+  // actually sees.
+  const silhouette = (mask) => {
+    let sum = 0, n = 0, skyL = 0, objL = 0;
+    // The top edge is where a RUN of the asset starts, not where the first
+    // stray pixel does. Taking the first masked pixel put `top` up in the sky
+    // on nearly every column — anti-aliasing and dither leave isolated pixels
+    // above the ridge that clear the diff threshold — so `above` and `below`
+    // were both sky and this measured the sky's own vertical gradient. It
+    // reported 2.17 on 1280 columns for BOTH shots, identical to two decimals,
+    // which is the tell: two different frames cannot agree that precisely
+    // unless the thing being measured is common to both.
+    const RUN = 8;
+    for (let x = 0; x < W; x++) {
+      let top = -1, run = 0;
+      for (let y = 0; y < H; y++) {
+        if (mask[y * W + x]) { if (++run >= RUN) { top = y - RUN + 1; break; } }
+        else run = 0;
+      }
+      if (top < 6 || top > H - 8) continue;
+      // Skip columns whose "sky" is really another object in front.
+      const above = luma(base, ((top - 6) * W + x) * 4);
+      const below = luma(base, ((top + 6) * W + x) * 4);
+      sum += Math.abs(above - below); skyL += above; objL += below; n++;
+    }
+    return n ? {
+      columns: n,
+      skyLuma: +(skyL / n).toFixed(1),
+      assetLuma: +(objL / n).toFixed(1),
+      edgeContrast: +(sum / n).toFixed(2),
+    } : null;
+  };
+
   const res = {};
   for (const [name, meshes] of Object.entries(groups)) {
     const m = maskOf(meshes);
@@ -140,6 +182,7 @@ const out = await page.evaluate(async ({ shotName, noGrain }) => {
       rms8: f.rms, windows8: f.windows,
       rms32: w.rms,
       fineRatio: (f.rms && w.rms) ? +(f.rms / w.rms).toFixed(3) : null,
+      silhouette: silhouette(m.mask),
     };
   }
   return { shot: shotName, grain: !noGrain, res };

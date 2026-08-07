@@ -1863,3 +1863,57 @@ Four rounds on one question, and the shape is worth keeping:
 The through-line is that every wrong turn came from an explanation that
 *sounded* right arriving before a measurement, and every recovery came from
 testing the instrument rather than the subject.
+
+---
+
+## R37 — The gameplay backdrop is not hazier. There is just less of it.
+
+`chase-carve` is the frame a player spends the run inside, and its distant
+range reads as a faint smudge where `valley-vista`'s reads as mountains. Task
+11 ("Backdrop: snowy colour, less blue haze, majestic") has been open a long
+time and this looked like it.
+
+Measured instead of tuned:
+
+                        chase-carve   valley-vista
+    backdrop % of frame       6.0          16.8
+    rms8 (internal detail)    1.76         1.72
+    edge contrast vs sky      2.32         2.50
+
+**Neither metric separates them.** Internal detail is the same to within noise;
+so is the contrast at the horizon edge. The one number that differs is how much
+of the frame the range occupies, by a factor of ~2.8.
+
+So the impression was about angular size, not rendering. The chase camera sits
+low and close to the terrain, which compresses the range into a thin band near
+the horizon; the same asset, hazed the same way, reads as mountains when the
+camera is high enough to give it height. **Turning the haze down would not have
+fixed this**, and would have damaged `valley-vista`, where the treatment is
+demonstrably working.
+
+### The instrument had to be fixed first, and it lied convincingly
+
+The silhouette metric's first version took the topmost masked pixel as the
+range's top edge. Anti-aliasing and dither leave isolated pixels above the
+ridge that clear the diff threshold, so `top` landed up in the sky and the
+comparison sampled sky against sky — it measured the sky's own vertical
+gradient. It reported:
+
+    chase-carve   EDGE CONTRAST 2.17  (1280 cols)
+    valley-vista  EDGE CONTRAST 2.17  (1280 cols)
+
+Identical to two decimal places, on two frames whose backdrop coverage differs
+by 2.8x. **That agreement is the tell.** Two unrelated frames cannot match that
+precisely unless the quantity is common to both. Fixed by requiring a run of 8
+consecutive masked pixels before calling it an edge.
+
+### What is actually available here
+
+If the gameplay view should carry more mountain, the lever is **angular size,
+not atmosphere** — a taller or nearer range, or a higher chase camera. Both are
+real art-direction changes to the world rather than a shader tweak, and both
+are the user's call. Recorded rather than done.
+
+Fourth instance this session of a metric answering an adjacent question (R28,
+R29, R32, here), and the third caught by a number that was too clean to be
+real.
