@@ -1672,6 +1672,22 @@ Recording it because the failure is subtle — the invalid result was explained
 away with a mechanism that sounded right, and a satisfying explanation is the
 easiest way to stop looking for the real one.
 
+> **ANSWERED, and the hypothesis is REFUTED (same session).** The one-run test
+> was run: `mitt.scale` 0.95 → 1.02, a geometry-only edit touching no colour.
+>
+>     unchanged (5): hero-basin, ridge-backlight, snow-detail,
+>                    valley-vista, west-spur
+>     CHANGED   (3): air-trick, chase-carve, rider-portrait
+>     reverted    ->  unchanged (8)
+>
+> Exactly the three rider shots, **zero landscape frames** — identical scoping
+> to the colour change. A rider geometry change does *not* move landscape
+> frames through the shadow cascade or by any other route.
+>
+> This matters for reading future output: **8-of-8 after a rider edit is a red
+> flag, not normal.** It also confirms the original 8-of-8 was purely the
+> `dist` mismatch, with no second effect hiding underneath it.
+
 ---
 
 ## R34 — The terrain acceptance test had stopped working
