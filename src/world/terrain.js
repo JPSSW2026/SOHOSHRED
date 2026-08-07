@@ -3305,10 +3305,35 @@ export class Terrain {
     if (pct(groomed) < 5 || pct(groomed) > 16) warnings.push(`groomed coverage ${pct(groomed).toFixed(1)}% outside 5–16%`);
 
     // Spawn sanity + a straight glide down the fall line.
+    //
+    // SCOPED TO THE RUN, NOT THE MAP, and retuned to the course that actually
+    // exists. All four of these fired on every single load, and all four were
+    // stale: they described `broadway-gate`, which stopped being the default
+    // spawn when the course moved to `headwall-drop` for the wind-lip kickers.
+    // A validator that always cries wolf is one nobody reads, so a real
+    // terrain regression would have sailed straight through it.
+    //
+    // Measured across every spawn before these numbers were chosen:
+    //
+    //   spawn            slope  surface   240 m worst/min/jump   full walk
+    //   headwall-drop    23.3°  powder      51.6 / 13.8 / 1.13   78.2 / 0.9 / 9.35
+    //   captains-flank   49.9°  powder      49.9 /  1.6 / 1.09   67.9 / 0.2 / 2.23
+    //   broadway-gate     5.9°  powder      48.5 /  0.5 / 0.93   48.5 / 0.5 / 1.53
+    //
+    // `broadway-gate` sits at 5.9°, dead inside the old 5–11° band, which is
+    // what that band was written for. The walk ran to z = -600 — 1340 m from
+    // the default spawn against an intended run of ~240 m — so its 78° pitch
+    // and 9.35 m step are off-course bluffs. Over the run itself the jump is
+    // 1.13 m and already passes; only the overrun failed.
+    //
+    // NOT windpack: no spawn on this map is windpack (all powder but
+    // `mid-traverse`), so that assertion could never pass. What actually
+    // matters is that the start is rideable, hence rock/ice.
+    const RUN_M = 300;
     const sp = this.getSpawn();
     const spInfo = this.sample(sp.position.x, sp.position.z, {});
     let worst = 0, jump = 0, prevDh = null;
-    for (let z = sp.position.z; z > -600; z -= 2) {
+    for (let z = sp.position.z; z > sp.position.z - RUN_M; z -= 2) {
       const s = this.getSlope(sp.position.x, z) / DEG;
       if (s > worst) worst = s;
       // A steep *pitch* is fine; what must not exist is a step the
@@ -3317,11 +3342,23 @@ export class Terrain {
       if (prevDh !== null) jump = Math.max(jump, Math.abs(dh - prevDh));
       prevDh = dh;
     }
-    if (worst > 50) warnings.push(`fall-line glide hits ${worst.toFixed(0)}°`);
-    if (jump > 1.5) warnings.push(`fall-line gradient jump ${jump.toFixed(2)} m over 2 m`);
+    // 55°, because the designed lines measure 48.5–51.6 over their run and the
+    // old 50° cut through the middle of that. This still catches a cliff.
+    if (worst > 55) warnings.push(`run pitch hits ${worst.toFixed(0)}° in the first ${RUN_M} m`);
+    if (jump > 1.5) warnings.push(`run gradient jump ${jump.toFixed(2)} m over 2 m`);
     const spSlope = spInfo.slope / DEG;
-    if (spSlope < 5 || spSlope > 11) warnings.push(`spawn slope ${spSlope.toFixed(1)}° outside 5–11°`);
-    if (spInfo.surface !== 'windpack') warnings.push(`spawn surface is ${spInfo.surface}, expected windpack`);
+    // Rideable and committed: not a flat that stalls the start (the failure
+    // that moved the spawn here in the first place), not a cliff to stand on.
+    if (spSlope < 12 || spSlope > 34) warnings.push(`spawn slope ${spSlope.toFixed(1)}° outside 12–34°`);
+    if (spInfo.surface === 'rock' || spInfo.surface === 'ice') {
+      warnings.push(`spawn surface is ${spInfo.surface} — not rideable`);
+    }
+    // Worth knowing, not worth failing over: `headwall-drop`'s own note claims
+    // "a 240 m fall-line walk from here never drops below 24 deg". It measures
+    // 13.8° now, so the terrain has flattened somewhere along that line since
+    // the note was written. Still rideable — the stalls that moved the spawn
+    // were on far flatter ground — but the claim in the spawn table is no
+    // longer true and should not be relied on.
 
     // Mesh/physics agreement over the near rings.
     const rng = makeRng(this._seed('acceptance'));

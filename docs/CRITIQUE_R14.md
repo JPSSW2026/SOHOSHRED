@@ -1671,3 +1671,69 @@ frame moves.
 Recording it because the failure is subtle — the invalid result was explained
 away with a mechanism that sounded right, and a satisfying explanation is the
 easiest way to stop looking for the real one.
+
+---
+
+## R34 — The terrain acceptance test had stopped working
+
+Four warnings fired on every single load:
+
+    [terrain] fall-line glide hits 78°
+    [terrain] fall-line gradient jump 9.35 m over 2 m
+    [terrain] spawn slope 23.3° outside 5–11°
+    [terrain] spawn surface is powder, expected windpack
+
+All four were stale, and the cost is bigger than four noisy lines: a validator
+that always cries wolf is one nobody reads, so a genuine terrain regression
+would have gone straight through it.
+
+### Measured before anything was changed
+
+    spawn            slope  surface   240 m worst/min/jump   full walk (validator)
+    headwall-drop    23.3°  powder      51.6 / 13.8 / 1.13   78.2 / 0.9 / 9.35
+    captains-flank   49.9°  powder      49.9 /  1.6 / 1.09   67.9 / 0.2 / 2.23
+    broadway-gate     5.9°  powder      48.5 /  0.5 / 0.93   48.5 / 0.5 / 1.53
+    bowl-entry       16.4°  powder      29.8 /  1.0 / 1.20   48.9 / 0.6 / 1.20
+    mid-traverse      3.9°  groomed     41.7 /  3.6 / 0.98   70.3 / 1.3 / 3.10
+
+Three things fall out at once:
+
+- **`broadway-gate` measures 5.9°** — dead inside the old 5–11° band. That band
+  was written for it. The default spawn moved to `headwall-drop` when the
+  course was rebuilt around the wind-lip kickers, and the spawn is documented
+  as deliberately steep ("playtest stalled twice on rolling starts"). The test
+  was asserting the opposite of the design.
+- **No spawn is windpack.** Every one is powder but `mid-traverse`. That
+  assertion could never pass on this map.
+- **The walk ran to z = -600** — 1340 m from the default spawn, against an
+  intended run of ~240 m. Over the run itself the gradient jump is 1.13 m and
+  already passes; the 9.35 m and the 78° are off-course bluffs the player never
+  touches.
+
+### Retuned from the design, not from what passes
+
+Walk scoped to 300 m. Pitch threshold 55°, because the designed lines measure
+48.5–51.6 over their runs and the old 50° cut through the middle of that.
+Spawn slope 12–34°: rideable and committed, rejecting both the flat that
+stalled the playtest and a cliff to stand on. Surface check now rejects rock
+and ice — what actually makes a start unrideable — rather than demanding a
+surface the map does not have.
+
+### Validated in both directions
+
+Silence is not success, so it was tested the same way `regress.mjs` was:
+
+    real map                        -> no terrain warnings
+    default spawn forced to
+      broadway-gate (5.9°)          -> "spawn slope 5.9° outside 12–34°"
+
+It fires. Then reverted.
+
+### One thing left flagged rather than fixed
+
+`headwall-drop`'s own note claims "a 240 m fall-line walk from here never drops
+below 24 deg". It measures **13.8°** now — the terrain has flattened somewhere
+along that line since the note was written. Still rideable, and far from the
+rolling starts that caused the original stalls, so it is not failed on. But the
+claim in the spawn table is no longer true and is now marked as such, because a
+stale comment is how this whole section got into trouble.
