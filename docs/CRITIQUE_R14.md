@@ -1753,3 +1753,57 @@ along that line since the note was written. Still rideable, and far from the
 rolling starts that caused the original stalls, so it is not failed on. But the
 claim in the spawn table is no longer true and is now marked as such, because a
 stale comment is how this whole section got into trouble.
+
+---
+
+## R35 — The spray blind spot was narrower than the belief about it
+
+Since R24 this project has held that particles are not reproducible across
+processes. That belief is why `regress.mjs` runs with `--no-particles`, and
+therefore why `close-spray` — the only shot that shows spray — has never been
+regression-checked. The gap is recorded in the tool, in R25 and again in R27,
+each time as something that simply has to be lived with.
+
+It was worth re-testing, because looking at `close-spray` by hand (finally) had
+just turned up a gauntlet defect that passed cleanly at gameplay scale.
+
+### Three measurements, and the belief splits in half
+
+    9 shots WITH particles, same list, two runs   -> all 9 differ
+    1 shot  WITH particles, three runs            -> byte-identical (x3)
+    1 shot  WITH particles, before/after an edit  -> 0 px noise floor
+
+It is not the particles that are unreproducible. It is the **sequence**:
+particle state accumulates across shots inside one browser process, so a frame
+depends on how much has run before it. Shot alone from a fresh pool, the spray
+is exact — which means the shot can be checked after all, just not in the same
+process as the other eight.
+
+`regress.mjs` now runs a second single-shot pass with particles ON.
+
+### Validated in both directions
+
+    no change                        -> unchanged (9), close-spray included
+    spray coefficient 0.16 -> 0.22   -> CHANGED (1): close-spray, ALONE
+    reverted                         -> unchanged (9)
+
+The spray-only edit moves the spray shot and nothing else, which is exactly
+what the pass exists to do.
+
+### The near-miss, which is the real lesson
+
+The first attempt at that true-positive test perturbed
+`uSunEnergy: { value: 4.8 }` — and `close-spray` came back **unchanged**. Read
+at face value that says the new pass cannot see a spray change and should be
+removed.
+
+It was an inert fixture. Line 520 overwrites `u.uSunEnergy.value` from the sun
+every frame, so the initialiser at line 321 is dead; the experiment changed
+nothing. Acting on it would have deleted a working feature on the strength of a
+test that never ran.
+
+Identical in shape to the tint-that-never-rebuilt in R32, and the same check
+caught it: **a null result is a claim about the experiment before it is a claim
+about the code.** Verify the fixture bites before concluding the subject is at
+fault. That habit has now saved a wrong conclusion three times in one session
+— R30, R32, and here.
