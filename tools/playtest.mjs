@@ -71,6 +71,30 @@ const out = await page.evaluate(async ({ SECONDS, RUNS }) => {
       crouchHz: 0.8 + 0.25 * (r % 3),
     };
 
+    // COUNT `popped` BEFORE postRender CLEARS IT.
+    //
+    // `s.popped` is a one-shot edge event: physics sets it in fixedUpdate and
+    // clears it in postRender(), deliberately, so that every consumer gets a
+    // chance to see it first (physics.js documents an earlier bug where
+    // clearing it sooner silently killed the pop whoosh, the landing thump and
+    // the camera punch). engine.tick() runs postRender internally — so reading
+    // `s.popped` after the tick, which is what this probe did, ALWAYS sees
+    // false.
+    //
+    // It reported poppedFrames 0 against 86 pop requests across three runs and
+    // read as "the ollie is dead". It is not: maxPopCharge ~0.29 shows the
+    // block runs, latchFrames tracks the requests, and airPct 20-31% with
+    // maxAirTime up to 2.2 s is not a rider who never leaves the ground.
+    // Wrapping postRender samples the flag at the last instant it is still
+    // true, which is the only correct place to observe an edge event.
+    const _ph = S.ctx.physics;
+    if (!_ph.__popProbe) {
+      _ph.__popProbe = true;
+      const _orig = _ph.postRender.bind(_ph);
+      _ph.postRender = (...a) => { if (_ph.state.popped) window.__POPPED++; return _orig(...a); };
+    }
+    window.__POPPED = 0;
+
     const start = st().position ? { x: st().position.x, z: st().position.z } : { x: 0, z: 0 };
     let peakSpeed = 0, airFrames = 0, groundFrames = 0, stoppedFrames = 0;
     let popped = 0, maxAirTime = 0, wipeouts = 0, crashes = 0, stumbleFrames = 0;
@@ -156,7 +180,7 @@ const out = await page.evaluate(async ({ SECONDS, RUNS }) => {
       airPct: +(100 * airFrames / (airFrames + groundFrames)).toFixed(1),
       stoppedPct: +(100 * stoppedFrames / speeds.length).toFixed(1),
       popsRequested, maxPopCharge: +maxCharge.toFixed(3), latchFrames, lockedFrames,
-      poppedFrames: popped, maxAirTime: +maxAirTime.toFixed(2),
+      poppedFrames: popped, poppedObserved: window.__POPPED || 0, maxAirTime: +maxAirTime.toFixed(2),
       wipeoutFrames: wipeouts, crashFrames: crashes, stumbleFrames,
       calloutCount: events.length,
       bailPct, byQuality: byQ, byReason,

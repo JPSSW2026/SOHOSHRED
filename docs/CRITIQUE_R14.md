@@ -1974,3 +1974,65 @@ next round can A/B any of them in one run.
 This is a portrait-scale defect in a deep crouch. At the ~90 px gameplay figure
 the whole knee is about 15 px and the wedges are sub-pixel. It matters for hero
 frames and manoeuvre cards, not for play.
+
+---
+
+## R39 — "The ollie is dead" was the probe, again
+
+`playtest.mjs` is the only tool here that asks whether the game PLAYS. Run
+against the current build it reported, across three 90 s descents:
+
+    popsRequested 35 / 28 / 23      poppedFrames 0 / 0 / 0
+
+86 pop requests, zero executions. That reads as a dead core mechanic — an
+ollie that never fires in a snowboarding game.
+
+### Why it was wrong
+
+`s.popped` is a **one-shot edge event**. Physics sets it in `fixedUpdate` and
+clears it in `postRender()`, deliberately: `physics.js` carries a long comment
+about an earlier bug where clearing it sooner "silently killed every landing
+and takeoff cue in the game — the pop whoosh, the landing thump, the camera
+impact punch and the rider's knee compression were all reading zero, forever."
+
+`engine.tick()` runs `postRender` internally (engine.js:177). The probe read
+`s.popped` *after* the tick. So it recreated the exact bug the physics comment
+was written about, one layer out — and its own comment claimed the opposite:
+"s.popped is set by the release branch itself, so counting it separates the
+mechanic from the measurement." It does not, for this reason.
+
+The corroborating numbers were there the whole time and contradicted the
+headline: `maxPopCharge` ~0.29 means the pop block runs, `latchFrames` tracked
+the requests almost one-for-one, and `airPct` 20-31% with `maxAirTime` up to
+2.23 s is not a rider who never leaves the ground.
+
+### Fixed, and the mechanic is healthy
+
+Wrapping `physics.postRender` samples the flag at the last instant it is still
+true — the only correct place to observe an edge event:
+
+    run   popsRequested   poppedFrames(old)   poppedObserved(fixed)
+     0         35                 0                    32
+     1         28                 0                    27
+     2         23                 0                    23
+
+**82 of 86.** The shortfall is the `!locked` gate: the pop block is skipped
+while crashed, which is correct.
+
+### And the playability numbers, which are good
+
+    mean bailPct 20.2%   (user target 20%)
+    byQuality    oof 46, perfect 15, crash 16, clean 5
+
+Bail rate is on target, and the three-tier system produces all three tiers plus
+clean landings. Speed medians 4.5-5.5 m/s with peaks 54-98 km/h; distance
+269-414 m per 90 s run.
+
+### The pattern, one last time
+
+This is the fifth instrument this session to answer a question adjacent to the
+one asked, and the third to do it by making a real effect unobservable rather
+than by measuring the wrong thing. The check that caught all three is the same:
+**when a measurement says a system does nothing, confirm the measurement can
+see the system before believing it.** Here the confirmation was free — three
+other fields in the same output already said the mechanic was running.
