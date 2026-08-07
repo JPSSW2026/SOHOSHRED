@@ -1691,8 +1691,23 @@ export class Rider {
     // a rod driven through the helmet. It survived every goggle and hood fix
     // because it is neither. Sized to the skull at the height it actually
     // sits, it goes back to being a moulding line.
-    const brim = part(new THREE.CylinderGeometry(DIM.headRadius * 0.62, DIM.headRadius * 0.54, 0.014, 18), M.helmet, head, 0, DIM.headRadius * 1.06, 0.008);
-    brim.scale.z = 1.10;
+    // ...and then over-corrected straight past the surface. head-extents puts
+    // this cylinder at proud -0.0362: 36 mm INSIDE the skull, so the fix for
+    // "it sticks out like a rod" was a piece that has not rendered a pixel
+    // since. It is not alone — the same run has the goggle strap at -0.0383
+    // and three vent boxes between -0.0168 and -0.0394. Every piece of detail
+    // meant to break up the helmet is inside it, which is exactly why the head
+    // reads as a featureless egg.
+    //
+    // A moulding line lies ON the shell, so it is sized FROM the measurement
+    // rather than guessed: skullHalfWidthHere is 0.1064 at this height, so a
+    // torus of major radius 0.1045 with a 6 mm tube stands about 4 mm proud —
+    // a seam, not a rod. The skull is scaled 1.10 in Z against 0.96 in X, so
+    // the torus has to take the same ratio or it buries itself front-and-back
+    // while standing off at the sides.
+    const brim = trim(new THREE.TorusGeometry(0.1045, 0.006, 6, 24), M.helmet, head, 0, DIM.headRadius * 1.06, 0.006);
+    brim.rotation.x = Math.PI * 0.5;
+    brim.scale.z = 1.10 / 0.96;
     // Vent slots, ON THE SHELL rather than inside it.
     //
     // These sat at a flat y = 1.72 r for every slot, which is 2.3 cm INSIDE

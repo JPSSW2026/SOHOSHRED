@@ -1353,3 +1353,71 @@ drop over 2 m is a cliff in the run, and the spawn is on the wrong surface at
 twice the intended slope. Left alone deliberately — BAILED is at 18% against a
 20% target, so this is not currently costing the player — but it is a real
 lead for the course pass, not noise.
+
+---
+
+## R29 — Six pieces of head detail that have never rendered a pixel
+
+"Head is weird" was the user's third note on the rider and the one never
+chased. Four views plus a tint pass and `head-extents.mjs` locate it exactly.
+
+### What owns what
+
+Tinting the head parts flat:
+
+- **the entire back of the head is the HOOD**, not the helmet. The back view is
+  100% `hoodUp`; the hard vertical line splitting the side view is its rim.
+- the goggle strap is a sliver, the brim never appears at all.
+
+### And the measurement says why
+
+`head-extents.mjs` reports every mesh under the head bone against the skull's
+own ellipsoid at the same height. Sorted by `proud`:
+
+    TorusGeometry    +0.0175   hood rim
+    SphereGeometry   +0.0128   hood
+    SphereGeometry   +0.0072   lining
+    TorusGeometry    +0.0015   ear pad
+    ---- surface ----
+    BoxGeometry      -0.0168   vent slot
+    BoxGeometry      -0.0187   vent slot
+    SphereGeometry   -0.0264   ear pad
+    BoxGeometry      -0.0276   vent slot
+    CylinderGeometry -0.0362   BRIM
+    TorusGeometry    -0.0383   GOGGLE STRAP
+    BoxGeometry      -0.0394   vent slot
+
+Six pieces of detail are inside the shell, by 17 to 39 mm. The brim, the
+goggle strap and every vent slot. **That is why the head reads as a featureless
+egg — everything meant to break it up is buried in it.**
+
+Both buried pieces got there the same way, and the comments record it: each was
+once poking out wrongly (the brim "read as a rod driven through the helmet"),
+each was corrected, and each was corrected straight past the surface. The fix
+for "sticks out" was applied without a measurement of where the surface was.
+
+### Fixed here: the brim
+
+Sized *from* the measurement rather than guessed — `skullHalfWidthHere` is
+0.1064 at that height, so a torus of major radius 0.1045 with a 6 mm tube
+stands ~4 mm proud. The skull is scaled 1.10 in Z against 0.96 in X, so the
+torus takes the same ratio or it buries itself front-and-back while standing
+off at the sides. Re-measured: **-0.0362 → +0.0025**, and the moulding line is
+visible in the 3/4 and side views.
+
+### Left alone deliberately
+
+The hood owning the whole back of the head, with a razor rim cutting a vertical
+seam down the side view and a near-black featureless back, is the biggest thing
+wrong with the head. It is *not* touched here. That geometry carries four
+rounds of tuning against genuinely conflicting constraints — the opening must
+clear a skull 1.16 headRadii wide or the rim lands in front of the face, but a
+larger radius makes the shell float and its rim "read as a hoop hung around the
+head". Moving the rim back far enough to stop halving the side view requires
+growing HOOD_R, which walks straight back into the floating-hoop failure. That
+needs a considered pass, not a late-session parameter nudge.
+
+The remaining buried pieces — strap at -0.0383, three vents at -0.0168,
+-0.0187, -0.0394 — are the same one-line fix as the brim and are simply not
+done yet. They are listed above with their numbers so the next round does not
+have to re-measure.
