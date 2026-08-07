@@ -1920,7 +1920,25 @@ export class Rider {
       // stops faceting. Still 0.100 at the mouth: that was chosen against the
       // sleeve's 170 mm and shrinking it would re-open the swallowed-glove
       // defect this exists to fix.
-      part(new THREE.CylinderGeometry(0.100, 0.072, 0.100, 20), M.glove, fa, 0, wy + 0.030, 0.002);
+      // ...and the BOTTOM cap has to be buried too, which the close shot
+      // caught and the wide one could not. A Cylinder is capped at both ends;
+      // giving this a real taper (0.084 -> 0.072) narrowed the wrist end but
+      // left its cap disc standing proud of the mitt, because the mitt is an
+      // ellipsoid centred 92 mm further down and is only ~45 mm wide up at the
+      // cap's height. The exposed annulus reads as a hard open rim — the glove
+      // becomes a tube you can see into, in exactly the pose (deep crouch,
+      // arm across the body) that `rider-portrait` frames.
+      //
+      // who-owns on a rect over one of them: SphereGeometry#180 64.5%,
+      // CapsuleGeometry#181 25.4%. There is exactly one Capsule in this file —
+      // the glove thumb — so #181 is the thumb, #180 the mitt beside it. The
+      // shapes are the glove, not a knee pad and not the boot.
+      //
+      // Longer (140 mm) with a narrower wrist end (0.056), so the cap sits
+      // 60 mm below the wrist where the mitt has swelled to ~67 mm and closes
+      // over it. The mouth stays at 0.100 and at the same height, so it still
+      // covers the sleeve's closure.
+      part(new THREE.CylinderGeometry(0.100, 0.056, 0.140, 20), M.glove, fa, 0, wy + 0.010, 0.002);
       const cuff = trim(new THREE.TorusGeometry(0.097, 0.011, 7, 22), M.rubber, fa, 0, wy + 0.078, 0.002);
       cuff.rotation.x = Math.PI * 0.5;
 
