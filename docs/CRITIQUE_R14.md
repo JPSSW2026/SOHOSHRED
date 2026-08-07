@@ -1554,3 +1554,75 @@ and should be scheduled as such rather than as gameplay polish.
 This is the same failure family as R27, R28 and R30, one level up: not a
 measurement taken over the wrong support, but a *judgement* taken at the wrong
 magnification. The instrument was fine. The zoom was the assumption.
+
+---
+
+## R32 — `regress.mjs` never rebuilt, and that voids R27
+
+While attributing a head defect, a tint was applied to the hood and
+`chase-carve` re-shot. The frames came back **byte-identical** — SHA and all.
+The obvious reading was "the hood is invisible in this view". The correct
+reading was that the experiment never ran.
+
+`shoot.mjs` **serves `dist/`**, and `--no-build` reuses whatever is already
+there. `regress.mjs` passed `--no-build` on every run it has ever made. So the
+regression checker has been comparing build artifacts against a manifest of
+build artifacts, and a source edit reaches it only if something else happened
+to rebuild first.
+
+Demonstrated both ways, on the same edit:
+
+    tint the hood, no rebuild   ->    0 changed pixels
+    tint the hood, with rebuild ->  183 changed pixels, bbox 609,374-623,388
+
+The bbox is exactly the head.
+
+### What this does to R27
+
+R27's central control stashed `src/player/rider.js`, re-ran `regress.mjs`, saw
+all 8 shots differ from the manifest, and concluded that determinism is
+"per-session, not per-repository" — that a committed manifest cannot reproduce
+on a fresh container, and every session must re-baseline.
+
+**That control tested nothing.** With the source stashed and no rebuild, it
+rendered a `dist/` built minutes earlier from the *unstashed* source. It was
+never clean HEAD. The conclusion drawn from it is unsupported.
+
+What survives from R27, because it was measured separately and does not depend
+on the control:
+
+- same source + same shot list, repeated → byte-identical (verified twice)
+- same shot in a different-length list → different bytes
+
+What does **not** survive: any claim about cross-container behaviour. That
+question is now simply open, and the tool's docstring says so instead of
+asserting an answer.
+
+### Fixed
+
+`regress.mjs` builds. A regression tool that reports "unchanged" for every
+uncommitted edit is worse than no tool, because it gets trusted.
+
+### And R31's head reading was wrong too
+
+With the tint actually applied, the whole head turns green: **~178 of 212 head
+pixels in the chase view are hood.** The helmet is essentially invisible from
+behind. So R31's "grey hood over black helmet, reading as a cap sitting askew"
+is not what is on screen — both the light band and the dark mass are the hood's
+own shading, a sky-lit rim against a shadowed body, which is what any dark
+convex object does under a 10.6 deg sun.
+
+There is therefore **no geometry defect to fix on the hood**, and the next round
+should not go looking for one. The head reads as a near-black blob (L~19
+against snow at L~200) because `M.shellGrey` is dark by the §6.3 one-high-chroma
+rule, not because anything is malformed. Whether that is too dark against snow
+is an art-direction question for the user, not a bug.
+
+### The pattern, and the thing that actually caught it
+
+R27, R28, R30, R31 and now R32 are one failure repeated: an instrument answered
+a question adjacent to the one being asked. What caught this one was the habit
+those rounds produced — **when an experiment returns "no effect", verify the
+experiment ran before believing the result.** A diff of the two frames took
+seconds and turned a false negative into a tooling bug that had been silently
+degrading every regression check in the project.

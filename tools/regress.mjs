@@ -21,19 +21,18 @@
  * that this cannot catch a regression whose only effect is on the spray —
  * `close-spray` still has to be looked at.
  *
- * RE-BASELINE AT THE START OF EVERY SESSION (R27). Determinism here is real
- * but narrower than it first looked:
+ * WHAT IS ACTUALLY KNOWN ABOUT DETERMINISM (R32 supersedes R27):
  *
- *   · same source + SAME SHOT LIST, repeated  -> byte-identical. Verified.
+ *   · same source + SAME SHOT LIST, repeated  -> byte-identical. Verified
+ *     twice, single-shot and two-shot.
  *   · same shot in a DIFFERENT-LENGTH list    -> different bytes. Shots render
  *     sequentially in one browser process and a frame depends on what preceded
  *     it, so hashes are only comparable against the same list.
- *   · same source, DIFFERENT CONTAINER        -> different bytes.
- *
- * That last one is what makes the committed manifest a trap: it is a
- * cross-session artifact, and on a fresh container it disagrees with its own
- * unmodified source on every shot. Run `--update` once at session start;
- * a comparison against a manifest from a previous session means nothing.
+ *   · across containers                       -> UNKNOWN. R27 claimed this
+ *     differs and told you to re-baseline every session. That conclusion came
+ *     from a control that stashed a source file and re-ran with `--no-build`,
+ *     which rendered a dist built from the *unstashed* source. The control
+ *     tested nothing. The question is open; do not assume either answer.
  *
  * Also worth knowing before reading a result: a rider GEOMETRY change can
  * legitimately move landscape frames, because the rider sits in the shadow
@@ -65,8 +64,17 @@ const run = (args) => new Promise((res, rej) => {
   p.on('close', (c) => (c === 0 ? res(out) : rej(new Error(`exit ${c}\n${out}`))));
 });
 
-console.log(`[regress] shooting ${SHOTS.length} shots with particles off…`);
-await run(['tools/shoot.mjs', '--no-build', '--no-particles', '--out', OUT, '--shots', SHOTS.join(',')]);
+// IT BUILDS. This used to pass `--no-build`, and `shoot.mjs` serves `dist/` —
+// so the "regression check" compared build artifacts and never saw a source
+// edit at all. Demonstrated: tinting a rider material and re-shooting without
+// a rebuild changed 0 pixels; the same edit with a rebuild changed 183.
+//
+// A regression tool that reports "unchanged" for every uncommitted edit is
+// worse than no tool, because it is trusted. It also voids R27's control run,
+// which stashed a source file and concluded things about cross-session
+// determinism while rendering a dist built from the unstashed source.
+console.log(`[regress] building, then shooting ${SHOTS.length} shots with particles off…`);
+await run(['tools/shoot.mjs', '--no-particles', '--out', OUT, '--shots', SHOTS.join(',')]);
 
 const hashes = {};
 for (const f of (await readdir(OUT)).filter((f) => f.endsWith('.png')).sort()) {
