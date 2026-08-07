@@ -48,7 +48,7 @@ const result = await page.evaluate(async () => {
   key.position.set(2.5, 4, 3); sc.add(key);
 
   // --- reference -----------------------------------------------------------
-  const gltf = await new GLTFLoader().loadAsync('models/rider-style.glb');
+  const gltf = await new GLTFLoader().loadAsync('/reference/rider-style.glb');
   const ref = gltf.scene;
   ref.traverse(o => { if (o.isMesh && o.material) { o.material.metalness = 0; o.material.roughness = 0.85; } });
 
