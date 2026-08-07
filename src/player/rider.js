@@ -1907,8 +1907,21 @@ export class Rider {
       //
       // This figure's forearm is 170 mm across. A glove that terminates it has
       // to be that scale too, or it is a cap rather than a hand.
-      part(new THREE.CylinderGeometry(0.100, 0.084, 0.120, 14), M.glove, fa, 0, wy + 0.030, 0.002);
-      const cuff = trim(new THREE.TorusGeometry(0.097, 0.011, 6, 18), M.rubber, fa, 0, wy + 0.088, 0.002);
+      // Shaped for the CLOSE shot, sized for the wide one. At 120 mm of nearly
+      // straight tube on 14 segments this read as a hard black drum in
+      // `close-spray` — a bracelet, not a glove cuff — with the facets visible
+      // on the silhouette. It was fine at the 90 px gameplay scale, which is
+      // the trap R31 describes in the other direction: passing at one
+      // magnification says nothing about the other, and the manoeuvre cards
+      // and hero frames use this framing.
+      //
+      // Shorter (100 mm), a real taper (0.100 -> 0.072 rather than 0.084) so it
+      // reads as a cone closing on the wrist, and 20 segments so the silhouette
+      // stops faceting. Still 0.100 at the mouth: that was chosen against the
+      // sleeve's 170 mm and shrinking it would re-open the swallowed-glove
+      // defect this exists to fix.
+      part(new THREE.CylinderGeometry(0.100, 0.072, 0.100, 20), M.glove, fa, 0, wy + 0.030, 0.002);
+      const cuff = trim(new THREE.TorusGeometry(0.097, 0.011, 7, 22), M.rubber, fa, 0, wy + 0.078, 0.002);
       cuff.rotation.x = Math.PI * 0.5;
 
       // Wrist bridge: the cuff-to-mitt junction opened a visible gap whenever
