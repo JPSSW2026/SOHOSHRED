@@ -1917,3 +1917,60 @@ are the user's call. Recorded rather than done.
 Fourth instance this session of a metric answering an adjacent question (R28,
 R29, R32, here), and the third caught by a number that was too clean to be
 real.
+
+---
+
+## R38 — The pant knee folds through itself, and widening the blend makes it worse
+
+`rider-portrait` shows hard-edged dark wedges on the front pant at the knee —
+straight edges, sharp corners, a different tone from the surrounding navy. At
+5x lanczos they are unmistakably geometry rather than shading.
+
+**Owner, unambiguously:** `who-owns` on a 35x25 rect placed *inside* one wedge
+(525,480,560,505) puts `pantLegF` at **98.4% of the rect, meanDelta 361.9**.
+The next mesh is 20.5% at meanDelta 7.5 — noise. It is the garment tube's own
+surface folding through itself where the knee bends past 90 degrees: ordinary
+linear-blend-skinning collapse.
+
+### The obvious fix is the wrong one, and it is measurable
+
+`tube` blends bone to bone over `0.35 * min(adjacent spans)`. With stations
+50 mm above and 40 mm below the joint that window is +/-31 mm, which looks far
+too narrow for a joint folding that hard. Widening it is the obvious move.
+
+Metric fixed before the test — fraction of the rect below luma 45, i.e. how
+much of it the dark fold wedges occupy:
+
+    stations +50/-40 mm  (blend +/-31 mm)   dark 35.7%   mean luma 31.5
+    stations +95/-85 mm  (blend +/-63 mm)   dark 46.9%   mean luma 26.0
+
+**Worse, by a third.** And it is worse for a reason worth writing down: a wider
+blend hands more vertices a weighted average of two rotations that differ by
+~90 degrees, and averaging two such rotations shortens the result. That is the
+candy-wrapper artifact. Widening the window does not remove the fold, it trades
+it for a pinch — and at this bend angle the pinch is the more visible of the
+two.
+
+This was tried once earlier on a mis-attribution (the shapes were assumed to be
+the same defect as some glove geometry), judged by eye as "looks worse", and
+reverted. The eye was right; this is the number.
+
+### What is actually left
+
+All the real fixes are structural, none cheap:
+
+- **dual-quaternion skinning** — removes the collapse by construction, but
+  means reworking `tube`'s skinning path and the vertex shader
+- **a helper joint at the knee** — the standard rig answer; changes the
+  skeleton every garment is bound to
+- **a snugger knee radius** — would fold less, but fights the baggy silhouette
+  that several earlier rounds deliberately tuned
+
+Flagged rather than attempted. Recorded with the rect and the metric so the
+next round can A/B any of them in one run.
+
+### Scale caveat, per R31
+
+This is a portrait-scale defect in a deep crouch. At the ~90 px gameplay figure
+the whole knee is about 15 px and the wedges are sub-pixel. It matters for hero
+frames and manoeuvre cards, not for play.
