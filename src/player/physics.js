@@ -269,8 +269,23 @@ export class BoardPhysics {
     // under the speed gate (gravity beats friction), and the old rule left
     // the player tobogganing the whole headwall with no control (playtest:
     // "BAILED and stuck"). Riders get back up moving; so do we.
+    // The stumble timer decays ALWAYS, not only while crashed.
+    //
+    // `stumble` is set to 0.85 by the OOF tier, and the OOF tier deliberately
+    // does NOT set `crashed` — "the rider never leaves their feet" is the
+    // whole point of that tier. So with the decay nested inside the crash
+    // block it could never run for the case that raises it: after a rider's
+    // first oof, stumble latched at 0.85 for the rest of the run.
+    //
+    // That is not a dormant flag. rider.js drives the wobble from it:
+    //   A.wobble = sin(stumble * 46) * stumble * 0.85
+    // which with a frozen stumble is a CONSTANT ~0.71 — so the "quick lateral
+    // shudder that decays" the comment describes became a permanent lateral
+    // cant the rider carried to the bottom of the mountain. playtest measured
+    // `stumble > 0` on 60-77% of all frames across three runs, which is what
+    // sent me looking.
+    if (s.stumble > 0) s.stumble = Math.max(0, s.stumble - h);
     if (s.crashed) {
-      if (s.stumble > 0) s.stumble = Math.max(0, s.stumble - h);
       s.crashTime += h;
       if ((s.speed < 1.4 && s.crashTime > 1.2) || s.crashTime > 2.2) {
         s.crashed = false;

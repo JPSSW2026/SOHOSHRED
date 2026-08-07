@@ -2036,3 +2036,63 @@ than by measuring the wrong thing. The check that caught all three is the same:
 **when a measurement says a system does nothing, confirm the measurement can
 see the system before believing it.** Here the confirmation was free — three
 other fields in the same output already said the mechanic was running.
+
+---
+
+## R40 — The stumble timer never decayed, so every rider carried a permanent cant
+
+Chasing a number from R39's telemetry: `stumbleFrames` was 3243-4143 out of
+~5400, i.e. **the rider was in a stumble state for 60-77% of every run**. That
+is not a plausible duty cycle for a recovery state.
+
+### The bug
+
+`s.stumble` is set to 0.85 by the OOF tier — the middle bail tier, whose entire
+point is that the rider is *caught out but rides away*. That tier deliberately
+does **not** set `s.crashed`: "No crash flag — the rider never leaves their
+feet."
+
+The only decay was nested inside `if (s.crashed) { ... }`. So the decay could
+never run for the one case that raises the value. After a rider's first oof,
+`stumble` latched at 0.85 for the remainder of the run.
+
+### Why it was visible, not dormant
+
+`rider.js` drives the oof-tier animation straight off it:
+
+    A.wobble = sin( stumble * 46 ) * stumble * 0.85
+
+With `stumble` frozen the sine argument is constant, so `A.wobble` is a
+**constant ~0.71** rather than a decaying shudder. The comment above it
+describes "a quick lateral shudder that decays over the stumble timer"; what
+shipped was a permanent lateral cant the rider carried to the bottom of the
+mountain, from their first oof onward.
+
+### Fix and validation
+
+Move the decay out of the crash block so it runs every frame. Same three
+policies, before and after:
+
+    run   stumbleFrames   ->  after      bailPct  ->  after
+     0        4143            1031          9.7       9.7
+     1        3243             658         25.9      25.9
+     2        4053             616         25.0      25.0
+
+    71% of frames -> 14%.   mean bailPct 20.2% -> 20.2%
+
+Two things make this convincing rather than merely improved:
+
+- **Bail rates are bit-identical run for run.** The change touches recovery
+  state and nothing that decides a crash, which is exactly the intended scope.
+- **The residual matches a prediction.** OOF fired 20/13/13 times; a 0.85 s
+  timer at 60 fps is 51 frames each, so the expected totals are 1020/663/663
+  against measured 1031/658/616. The timer is now doing precisely what it says.
+
+### Note on where this came from
+
+Five instruments in this session answered adjacent questions and cost time.
+This one paid for all of them: the bug is invisible in every still, survives
+every visual pass, and was found only because `playtest.mjs` counts a state
+nobody was looking at. Telemetry over a running game finds a different class of
+defect than screenshots do, and this project had been almost entirely
+screenshot-driven.
