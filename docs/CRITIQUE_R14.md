@@ -866,3 +866,46 @@ project, where the probe wrote `ctx.input.state` and `Input.update()`
 overwrote it before physics ran. **Writing a value that the owning system
 re-derives every frame is a recurring way to measure nothing and believe it.**
 When a switch produces no change, suspect the switch before the conclusion.
+
+---
+
+## R20 — the backdrop lead is dead: a band is not an object
+
+R19 raised a checklist-31 lead — the backdrop appearing to carry as much fine
+detail at 6800 m as the heightfield does at 1494 m — and deliberately did not
+act on it. Acting would have been wrong.
+
+`tools/backdrop-detail.mjs` isolates each asset by removal (hide, diff, keep
+the pixels that changed) instead of trusting a horizontal band, and measures
+RMS only over windows lying FULLY inside the mask, so a window straddling the
+silhouette cannot contribute the edge itself as if it were surface texture.
+
+`valley-vista`, grain off, against the 0.67 floor:
+
+| | share of frame | rms8 | rms32 | fine/wide |
+|---|---|---|---|---|
+| backdrop ranges | 16.9% | **1.73** | 3.67 | 0.471 |
+| heightfield | 66.5% | **7.28** | 16.42 | 0.443 |
+
+The backdrop carries **4.2× less** fine detail than the near terrain — 2.6× the
+noise floor against the terrain's 10.9×. Checklist 31 does not fail. No change.
+
+The band reading of 2.95 came from a stripe that contained near ridge as well
+as backdrop. **Attributing a whole band to whatever its centre ray happened to
+hit is the error**, and it is the same error in a new costume: R17 measured a
+region assumed to be distant terrain that was 22 m away, R18 measured
+silhouette structure as though it were texture, and R19 measured a band as
+though it were an asset. Per-object isolation by removal is the only version
+of this that has held up.
+
+Worth noting what the deferral bought: the change this lead implied was a
+low-pass on the backdrop, which would have blunted the one asset whose whole
+job is to look majestic, in service of a defect that does not exist.
+
+### Where the measurable checklist now stands
+
+Four consecutive investigations have ended in "measured, nothing to fix":
+checklist 3 (rider undersides), the `groundColor` 5×, checklist 16 (detail
+falloff), and now checklist 31 (backdrop texture frequency). Every checklist
+item reachable with the instruments now in `tools/` is passing. Anything
+further wants either a new class of instrument or a human eye on the frames.
