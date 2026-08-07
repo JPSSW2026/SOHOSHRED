@@ -909,3 +909,48 @@ checklist 3 (rider undersides), the `groundColor` 5×, checklist 16 (detail
 falloff), and now checklist 31 (backdrop texture frequency). Every checklist
 item reachable with the instruments now in `tools/` is passing. Anything
 further wants either a new class of instrument or a human eye on the frames.
+
+---
+
+## R21 — does it actually RUN? A class of check never made
+
+Every instrument here drives the engine through `S.shot()` and `engine.tick()`
+with `manualTime` on — a mode no player is ever in. Nothing had checked what a
+player does: load the page, let requestAnimationFrame drive it, hold the keys
+down. `tools/playability.mjs` does that, through the real keyboard rather than
+by writing to physics, so the input path is part of what is under test.
+
+**Result, 45 s of held input:**
+
+- `errorCount` **0** — no pageerrors, no console errors on the rAF path
+- `nonFiniteCount` **0** — no NaN anywhere in physics state or in any rig bone
+- input path works: speed reaches 6.97 from real key events
+- growth is **flat**
+
+| t (s) | frame | objects | geometries | textures | heap MB |
+|---|---|---|---|---|---|
+| 0.4 | 7 | 199 | 134 | 43 | 103.6 |
+| 5.8 | 14 | 208 | 137 | 46 | 167.5 |
+| 15.8 | 17 | 208 | 137 | 46 | 125.3 |
+| 25.8 | 26 | 208 | 137 | 46 | 125.8 |
+| 45.1 | 35 | 208 | 137 | 46 | 126.2 |
+
+All growth is one-time lazy initialisation, complete by frame 14; nothing
+accumulates across the following 21 frames and 39 seconds. The heap spike at
+5.8–10.4 s and its fall to 125 is GC, not a trend.
+
+**Two samples could not have shown this.** Endpoints alone say "it went up",
+which is what lazy init and a leak both look like. The series distinguishes
+them: lazy init is asymptotic, a leak is linear in frames.
+
+### The honest limit
+
+35 frames is 0.6 simulated seconds. This rules out a fast leak and an
+immediate crash; it does **not** rule out a slow leak over minutes of play.
+
+And the obvious way to buy more frames does not work: dropping the viewport
+from 1280×720 to 400×225 — a tenth of the pixels — went from 22 frames to 35,
+not to hundreds. Frame cost in this harness is close to resolution-independent,
+so it is not rasterisation. Anyone wanting a long-run leak test needs to find
+the actual cost (fixed-size post buffers, shadow passes, scene traversal) or
+run headless without rendering at all.
