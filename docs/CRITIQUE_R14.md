@@ -1507,3 +1507,50 @@ confidently. The habit that catches it is cheap and mechanical — **before
 believing a measurement, inject the thing it claims to detect and check that it
 fires.** That is what turned `regress.mjs` from an assumption into a fact, and
 it is what makes "zero buried parts" a result here rather than a shrug.
+
+---
+
+## R31 — Check the scale before spending the effort
+
+Every rider judgement this session was made on `rider-turnaround` (a 400 px
+cell per angle) or `head-preview` (a head filling 300 px). Neither is a view
+any player occupies. Shooting `chase-carve` — the framing the player actually
+looks at for the whole run — and cropping at native resolution:
+
+- the rider stands roughly **90 px tall** including the board, in a 1280x720
+  frame
+- the head is roughly **18 px**
+
+### What that says about the work
+
+**The arm and glove work reads at gameplay scale.** The forearm taper is
+visible, and the gauntlet and mitt read as a distinct hand rather than a stub.
+Those are large features — a 14 mm change in sleeve radius is a real fraction
+of a 90 px figure — so R26 and the glove sizing were worth doing on the view
+that matters, not only on the turnaround.
+
+**The head detail does not, and cannot.** At 18 px the brim moulding line
+(~4 mm proud), the vent slots and the goggle strap are all sub-pixel. R29's
+brim fix is correct and it is verified, but its entire value is in close shots
+— portraits, air-trick, the manoeuvre cards — and none in play. Had the six
+"buried" pieces been real and all six been fixed, the gameplay view would have
+been identical.
+
+**What IS visible on the head at 18 px is the two-tone split** — grey hood over
+black helmet reads as a cap sitting askew on a dark ball. That is a
+large-feature, low-frequency property, exactly the class that survives to 18 px,
+and it is the most plausible referent for the user's "head is weird". The hood
+was already isolated in R30 as the whole of the remaining head problem; this
+says it is also the only part of it worth fixing for the player.
+
+### The rule
+
+The turnaround and the head preview are look-dev instruments and they are
+excellent at what they do — but they magnify. **Before spending a round on a
+feature, render the view the player occupies and measure how many pixels the
+feature gets there.** Detail below a couple of pixels is for cards and replays,
+and should be scheduled as such rather than as gameplay polish.
+
+This is the same failure family as R27, R28 and R30, one level up: not a
+measurement taken over the wrong support, but a *judgement* taken at the wrong
+magnification. The instrument was fine. The zoom was the assumption.
