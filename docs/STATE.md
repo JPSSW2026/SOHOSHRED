@@ -119,3 +119,56 @@ Two habits catch it, both cheap:
 2. **Vary the condition before concluding.** The kicker question took three
    riding policies to answer correctly and produced two wrong public claims on
    the way.
+
+---
+
+## Camera on steep ground (user note, 2026-08-08)
+
+> "Camera angle and spray obscure the rider at times especially on steep
+> sections. On flatter sections camera angle allows for very cinematic carve
+> flows but this is obscured on steep sections. Keep the spray but fix the
+> angle."
+
+**Fixed and shipped (`105ff40`).** Both halves were one cause: the chase station
+was built on a world-vertical up vector, so on a pitch the ground behind the
+rider is *above* them (at 34° and 10 m back, ~6.7 m higher). The wanted station
+was inside the hill, the clearance guard shoved it out, and the result was a
+view down onto the helmet across a foreground roll — with the spray plume on
+the sightline to the board. The station now measures against the slope: the
+offset basis blends toward the surface normal as pitch steepens, and follow
+distance is re-squared into that plane.
+
+    slope     rider ndcY, before -> after
+    30-39°      +1.372 -> -0.085     (was off the top of the frame)
+    40-49°      +0.334 -> -0.190
+     0-29°      unchanged to ~0.01 NDC
+
+Spray untouched, as asked — it stops crossing the lens because the camera no
+longer looks down through it.
+
+### Still open: framing VARIANCE on pitched ground
+
+The mean is fixed; the spread is not. p10..p90 of rider ndcY:
+
+    flat  ( 0-19°)   0.13 - 0.17
+    pitch (20-49°)   0.51 - 0.65
+
+So roughly 4x wider, and the worst frames still drop the rider to the bottom
+edge (visible in `shots/steep-after/flat-24deg-8ms.png`, a p10 outlier).
+
+**Slope jitter is NOT the cause** — tested and refuted. Low-passing `s.slope`
+over 0.45 s before it steers the basis changed the spread by nothing:
+
+    band      spread with raw slope   with 0.45 s low-pass
+    20-29°           0.585                   0.589
+    30-39°           0.636                   0.646
+    40-49°           0.508                   0.508
+
+and made the 40-49° mean worse (-0.190 -> -0.435, a mean below its own p10, so
+extreme outliers are dragging it). Reverted.
+
+The variance has some other source — candidates not yet tested: the
+terrain-clearance sweep firing intermittently, the range lock, or the spring
+responding to the rider's own vertical motion over rolls. Whoever picks this up
+should instrument which of those fires on the outlier frames rather than
+guessing, and `framing.mjs`-style ndcY bucketing is the metric to use.
