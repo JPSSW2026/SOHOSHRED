@@ -2153,3 +2153,45 @@ The distribution says where the knobs are. p90 is ~5, max ~9. Putting
 `marginalDrop` near 5.5 would make drop-oofs occasional rather than impossible;
 `tooHard` near 8.5 would make impact crashes rare but real. Those are design
 calls about how punishing the game should be, so they are recorded, not made.
+
+---
+
+## R43 — Correcting R42, and the kickers are not being hit
+
+Two results from a zero-input fall-line descent with impact recording.
+
+### R42's headline was scoped to one policy and stated generally
+
+R42 said `CRASH_LANDING 17.5` was "never — nearly 2x the largest impact on
+record". That was the largest impact **under playtest's lazy S-turn**, which
+scrubs speed by design and so cannot produce a hard landing. A straight descent
+reaches **16.62 m/s** — within 5% of 17.5, and past `marginalDrop` (10.08),
+which it cleared once in two landings.
+
+So the corrected statement is narrower and more useful:
+
+- the impact tiers are **near-reachable**, not out of reach
+- they essentially never fire in ordinary turning play, because turning removes
+  the speed that makes a hard landing
+- the two probes measure different regimes — playtest gets many landings at low
+  energy (82 landings, max 9.01), the fall line gets few at high energy
+  (2 landings, max 16.62) — and neither alone characterises the game
+
+Same error as R27 and R31 in a new place: a number measured under one condition
+was reported as a property of the system.
+
+### The kickers are being missed entirely
+
+Closest approach to the three lips: **35 m, 66 m, 82 m**.
+
+The stations are stamped by walking the gradient of the built surface, and the
+assumption that a rider therefore passes over them is false — a rider carries
+momentum and edge and does not track a gradient walk. This matters beyond the
+threshold question: the lips are dyed blue specifically so a player can *set up*
+for them, and the natural line drifts 35-82 m clear.
+
+Whether that is a placement problem, a physics-vs-gradient divergence, or
+simply something a steering player fixes, is not established here. What is
+established is that "ride the fall line and you will hit the jumps" does not
+hold, and the deliberate-lip-hit measurement R42 called for **still has not
+happened** — this probe did not achieve it.
