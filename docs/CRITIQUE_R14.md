@@ -2096,3 +2096,60 @@ every visual pass, and was found only because `playtest.mjs` counts a state
 nobody was looking at. Telemetry over a running game finds a different class of
 defect than screenshots do, and this project had been almost entirely
 screenshot-driven.
+
+---
+
+## R42 — The impact dimension of the bail system is inert
+
+`crashReason` exists because "three unrelated conditions share one outcome, and
+the one that dominates in play is not obvious from reading them". Aggregated
+over three 90 s runs it answers its own question, and the answer has a hole in
+it:
+
+    oof-edge 41   oof-spin 20   spin 12   edge 9   oof-drop 0   hard 0
+
+`byQuality` likewise has no `sketchy`. **Every tier keyed on landing impact
+never fires** — `tooHard`, `marginalDrop`, and the absorbed-but-expensive
+branch — across 270 s of play with 20-31% airtime and airs up to 2.23 s.
+
+### Why: the thresholds are out of reach on this mountain
+
+`closing` is velocity into the surface normal. On a 23-49 deg pitch most
+landing velocity is tangential — steep landings are soft, which is why ski
+jumps have them. So the question is whether the thresholds are reachable at
+all. Measured over 82 landings:
+
+    run   landings   median   p90    max    >9.0   >17.5
+     0        32       3.54   4.92   9.01     1      0
+     1        27       3.79   5.28   8.71     0      0
+     2        23       3.86   4.67   8.49     0      0
+
+Against the constants:
+
+    HARD_LANDING     9.0    reached once in 82 landings (9.01, by 0.01)
+    marginalDrop    10.08   never — max is 1.07 below it
+    CRASH_LANDING   17.5    never — nearly 2x the largest impact on record
+    WIPEOUT_CLOSING 28.0    never — over 3x
+
+So a hard landing never costs speed, `oof-drop` and `hard` are dead branches,
+and `wipeout` can only be reached through its `inverted` condition rather than
+through impact.
+
+### The caveat that matters
+
+**The probe never aims at a kicker.** The course has wind-lip kickers dyed blue
+specifically so a player can set up for them; this policy rides a lazy S-turn
+and takes only the air the terrain hands it. So this measures INCIDENTAL air.
+Whether a deliberate kicker hit at speed clears 10.08 or 17.5 is untested, and
+testing it needs a policy that steers at a lip — which is the obvious next
+probe, not a conclusion to assume either way.
+
+What is established: on ordinary riding, the impact tiers contribute nothing,
+and three of the six bail reasons are unreachable.
+
+### If they should be live
+
+The distribution says where the knobs are. p90 is ~5, max ~9. Putting
+`marginalDrop` near 5.5 would make drop-oofs occasional rather than impossible;
+`tooHard` near 8.5 would make impact crashes rare but real. Those are design
+calls about how punishing the game should be, so they are recorded, not made.

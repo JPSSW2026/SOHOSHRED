@@ -91,9 +91,22 @@ const out = await page.evaluate(async ({ SECONDS, RUNS }) => {
     if (!_ph.__popProbe) {
       _ph.__popProbe = true;
       const _orig = _ph.postRender.bind(_ph);
-      _ph.postRender = (...a) => { if (_ph.state.popped) window.__POPPED++; return _orig(...a); };
+      // Same trick for landingImpact, and for the same reason: it is a
+      // one-shot set at touchdown and cleared here, so nothing that reads it
+      // after the tick can see it. Recording the DISTRIBUTION matters because
+      // three bail tiers key off this value (HARD_LANDING 9.0, marginalDrop
+      // 10.08, CRASH_LANDING 17.5) and none of them ever fired in 270 s of
+      // play -- so the question "are those thresholds reachable on this
+      // mountain at all" needs the actual numbers, not an argument.
+      _ph.postRender = (...a) => {
+        if (_ph.state.popped) window.__POPPED++;
+        const li = _ph.state.landingImpact || 0;
+        if (li > 0) window.__IMPACTS.push(+li.toFixed(2));
+        return _orig(...a);
+      };
     }
     window.__POPPED = 0;
+    window.__IMPACTS = [];
 
     const start = st().position ? { x: st().position.x, z: st().position.z } : { x: 0, z: 0 };
     let peakSpeed = 0, airFrames = 0, groundFrames = 0, stoppedFrames = 0;
@@ -180,7 +193,8 @@ const out = await page.evaluate(async ({ SECONDS, RUNS }) => {
       airPct: +(100 * airFrames / (airFrames + groundFrames)).toFixed(1),
       stoppedPct: +(100 * stoppedFrames / speeds.length).toFixed(1),
       popsRequested, maxPopCharge: +maxCharge.toFixed(3), latchFrames, lockedFrames,
-      poppedFrames: popped, poppedObserved: window.__POPPED || 0, maxAirTime: +maxAirTime.toFixed(2),
+      poppedFrames: popped, poppedObserved: window.__POPPED || 0,
+      impacts: (() => { const v=(window.__IMPACTS||[]).slice().sort((x,y)=>x-y); const q=f=>v.length?v[Math.floor(f*(v.length-1))]:null; return { n: v.length, max: q(1), p90: q(0.9), median: q(0.5), overHard9: v.filter(x=>x>9).length, overCrash175: v.filter(x=>x>17.5).length }; })(), maxAirTime: +maxAirTime.toFixed(2),
       wipeoutFrames: wipeouts, crashFrames: crashes, stumbleFrames,
       calloutCount: events.length,
       bailPct, byQuality: byQ, byReason,
