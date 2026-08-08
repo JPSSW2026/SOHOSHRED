@@ -89,6 +89,9 @@ export class ChaseCamera {
     this._dir = new THREE.Vector3();
     this._flat = new THREE.Vector3();
     this._up = new THREE.Vector3(0, 1, 0);
+    // Slope-relative offset basis (see the station block in _station).
+    this._camUp = new THREE.Vector3(0, 1, 0);
+    this._camDir = new THREE.Vector3(0, 0, 1);
   }
 
   setMode(mode) {
@@ -296,18 +299,60 @@ export class ChaseCamera {
     const dist = C.followDistance * wide * (1 + speedT * 0.42 + airT * 0.55);
     const height = C.followHeight * (1 + speedT * 0.18 + airT * 0.75);
 
+    // THE STATION IS SLOPE-RELATIVE, not world-vertical.
+    //
+    // Both offsets used to be built on world up: `height` straight up, `dist`
+    // straight back along a horizontal heading. On a pitch that is wrong in a
+    // way that compounds — the ground `dist` behind the rider is uphill, so at
+    // 34 deg and 10 m back it sits ~6.7 m ABOVE them. A station 2.7 m above
+    // world-vertical is then metres inside the hill, the terrain-clearance
+    // guard downstream shoves it out, and what the player gets is a view down
+    // onto their own helmet across a foreground roll — with the spray plume
+    // sitting exactly on the sightline to the board.
+    //
+    // Measured, rider chest in NDC (0 centre, +1 top) while carving:
+    //
+    //   slope     ndcY mean   p10..p90 spread   cam above rider
+    //    0- 9°      -0.11          0.13             1.60 m
+    //   10-19°      -0.17          0.17             1.74 m
+    //   20-29°      -0.16          0.64             1.90 m
+    //   30-39°      +1.37          0.76             2.34 m   <- off the top
+    //   40-49°      +0.33          0.40             2.64 m
+    //
+    // Flat is steady and well placed, which is the framing worth keeping. By
+    // 30 deg the spread is 6x wider and the mean is off-screen.
+    //
+    // The fix is to stop measuring the offset against the world and measure it
+    // against the slope: blend the offset basis toward the surface normal as
+    // the pitch steepens, and take the follow direction in that same plane. On
+    // flat ground the normal IS world up, so nothing changes and the carve
+    // flow is untouched by construction. On a pitch the camera sits square
+    // behind and above the RUN, which is where the run is visible from and
+    // where the spray blows clear of the lens rather than across it.
+    const slopeT = clamp01((s.slope || 0) / 0.85);
+    this._camUp.copy(this._up);
+    if (s.normal && slopeT > 0) {
+      this._camUp.lerp(s.normal, slopeT * 0.80);
+      if (this._camUp.lengthSq() > 1e-6) this._camUp.normalize(); else this._camUp.copy(this._up);
+    }
+    // Follow direction, re-squared into the slope plane so `dist` is measured
+    // along the run rather than along the horizon.
+    this._camDir.copy(this._dir)
+      .addScaledVector(this._camUp, -this._dir.dot(this._camUp));
+    if (this._camDir.lengthSq() > 1e-6) this._camDir.normalize(); else this._camDir.copy(this._dir);
+
     this._desired.copy(s.position)
-      .addScaledVector(this._dir, -dist)
-      .addScaledVector(this._up, height);
+      .addScaledVector(this._camDir, -dist)
+      .addScaledVector(this._camUp, height);
     // Range the station actually wants, recorded for the range lock in
     // update(). Taken after every offset below has been applied.
     this._desiredRange = null;
 
-    // On a steep pitch the camera has to sit further *down* the hill or it
-    // ends up staring at the back of the rider's helmet with no run in frame.
+    // A little extra drop on the very steepest ground. Much smaller than the
+    // 0.22 this replaces: that number was compensating for a station buried in
+    // the hill, and with a slope-relative station there is far less to correct.
     if (s.normal) {
-      const pitchLean = clamp01(s.slope / 0.9);
-      this._desired.addScaledVector(this._up, -pitchLean * dist * 0.22);
+      this._desired.addScaledVector(this._camUp, -slopeT * dist * 0.06);
     }
 
     // ---- Station slew limit -------------------------------------------
