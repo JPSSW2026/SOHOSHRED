@@ -387,7 +387,30 @@ export class ChaseCamera {
 
     // Look point: ahead of the rider along the direction of travel, lifted to
     // chest height, dropping as they get airborne so the landing stays framed.
-    const lead = 5.0 + speedT * 7.0;
+    // THE LEAD SCALES WITH HOW FAR THE CAMERA ACTUALLY IS.
+    //
+    // This was a fixed 5-12 m regardless of chase range, which frames well at
+    // the nominal ~9.6 m but not when the rig has been forced in. Correlating
+    // guards against badly-framed frames (rider ndcY outside -0.40..0.35 while
+    // carving):
+    //
+    //                     badly framed   well framed
+    //   at MIN_CHASE floor     42.7%          5.6%
+    //   sweep pulling in        8.7%         35.2%
+    //   mean chase             4.59 m        5.27 m
+    //
+    // Sitting AT the 4.2 m floor is the dominant correlate, 7.6x over-
+    // represented. Pulling in happens along the view vector so it preserves
+    // the elevation angle -- what it does not preserve is the lead, which at
+    // 4.2 m of range is 1.7x the camera's own distance to the rider. The aim
+    // point ends up far past them and they slide down and out of frame.
+    //
+    // Scaling the lead by the range actually in use keeps the angular
+    // relationship roughly fixed, so a compressed chase reframes instead of
+    // losing the subject. At full range this is a no-op.
+    const actualChase = this._chaseLen != null ? this._chaseLen : dist;
+    const leadScale = clamp01(actualChase / Math.max(dist, 1e-3));
+    const lead = (5.0 + speedT * 7.0) * (0.30 + 0.70 * leadScale);
     this._look.copy(s.position)
       .addScaledVector(this._dir, lead)
       .addScaledVector(this._up, 1.15 - airT * 0.5);
