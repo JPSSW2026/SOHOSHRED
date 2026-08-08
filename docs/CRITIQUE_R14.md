@@ -2195,3 +2195,44 @@ simply something a steering player fixes, is not established here. What is
 established is that "ride the fall line and you will hit the jumps" does not
 hold, and the deliberate-lip-hit measurement R42 called for **still has not
 happened** — this probe did not achieve it.
+
+---
+
+## R44 — The kickers are hittable, and a lip hit does fire the drop tier
+
+The measurement R42 asked for and R43 did not achieve. R43 rode the fall line
+with no input, assuming gradient-stamped kickers would be passed over; they were
+missed by 35-82 m. This steers at each station in turn, and determines the steer
+sign empirically rather than guessing it:
+
+    steer +1   closest approach 0 / 0 / 0 m      landing 12.15 m/s   >10.08 yes
+    steer -1   closest approach 163/237/317 m    no landings
+
+**Dead centre on all three lips.** So R43's "the kickers are being missed" was a
+property of not steering, not of their placement — the placement is fine, and
+the earlier worry that a blue-dyed feature might be unreachable is closed.
+
+And the answer to R42's question: a deliberate kicker hit lands at **12.15 m/s**,
+clearing `marginalDrop` (10.08). **The impact tier does fire when the course is
+ridden as designed.**
+
+### The whole picture, which took three policies to see
+
+    lazy S-turn (playtest)   82 landings   max  9.01   no impact tier fires
+    straight fall line        2 landings   max 16.62   marginalDrop cleared
+    aimed at the kickers      1 landing    max 12.15   marginalDrop cleared
+
+R42 looked at the first row alone and called the impact dimension inert. It is
+not — it is invisible to a policy that never rides at anything, which is what a
+lazy S-turn is. `CRASH_LANDING` (17.5) is still unreached, but 16.62 came within
+5%, so it is a rare event rather than dead code.
+
+### What this cost, and what it is worth
+
+Three rounds to get one number, with two wrong intermediate conclusions stated
+along the way (R42's "2x out of reach", R43's implied placement problem). The
+recurring cause is now unambiguous: **every one of those errors was a
+measurement under one policy reported as a property of the game.** The fix is
+not more care in wording, it is measuring under more than one policy before
+concluding anything — which is exactly what the three-row table above does and
+what neither R42 nor R43 did.
