@@ -73,6 +73,14 @@ code. Leave it or lower it — a call about how punishing the game should be. (R
 | `backdrop-detail.mjs` | backdrop detail + silhouette contrast | isolates by removal, so numbers belong to the asset |
 | `who-owns.mjs` | which mesh owns a region | **use a TIGHT rect** — it answers about the rectangle you draw |
 
+**Do not run `regress.mjs` while another render is in flight.** A run that
+overlapped two probe servers reported 5 shots changed, including three
+landscape frames that no rider or camera edit can touch — and the "new" hashes
+were their values from hours earlier. Two clean back-to-back runs immediately
+after agreed exactly with each other and flagged only the one shot that should
+have moved. Contention corrupts the result, and the failure looks exactly like
+a real regression.
+
 `regress.mjs` determinism, measured: same shot list repeats byte-identically;
 a *different-length* list changes the bytes; and it survives a container
 restart, so the committed manifest is valid across sessions. Do **not**
@@ -146,29 +154,51 @@ distance is re-squared into that plane.
 Spray untouched, as asked — it stops crossing the lens because the camera no
 longer looks down through it.
 
-### Still open: framing VARIANCE on pitched ground
+### Framing variance on pitched ground — improved, not solved
 
-The mean is fixed; the spread is not. p10..p90 of rider ndcY:
+The mean is fixed; the spread was not. p10..p90 of rider ndcY was 0.13-0.17 on
+flat and 0.51-0.65 on pitch, and the worst frames dropped the rider to the
+bottom edge.
 
-    flat  ( 0-19°)   0.13 - 0.17
-    pitch (20-49°)   0.51 - 0.65
+**Cause, found by correlating guards against badly-framed frames** (ndcY outside
+-0.40..0.35 while carving):
 
-So roughly 4x wider, and the worst frames still drop the rider to the bottom
-edge (visible in `shots/steep-after/flat-24deg-8ms.png`, a p10 outlier).
+                          badly framed   well framed
+    at MIN_CHASE floor        42.7%          5.6%
+    sweep pulling in           8.7%         35.2%
+    mean chase                4.59 m        5.27 m
 
-**Slope jitter is NOT the cause** — tested and refuted. Low-passing `s.slope`
-over 0.45 s before it steers the basis changed the spread by nothing:
+Sitting AT the 4.2 m floor is the dominant correlate, 7.6x over-represented.
+Pulling in happens along the view vector so it preserves the elevation angle —
+what it does NOT preserve is the look-ahead lead, which was a fixed 5-12 m
+regardless of range. At 4.2 m of chase that lead is 1.7x the camera's own
+distance to the rider, so the aim point lands far past them.
 
-    band      spread with raw slope   with 0.45 s low-pass
-    20-29°           0.585                   0.589
-    30-39°           0.636                   0.646
-    40-49°           0.508                   0.508
+**Fixed in `30789eb`** by scaling the lead with the range in use (a no-op at
+full range). Spread before -> after:
 
-and made the 40-49° mean worse (-0.190 -> -0.435, a mean below its own p10, so
-extreme outliers are dragging it). Reverted.
+     0- 9°   0.127 -> 0.102
+    10-19°   0.168 -> 0.145
+    20-29°   0.585 -> 0.447   (-24%)
+    30-39°   0.636 -> 0.554   (-13%)
+    40-49°   0.508 -> 0.374   (-26%)
 
-The variance has some other source — candidates not yet tested: the
-terrain-clearance sweep firing intermittently, the range lock, or the spring
-responding to the rider's own vertical motion over rolls. Whoever picks this up
-should instrument which of those fires on the outlier frames rather than
-guessing, and `framing.mjs`-style ndcY bucketing is the metric to use.
+Worst-case p10 improved in every pitched band too.
+
+**Still ~3-4x the flat spread**, so not finished. The remaining lever is the
+occlusion sweep: it is active ~30% of frames, and the slope-relative station
+sits nearer the snow than the old world-vertical one, which may make the
+clearance test trip more readily. Untested.
+
+### Refuted — do not retry
+
+**Low-passing `s.slope`** before it steers the offset basis. `s.slope` is
+sampled under the board and twitches with every micro-roll, so smoothing it
+looks like the obvious cure for the lurch. Measured over 0.45 s it moved the
+spread by nothing (0.585->0.589, 0.636->0.646, 0.508->0.508) and made the
+40-49 deg mean worse, to a value below its own p10 — extreme outliers dragging
+it. Reverted.
+
+The contrast is the lesson: the low-pass came from a plausible story about
+jitter, the lead fix came from measuring which guard actually fires on the bad
+frames. Only the second worked.
