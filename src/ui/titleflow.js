@@ -13,6 +13,7 @@
  * down synchronously and is called the moment the harness takes manual
  * control of time.
  */
+import { getGamepads } from '../core/gamepads.js';
 
 const CSS = /* css */ `
 .soho-flow {
@@ -275,8 +276,7 @@ export class TitleFlow {
 
   /** Any controller button works the overlays (Gamepad API has no events). */
   _padAny() {
-    if (typeof navigator === 'undefined' || !navigator.getGamepads) return false;
-    for (const p of navigator.getGamepads() || []) {
+    for (const p of getGamepads()) {
       if (p && p.connected && p.buttons.some((b) => b && b.pressed)) return true;
     }
     return false;

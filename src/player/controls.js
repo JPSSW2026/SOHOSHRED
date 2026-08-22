@@ -23,6 +23,7 @@
 
 import { CONFIG } from '../core/config.js';
 import { clamp, clamp01, damp } from '../core/rng.js';
+import { getGamepads } from '../core/gamepads.js';
 
 /** Radial dead zone as a fraction of stick travel. */
 const DEAD_ZONE = 0.16;
@@ -260,9 +261,7 @@ export class Input {
   }
 
   _readPad() {
-    if (typeof navigator === 'undefined' || !navigator.getGamepads) return null;
-    const pads = navigator.getGamepads();
-    if (!pads) return null;
+    const pads = getGamepads();
     if (this._padIndex !== null && pads[this._padIndex]) return pads[this._padIndex];
     for (const p of pads) if (p && p.connected) { this._padIndex = p.index; return p; }
     return null;
