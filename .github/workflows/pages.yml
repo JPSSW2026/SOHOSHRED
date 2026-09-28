@@ -34,8 +34,11 @@ jobs:
 
       - run: npm run build
 
-      # enablement turns Pages on for the repo on the first run, so nobody
-      # has to flip it by hand in Settings.
+      # One-time setup: Settings -> Pages -> Source: "GitHub Actions".
+      # enablement: true is kept because it makes this workflow self-sufficient
+      # wherever the token is allowed to create the site; on this repo it is
+      # not ("Resource not accessible by integration"), so the toggle above is
+      # required once. After that this step is a no-op.
       - uses: actions/configure-pages@v5
         with:
           enablement: true
