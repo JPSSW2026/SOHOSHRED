@@ -34,7 +34,11 @@ jobs:
 
       - run: npm run build
 
+      # enablement turns Pages on for the repo on the first run, so nobody
+      # has to flip it by hand in Settings.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
